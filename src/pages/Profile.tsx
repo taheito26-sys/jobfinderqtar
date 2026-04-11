@@ -664,25 +664,34 @@ const Profile = () => {
 
       {/* LinkedIn Import Dialog */}
       <Dialog open={linkedinDialogOpen} onOpenChange={setLinkedinDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Import from LinkedIn</DialogTitle>
             <DialogDescription>
-              Paste your LinkedIn profile URL to auto-fill your profile with your professional data.
+              Paste your LinkedIn profile content to auto-fill your profile. Open your LinkedIn profile in a browser, select all text (Ctrl+A / ⌘+A), copy it, and paste below.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>LinkedIn Profile URL</Label>
+              <Label>LinkedIn Profile URL (optional)</Label>
               <Input
                 value={linkedinUrl}
                 onChange={e => setLinkedinUrl(e.target.value)}
                 placeholder="https://linkedin.com/in/yourname"
-                onKeyDown={e => { if (e.key === 'Enter' && linkedinUrl.trim()) importFromLinkedin(); }}
               />
-              <p className="text-xs text-muted-foreground">Make sure your LinkedIn profile is set to public for best results.</p>
             </div>
-            <Button onClick={importFromLinkedin} className="w-full" disabled={!linkedinUrl.trim() || importingLinkedin}>
+            <div className="space-y-2">
+              <Label>Pasted LinkedIn Profile Text *</Label>
+              <Textarea
+                value={linkedinText}
+                onChange={e => setLinkedinText(e.target.value)}
+                placeholder="Open your LinkedIn profile → Select All (Ctrl+A) → Copy (Ctrl+C) → Paste here (Ctrl+V)"
+                rows={8}
+                className="text-xs"
+              />
+              <p className="text-xs text-muted-foreground">{linkedinText.length > 0 ? `${linkedinText.length} characters pasted` : 'Paste your full LinkedIn profile page content here'}</p>
+            </div>
+            <Button onClick={importFromLinkedin} className="w-full" disabled={linkedinText.trim().length < 50 || importingLinkedin}>
               {importingLinkedin ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing...</> : <><Linkedin className="w-4 h-4 mr-2" />Import Profile</>}
             </Button>
           </div>
