@@ -353,11 +353,13 @@ const JobFeed = () => {
 
   // Stats
   const stats = useMemo(() => {
+    const activeJobs = jobs.filter(j => j.status !== 'archived');
+    const archivedCount = jobs.length - activeJobs.length;
     const scored = Object.keys(matches).length;
     const avgScore = scored > 0 ? Math.round(Object.values(matches).reduce((s: number, m: any) => s + (m.overall_score || 0), 0) / scored) : 0;
-    const withSalary = jobs.filter(j => j.salary_min || j.salary_max).length;
+    const withSalary = activeJobs.filter(j => j.salary_min || j.salary_max).length;
     const applyRec = Object.values(matches).filter((m: any) => m.recommendation === 'apply').length;
-    return { total: jobs.length, scored, avgScore, withSalary, applyRec, unscored: jobs.length - scored };
+    return { total: activeJobs.length, scored, avgScore, withSalary, applyRec, unscored: activeJobs.length - scored, archived: archivedCount };
   }, [jobs, matches]);
 
   // Sub-tab: extract countries from job locations
