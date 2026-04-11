@@ -29,6 +29,70 @@ const CVLibrary = () => {
       .then(({ data }) => { setDocuments(data ?? []); setLoading(false); });
   }, [user]);
 
+  const autoParseAndImport = async (doc: any) => {
+    if (!user) return;
+    setParsing(doc.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('parse-cv', { body: { document_id: doc.id } });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const p = data.parsed;
+      setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, parsed_content: p } : d));
+
+      // Auto-import to profile
+      const profileUpdate: any = {};
+      if (p.full_name) profileUpdate.full_name = p.full_name;
+      if (p.headline) profileUpdate.headline = p.headline;
+      if (p.summary) profileUpdate.summary = p.summary;
+      if (p.email) profileUpdate.email = p.email;
+      if (p.phone) profileUpdate.phone = p.phone;
+      if (p.location) profileUpdate.location = p.location;
+      if (p.country) profileUpdate.country = p.country;
+      if (Array.isArray(p.desired_titles) && p.desired_titles.length > 0) profileUpdate.desired_titles = p.desired_titles;
+      if (Object.keys(profileUpdate).length > 0) {
+        await supabase.from('profiles_v2').upsert({ user_id: user.id, ...profileUpdate }, { onConflict: 'user_id' });
+      }
+
+      if (Array.isArray(p.skills) && p.skills.length > 0) {
+        const { data: existing } = await supabase.from('profile_skills').select('skill_name').eq('user_id', user.id);
+        const existingNames = new Set((existing ?? []).map((s: any) => s.skill_name.toLowerCase()));
+        const newSkills = p.skills.filter((s: string) => !existingNames.has(s.toLowerCase()));
+        if (newSkills.length > 0) await supabase.from('profile_skills').insert(newSkills.map((s: string) => ({ user_id: user.id, skill_name: s })));
+      }
+
+      if (Array.isArray(p.employment) && p.employment.length > 0) {
+        await supabase.from('employment_history').insert(p.employment.map((e: any, i: number) => ({
+          user_id: user.id, title: e.title || 'Untitled', company: e.company || 'Unknown',
+          location: e.location || '', start_date: e.start_date || '2020-01-01',
+          end_date: e.end_date || null, is_current: e.is_current || false,
+          description: e.description || '', achievements: Array.isArray(e.achievements) ? e.achievements : [], sort_order: i,
+        })));
+      }
+
+      if (Array.isArray(p.education) && p.education.length > 0) {
+        await supabase.from('education_history').insert(p.education.map((e: any, i: number) => ({
+          user_id: user.id, degree: e.degree || 'Degree', institution: e.institution || 'Institution',
+          field_of_study: e.field_of_study || '', start_date: e.start_date || null, end_date: e.end_date || null, sort_order: i,
+        })));
+      }
+
+      if (Array.isArray(p.certifications) && p.certifications.length > 0) {
+        await supabase.from('certifications').insert(p.certifications.map((c: any) => ({
+          user_id: user.id, name: c.name || 'Certification', issuing_organization: c.issuing_organization || 'Unknown', issue_date: c.issue_date || null,
+        })));
+      }
+
+      await supabase.from('activity_log').insert({
+        user_id: user.id, action: 'auto_imported_cv_to_profile', entity_type: 'master_document', entity_id: doc.id,
+      });
+
+      toast({ title: 'Profile auto-populated!', description: 'Your CV was parsed and profile fields have been filled. Visit Profile to review.' });
+    } catch (err: any) {
+      toast({ title: 'Auto-extraction failed', description: err.message + ' — You can retry manually.', variant: 'destructive' });
+    }
+    setParsing(null);
+  };
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
