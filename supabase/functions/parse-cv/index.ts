@@ -1,48 +1,10 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import { getPipelineConfig, callProvider } from "../_shared/ai-pipeline.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
-interface AIConfig {
-  provider: string;
-  apiKey: string;
-  url: string;
-  model: string;
-}
-
-async function getAIConfig(userId: string): Promise<AIConfig> {
-  const supabaseAdmin = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
-  const { data: prefs } = await supabaseAdmin
-    .from("user_preferences").select("key, value")
-    .eq("user_id", userId).in("key", ["ai_provider", "ai_api_key"]);
-
-  const prefMap: Record<string, string> = {};
-  (prefs || []).forEach((p: any) => { prefMap[p.key] = p.value; });
-  const provider = prefMap["ai_provider"] || "lovable";
-  const userKey = prefMap["ai_api_key"] || "";
-
-  switch (provider) {
-    case "anthropic":
-      if (!userKey) throw new Error("Anthropic API key not configured. Go to Settings.");
-      return { provider, apiKey: userKey, url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" };
-    case "openai":
-      if (!userKey) throw new Error("OpenAI API key not configured. Go to Settings.");
-      return { provider, apiKey: userKey, url: "https://api.openai.com/v1/chat/completions", model: "gpt-4o" };
-    case "gemini":
-      if (!userKey) throw new Error("Google API key not configured. Go to Settings.");
-      return { provider, apiKey: userKey, url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", model: "gemini-2.5-flash" };
-    default: {
-      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-      if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
-      return { provider: "lovable", apiKey: lovableKey, url: "https://ai.gateway.lovable.dev/v1/chat/completions", model: "google/gemini-3-flash-preview" };
-    }
-  }
-}
 
 const extractProfileTool = {
   type: "function",
@@ -107,9 +69,7 @@ const extractProfileTool = {
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = "";
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
   return btoa(binary);
 }
 
@@ -141,8 +101,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    const aiConfig = await getAIConfig(user.id);
-    console.log(`parse-cv using AI provider: ${aiConfig.provider}`);
+    const pipelineConfig = await getPipelineConfig(user.id);
+    console.log(`[parse-cv] Pipeline: ${pipelineConfig.enabled ? "ON" : "OFF"}, providers: ${pipelineConfig.providers.map(p => p.name).join(" → ")}`);
 
     const { document_id } = await req.json();
     if (!document_id) {
@@ -178,92 +138,96 @@ CRITICAL RULES:
 - Skills should only include those explicitly listed or clearly demonstrated`;
 
     const isPdfFile = isPdf(doc.mime_type || "", doc.file_name);
+    const providerChain: string[] = [];
+
+    // For parse-cv, we use the pipeline differently:
+    // Step 1: First provider extracts (handles multimodal PDF)
+    // Step 2+: Subsequent providers review the extracted data for accuracy
+    const firstProvider = pipelineConfig.providers[0];
     let userContent: any;
 
     if (isPdfFile) {
-      // Send PDF as base64 for multimodal AI processing
       const arrayBuffer = await fileData.arrayBuffer();
       const base64 = arrayBufferToBase64(arrayBuffer);
-      console.log(`Sending PDF as base64 (${Math.round(base64.length / 1024)}KB) to AI`);
+      console.log(`Sending PDF as base64 (${Math.round(base64.length / 1024)}KB) to ${firstProvider.name}`);
 
-      if (aiConfig.provider === "anthropic") {
-        // Anthropic uses document type for PDFs
+      if (firstProvider.provider === "anthropic") {
         userContent = [
           { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
           { type: "text", text: "Parse this CV/resume and extract all professional data. The person's name should match what's written on the document." }
         ];
       } else {
-        // OpenAI-compatible (Lovable gateway, Gemini, OpenAI) - use image_url with data URI for PDFs
         userContent = [
           { type: "text", text: "Parse this CV/resume and extract all professional data. The person's name should match what's written on the document." },
           { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64}` } }
         ];
       }
     } else {
-      // Plain text files
       const fileText = await fileData.text();
-      const truncatedText = fileText.substring(0, 20000);
-      userContent = `Parse this CV/resume and extract all professional data:\n\n${truncatedText}`;
+      userContent = `Parse this CV/resume and extract all professional data:\n\n${fileText.substring(0, 20000)}`;
     }
 
-    // Call AI with tool calling
-    let rawResult: string;
+    // Step 1: First provider extracts
+    const extractResult = await callProvider(
+      firstProvider,
+      [{ role: "system", content: systemPrompt }, { role: "user", content: userContent }],
+      [extractProfileTool],
+      { type: "function", function: { name: "extract_profile" } },
+      8192
+    );
+    let parsed = JSON.parse(extractResult.tool_arguments);
+    providerChain.push(firstProvider.name);
 
-    if (aiConfig.provider === "anthropic") {
-      const body = {
-        model: aiConfig.model, max_tokens: 8192, system: systemPrompt,
-        messages: [{ role: "user", content: userContent }],
-        tools: [{ name: "extract_profile", description: extractProfileTool.function.description, input_schema: extractProfileTool.function.parameters }],
-        tool_choice: { type: "tool", name: "extract_profile" },
-      };
-      const response = await fetch(aiConfig.url, {
-        method: "POST",
-        headers: { "x-api-key": aiConfig.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) { const err = await response.text(); console.error("Anthropic error:", err); throw new Error(`AI error: ${response.status}`); }
-      const data = await response.json();
-      const toolUse = data.content?.find((c: any) => c.type === "tool_use");
-      if (!toolUse) throw new Error("No tool call returned from AI");
-      rawResult = JSON.stringify(toolUse.input);
-    } else {
-      const body = {
-        model: aiConfig.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        tools: [extractProfileTool],
-        tool_choice: { type: "function", function: { name: "extract_profile" } },
-      };
-      const response = await fetch(aiConfig.url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        const errText = await response.text();
-        console.error("AI error:", response.status, errText);
-        throw new Error(`AI error: ${response.status}`);
+    // Steps 2+: Review providers verify extraction accuracy
+    if (pipelineConfig.enabled && pipelineConfig.providers.length > 1) {
+      for (let i = 1; i < pipelineConfig.providers.length; i++) {
+        const reviewer = pipelineConfig.providers[i];
+        const isLast = i === pipelineConfig.providers.length - 1;
+        const role = isLast ? "FINAL REVIEWER" : "REVIEWER";
+
+        console.log(`[parse-cv] Step ${i + 1}: ${reviewer.name} (${role})`);
+
+        try {
+          const reviewResult = await callProvider(
+            reviewer,
+            [
+              { role: "system", content: systemPrompt },
+              {
+                role: "user",
+                content: `You are the ${role} in a multi-AI extraction pipeline.
+
+Review this extracted CV data for accuracy and completeness:
+${JSON.stringify(parsed, null, 2)}
+
+Original document text (for verification):
+${typeof userContent === "string" ? userContent.substring(0, 5000) : "PDF document (verify against the extracted data consistency)"}
+
+Check:
+1. Is the name correct?
+2. Are all employment entries present and accurate?
+3. Are dates in correct format?
+4. Are skills actually mentioned?
+5. Fix any errors and return the corrected extraction.`
+              },
+            ],
+            [extractProfileTool],
+            { type: "function", function: { name: "extract_profile" } },
+            8192
+          );
+          parsed = JSON.parse(reviewResult.tool_arguments);
+          providerChain.push(reviewer.name);
+        } catch (err: any) {
+          console.warn(`[parse-cv] ${reviewer.name} review failed: ${err.message}. Skipping.`);
+          providerChain.push(`${reviewer.name} (skipped)`);
+        }
       }
-      const data = await response.json();
-      const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-      rawResult = toolCall ? toolCall.function.arguments : (data.choices?.[0]?.message?.content || "{}");
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(rawResult);
-    } catch {
-      const cleaned = rawResult.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-      parsed = JSON.parse(cleaned);
-    }
-
-    console.log(`Extracted: name="${parsed.full_name}", ${(parsed.skills || []).length} skills, ${(parsed.employment || []).length} jobs`);
+    console.log(`[parse-cv] Chain: ${providerChain.join(" → ")} — name="${parsed.full_name}", ${(parsed.skills || []).length} skills, ${(parsed.employment || []).length} jobs`);
 
     await supabase.from("master_documents").update({ parsed_content: parsed }).eq("id", document_id);
 
-    return new Response(JSON.stringify({ success: true, parsed }), {
+    return new Response(JSON.stringify({ success: true, parsed, ai_chain: providerChain }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (err: any) {
