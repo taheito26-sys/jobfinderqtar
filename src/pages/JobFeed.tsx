@@ -85,15 +85,29 @@ const JobFeed = () => {
   }, [user]);
 
   // Extract unique values for filter dropdowns
+  const GCC_LOCATION_PRESETS = [
+    '🇶🇦 Qatar', '🇸🇦 Saudi Arabia', '🇦🇪 UAE', '🇦🇪 Dubai', '🇦🇪 Abu Dhabi',
+    '🇸🇦 Riyadh', '🇸🇦 Jeddah', '🇶🇦 Doha', '🇰🇼 Kuwait', '🇧🇭 Bahrain', '🇴🇲 Oman',
+  ];
+
   const filterOptions = useMemo(() => {
     const companies = [...new Set(jobs.map(j => j.company).filter(Boolean))].sort();
-    const locations = [...new Set(jobs.map(j => j.location).filter(Boolean))].sort();
+    const rawLocations = [...new Set(jobs.map(j => j.location).filter(Boolean))].sort();
+    // Merge GCC presets with actual job locations, deduplicate by plain name
+    const gccPlain = GCC_LOCATION_PRESETS.map(l => l.replace(/^.\s/, ''));
+    const allLocations = [...GCC_LOCATION_PRESETS];
+    rawLocations.forEach(l => {
+      if (!gccPlain.some(g => l.toLowerCase().includes(g.toLowerCase()))) {
+        allLocations.push(l);
+      }
+    });
     const seniorities = [...new Set(jobs.map(j => j.seniority_level).filter(Boolean))].sort();
     const industries = [...new Set(jobs.map(j => j.industry).filter(Boolean))].sort();
+    const employmentTypes = [...new Set(jobs.map(j => j.employment_type).filter(Boolean))].sort();
     const recommendations = [...new Set(
       Object.values(matches).map((m: any) => m.recommendation).filter(Boolean)
     )].sort();
-    return { companies, locations, seniorities, industries, recommendations };
+    return { companies, locations: allLocations, rawLocations, seniorities, industries, employmentTypes, recommendations };
   }, [jobs, matches]);
 
   const activeFilterCount = useMemo(() => {
