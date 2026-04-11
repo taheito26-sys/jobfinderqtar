@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X, FileText, Mail } from 'lucide-react';
+import { GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X, FileText, Mail, Download, Loader2 } from 'lucide-react';
 
 const TailoringReview = () => {
   const { user } = useAuth();
@@ -17,6 +17,7 @@ const TailoringReview = () => {
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'cv' | 'cover_letter'>('all');
 
   useEffect(() => {
@@ -49,6 +50,32 @@ const TailoringReview = () => {
         });
       }
     }
+  };
+
+  const downloadDocument = async (docId: string, format: 'pdf' | 'docx') => {
+    setDownloading(`${docId}-${format}`);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-document', {
+        body: { document_id: docId, format },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      // The response is a blob
+      const blob = data instanceof Blob ? data : new Blob([data]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `document.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: `${format.toUpperCase()} downloaded` });
+    } catch (err: any) {
+      toast({ title: 'Download failed', description: err.message, variant: 'destructive' });
+    }
+    setDownloading(null);
   };
 
   const statusVariant = (s: string) => {
@@ -117,6 +144,9 @@ const TailoringReview = () => {
                   <Badge variant={statusVariant(doc.approval_status)} className="capitalize text-xs">
                     {doc.approval_status.replace('_', ' ')}
                   </Badge>
+                  <Button variant="ghost" size="sm" onClick={() => downloadDocument(doc.id, 'pdf')} disabled={downloading === `${doc.id}-pdf`}>
+                    {downloading === `${doc.id}-pdf` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => setSelected(doc)}>
                     <Eye className="w-4 h-4" />
                   </Button>
@@ -147,6 +177,12 @@ const TailoringReview = () => {
                   {selected.approval_status.replace('_', ' ')}
                 </Badge>
                 <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => downloadDocument(selected.id, 'pdf')} disabled={downloading === `${selected.id}-pdf`}>
+                    {downloading === `${selected.id}-pdf` ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Download className="w-4 h-4 mr-1" />}PDF
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => downloadDocument(selected.id, 'docx')} disabled={downloading === `${selected.id}-docx`}>
+                    {downloading === `${selected.id}-docx` ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Download className="w-4 h-4 mr-1" />}DOCX
+                  </Button>
                   {selected.approval_status !== 'approved' && (
                     <Button
                       size="sm"
