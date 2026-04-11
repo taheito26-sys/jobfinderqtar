@@ -75,7 +75,10 @@ const Profile = () => {
         supabase.from('certifications').select('*').eq('user_id', user.id).order('issue_date', { ascending: false }),
         supabase.from('proof_points').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
       ]);
-      if (profileRes.data) setProfile(profileRes.data as any);
+      if (profileRes.data) {
+        const p = profileRes.data as any;
+        setProfile({ ...p, desired_titles: Array.isArray(p.desired_titles) ? p.desired_titles : [] });
+      }
       setSkills(skillsRes.data ?? []);
       setEmployment(empRes.data ?? []);
       setEducation(eduRes.data ?? []);
