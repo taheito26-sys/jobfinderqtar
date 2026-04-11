@@ -119,8 +119,8 @@ const SubscriptionJobs = ({ subscriptionId, userId }: { subscriptionId: string; 
   return (
     <div className="space-y-3 pt-3 border-t border-border mt-3">
       {/* Filters */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[180px] max-w-[300px]">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <div className="relative flex-1 min-w-0">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
             value={searchFilter}
