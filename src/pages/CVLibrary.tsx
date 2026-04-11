@@ -71,15 +71,19 @@ const CVLibrary = () => {
     const p = importDoc.parsed_content;
 
     try {
-      // Upsert profile basics
-      if (p.full_name || p.headline || p.summary || p.email || p.phone || p.location) {
-        const profileUpdate: any = {};
-        if (p.full_name) profileUpdate.full_name = p.full_name;
-        if (p.headline) profileUpdate.headline = p.headline;
-        if (p.summary) profileUpdate.summary = p.summary;
-        if (p.email) profileUpdate.email = p.email;
-        if (p.phone) profileUpdate.phone = p.phone;
-        if (p.location) profileUpdate.location = p.location;
+      // Upsert profile basics including desired_titles and country
+      const profileUpdate: any = {};
+      if (p.full_name) profileUpdate.full_name = p.full_name;
+      if (p.headline) profileUpdate.headline = p.headline;
+      if (p.summary) profileUpdate.summary = p.summary;
+      if (p.email) profileUpdate.email = p.email;
+      if (p.phone) profileUpdate.phone = p.phone;
+      if (p.location) profileUpdate.location = p.location;
+      if (p.country) profileUpdate.country = p.country;
+      if (Array.isArray(p.desired_titles) && p.desired_titles.length > 0) {
+        profileUpdate.desired_titles = p.desired_titles;
+      }
+      if (Object.keys(profileUpdate).length > 0) {
         await supabase.from('profiles_v2').upsert({ user_id: user.id, ...profileUpdate }, { onConflict: 'user_id' });
       }
 
@@ -142,7 +146,13 @@ const CVLibrary = () => {
         entity_type: 'master_document', entity_id: importDoc.id,
       });
 
-      toast({ title: 'Profile imported!', description: 'Your profile has been populated from the CV.' });
+      // Trigger an immediate auto-search if desired_titles were set
+      if (Array.isArray(p.desired_titles) && p.desired_titles.length > 0) {
+        toast({ title: 'Profile imported!', description: 'Desired job titles set — auto-search will find matching jobs.' });
+      } else {
+        toast({ title: 'Profile imported!', description: 'Your profile has been populated from the CV.' });
+      }
+
       setImportDoc(null);
       navigate('/profile');
     } catch (err: any) {
