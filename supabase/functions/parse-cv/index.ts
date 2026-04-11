@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import JSZip from "https://esm.sh/jszip@3.10.1";
 import { getPipelineConfig, callProvider } from "../_shared/ai-pipeline.ts";
 
 const corsHeaders = {
