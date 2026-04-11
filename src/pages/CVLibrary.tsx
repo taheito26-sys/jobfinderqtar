@@ -304,9 +304,14 @@ const CVLibrary = () => {
                     {parsing === doc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                   </Button>
                   {hasParsedContent(doc) && (
-                    <Button variant="ghost" size="sm" onClick={() => setImportDoc(doc)} title="Import to Profile">
-                      <UserPlus className="w-4 h-4" />
-                    </Button>
+                    <>
+                      <Button variant="ghost" size="sm" onClick={() => setImportDoc(doc)} title="Import to Profile">
+                        <UserPlus className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setTemplateDoc(doc)} title="Generate Styled CV">
+                        <Palette className="w-4 h-4" />
+                      </Button>
+                    </>
                   )}
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteDoc(doc.id, doc.file_path)}>
                     <Trash2 className="w-4 h-4" />
