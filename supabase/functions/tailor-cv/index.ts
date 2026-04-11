@@ -211,9 +211,9 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
     if (is429) {
       return new Response(JSON.stringify({ 
         error: "AI provider is rate limited. Please wait 30-60 seconds and try again.",
-        retryable: true,
+        fallback: true,
       }), {
-        status: 429, headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": "30" },
+        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     if (is402) {
