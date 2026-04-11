@@ -9,8 +9,10 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette, Download } from 'lucide-react';
+import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette, Download, Pencil } from 'lucide-react';
 import CVTemplateSelector from '@/components/CVTemplateSelector';
+import CVContentEditor from '@/components/CVContentEditor';
+import CVVersionHistory from '@/components/CVVersionHistory';
 
 const CVLibrary = () => {
   const { user } = useAuth();
@@ -26,6 +28,8 @@ const CVLibrary = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState('classic');
   const [templateDoc, setTemplateDoc] = useState<any>(null);
+  const [editorDoc, setEditorDoc] = useState<any>(null);
+  const [versionDoc, setVersionDoc] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -308,11 +312,17 @@ const CVLibrary = () => {
                       <Button variant="ghost" size="sm" onClick={() => setImportDoc(doc)} title="Import to Profile">
                         <UserPlus className="w-4 h-4" />
                       </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditorDoc(doc)} title="Edit Content">
+                        <Pencil className="w-4 h-4" />
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => setTemplateDoc(doc)} title="Generate Styled CV">
                         <Palette className="w-4 h-4" />
                       </Button>
                     </>
                   )}
+                  <Button variant="ghost" size="sm" onClick={() => setVersionDoc(doc)} title="Version History">
+                    <History className="w-4 h-4" />
+                  </Button>
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteDoc(doc.id, doc.file_path)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
@@ -413,6 +423,28 @@ const CVLibrary = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Inline Content Editor */}
+      <CVContentEditor
+        open={!!editorDoc}
+        onOpenChange={(open) => { if (!open) setEditorDoc(null); }}
+        document={editorDoc}
+        onSaved={(updated) => setDocuments(prev => prev.map(d => d.id === updated.id ? updated : d))}
+      />
+
+      {/* Version History */}
+      {user && (
+        <CVVersionHistory
+          open={!!versionDoc}
+          onOpenChange={(open) => { if (!open) setVersionDoc(null); }}
+          document={versionDoc}
+          userId={user.id}
+          onVersionRestored={(updated) => {
+            setDocuments(prev => prev.map(d => d.id === updated.id ? updated : d));
+            setVersionDoc(updated);
+          }}
+        />
+      )}
     </div>
   );
 };
