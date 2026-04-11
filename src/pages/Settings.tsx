@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Plug, Shield, Bell, Loader2, CheckCircle2, XCircle, Zap } from 'lucide-react';
+import { Plug, Shield, Bell, Loader2, CheckCircle2, XCircle, Zap, GitBranch } from 'lucide-react';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -38,7 +38,6 @@ const SettingsPage = () => {
       { onConflict: 'user_id,key' }
     );
     setPrefs({ ...prefs, [key]: value });
-    // Reset test status when provider or key changes
     if (key === 'ai_provider' || key === 'ai_api_key') {
       setTestStatus('idle');
       setTestMessage('');
@@ -50,17 +49,11 @@ const SettingsPage = () => {
     setTestStatus('testing');
     setTestMessage('');
     setTestModel('');
-
     try {
-      const { data, error } = await supabase.functions.invoke('test-ai-connection', {
-        body: {},
-      });
-
+      const { data, error } = await supabase.functions.invoke('test-ai-connection', { body: {} });
       if (error) throw error;
       if (data?.error && !data?.fallback) throw new Error(data.error);
-
       if (data?.fallback) {
-        // Soft error: key is valid but rate limited or billing issue
         setTestStatus('success');
         setTestModel(data.model || '');
         setTestMessage(data.message || 'Key valid but temporarily limited');
@@ -89,13 +82,19 @@ const SettingsPage = () => {
 
   const currentProvider = prefs['ai_provider'] || 'lovable';
   const hasKey = currentProvider === 'lovable' || !!prefs['ai_api_key'];
+  const pipelineEnabled = prefs['ai_pipeline_enabled'] === 'true';
+
+  // Count configured pipeline providers
+  const pipelineProviders: string[] = ['Lovable AI'];
+  if (prefs['ai_key_openai']) pipelineProviders.push('OpenAI');
+  if (prefs['ai_key_gemini']) pipelineProviders.push('Gemini');
+  if (prefs['ai_key_anthropic']) pipelineProviders.push('Claude');
 
   return (
     <div className="animate-fade-in">
       <PageHeader title="Settings" description="Configure job sources, integrations, and preferences" />
 
       <div className="space-y-6 max-w-2xl">
-        {/* Job Sources — full config */}
         <JobSourcesConfig />
 
         {/* Notifications */}
@@ -109,29 +108,23 @@ const SettingsPage = () => {
                 <p className="text-sm font-medium text-foreground">High-match alerts</p>
                 <p className="text-xs text-muted-foreground">Get notified when a job scores 80+</p>
               </div>
-              <Switch
-                checked={prefs['notify_high_match'] === 'true'}
-                onCheckedChange={(v) => setPref('notify_high_match', v.toString())}
-              />
+              <Switch checked={prefs['notify_high_match'] === 'true'} onCheckedChange={(v) => setPref('notify_high_match', v.toString())} />
             </div>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-foreground">Follow-up reminders</p>
                 <p className="text-xs text-muted-foreground">Reminder on follow-up dates</p>
               </div>
-              <Switch
-                checked={prefs['notify_followup'] === 'true'}
-                onCheckedChange={(v) => setPref('notify_followup', v.toString())}
-              />
+              <Switch checked={prefs['notify_followup'] === 'true'} onCheckedChange={(v) => setPref('notify_followup', v.toString())} />
             </div>
           </CardContent>
         </Card>
 
-        {/* AI Integration */}
+        {/* AI Provider (Primary) */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2"><Plug className="w-4 h-4" />AI Provider</CardTitle>
-            <CardDescription>Choose the AI provider for CV parsing, job scoring, and tailoring</CardDescription>
+            <CardTitle className="text-base flex items-center gap-2"><Plug className="w-4 h-4" />AI Provider (Primary)</CardTitle>
+            <CardDescription>Primary provider for single-provider mode</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
@@ -174,9 +167,7 @@ const SettingsPage = () => {
                     testStatus === 'error' ? 'bg-destructive' :
                     hasKey ? 'bg-yellow-500' : 'bg-muted-foreground'
                   }`} />
-                  <span className="text-sm font-medium text-foreground">
-                    {providerLabel(currentProvider)}
-                  </span>
+                  <span className="text-sm font-medium text-foreground">{providerLabel(currentProvider)}</span>
                 </div>
                 <Badge variant={
                   testStatus === 'success' ? 'default' :
@@ -189,7 +180,6 @@ const SettingsPage = () => {
                 </Badge>
               </div>
 
-              {/* Status details */}
               {testStatus === 'success' && (
                 <div className="flex items-start gap-2 text-xs">
                   <CheckCircle2 className="w-3.5 h-3.5 text-green-500 mt-0.5 flex-shrink-0" />
@@ -206,13 +196,7 @@ const SettingsPage = () => {
                 </div>
               )}
 
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full"
-                onClick={testConnection}
-                disabled={testStatus === 'testing' || !hasKey}
-              >
+              <Button variant="outline" size="sm" className="w-full" onClick={testConnection} disabled={testStatus === 'testing' || !hasKey}>
                 {testStatus === 'testing' ? (
                   <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Testing connection...</>
                 ) : (
@@ -220,6 +204,88 @@ const SettingsPage = () => {
                 )}
               </Button>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Multi-AI Pipeline */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2"><GitBranch className="w-4 h-4" />Multi-AI Pipeline</CardTitle>
+            <CardDescription>
+              Chain multiple AI providers for higher quality. Each provider reviews and corrects the previous one's output.
+              Claude always finalizes.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium text-foreground">Enable pipeline mode</p>
+                <p className="text-xs text-muted-foreground">Uses more API calls but produces better results</p>
+              </div>
+              <Switch
+                checked={pipelineEnabled}
+                onCheckedChange={(v) => setPref('ai_pipeline_enabled', v.toString())}
+              />
+            </div>
+
+            {pipelineEnabled && (
+              <>
+                <div className="p-3 rounded-lg border border-border bg-muted/30">
+                  <p className="text-xs font-medium text-foreground mb-2">Pipeline chain:</p>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {pipelineProviders.map((name, i) => (
+                      <span key={name} className="flex items-center gap-1">
+                        <Badge variant="secondary" className="text-xs">{name}</Badge>
+                        {i < pipelineProviders.length - 1 && <span className="text-muted-foreground text-xs">→</span>}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    {pipelineProviders.length <= 1
+                      ? 'Add API keys below to enable the chain. At least 2 providers needed.'
+                      : `${pipelineProviders.length} providers configured. Add more keys for a longer chain.`
+                    }
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Provider API Keys</p>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">OpenAI API Key</Label>
+                    <Input
+                      type="password"
+                      placeholder="sk-proj-..."
+                      value={prefs['ai_key_openai'] || ''}
+                      onChange={e => setPref('ai_key_openai', e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Reviewer — platform.openai.com → API Keys</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">Google Gemini API Key</Label>
+                    <Input
+                      type="password"
+                      placeholder="AIza..."
+                      value={prefs['ai_key_gemini'] || ''}
+                      onChange={e => setPref('ai_key_gemini', e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Reviewer — aistudio.google.com → API Keys</p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="text-sm">Anthropic (Claude) API Key <Badge variant="outline" className="text-xs ml-1">Finalizer</Badge></Label>
+                    <Input
+                      type="password"
+                      placeholder="sk-ant-..."
+                      value={prefs['ai_key_anthropic'] || ''}
+                      onChange={e => setPref('ai_key_anthropic', e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Final reviewer & executor — console.anthropic.com → API Keys</p>
+                  </div>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -237,7 +303,7 @@ const SettingsPage = () => {
               <h4 className="text-sm font-medium text-foreground">Mode B: Assisted Apply</h4>
               <p className="text-xs text-muted-foreground">System pre-fills application forms. You review and submit.</p>
             </div>
-            <div className="p-3 rounded-lg border border-border border-warning/30">
+            <div className="p-3 rounded-lg border border-border">
               <h4 className="text-sm font-medium text-foreground">Mode C: Controlled Auto-Submit</h4>
               <p className="text-xs text-muted-foreground">Only for explicitly supported sources. Requires approval before each submission.</p>
             </div>
