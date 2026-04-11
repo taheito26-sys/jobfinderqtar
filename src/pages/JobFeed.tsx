@@ -16,6 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
+import BulkSearchDialog from '@/components/BulkSearchDialog';
 
 const JobFeed = () => {
   const { user } = useAuth();
@@ -29,6 +30,7 @@ const JobFeed = () => {
   const [addOpen, setAddOpen] = useState(false);
   const [batchScoring, setBatchScoring] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [bulkSearchOpen, setBulkSearchOpen] = useState(false);
   const [newJob, setNewJob] = useState({ title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' });
 
   useEffect(() => {
@@ -124,6 +126,9 @@ const JobFeed = () => {
                 {batchScoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Scoring...</> : <><Zap className="w-4 h-4 mr-2" />Score All ({unscoredCount})</>}
               </Button>
             )}
+            <Button variant="outline" onClick={() => setBulkSearchOpen(true)}>
+              <Search className="w-4 h-4 mr-2" />Bulk Search
+            </Button>
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Globe className="w-4 h-4 mr-2" />Import URL
             </Button>
@@ -236,6 +241,11 @@ const JobFeed = () => {
         open={importOpen}
         onOpenChange={setImportOpen}
         onJobAdded={(job) => setJobs([job, ...jobs])}
+      />
+      <BulkSearchDialog
+        open={bulkSearchOpen}
+        onOpenChange={setBulkSearchOpen}
+        onJobsAdded={(newJobs) => setJobs([...newJobs, ...jobs])}
       />
     </div>
   );
