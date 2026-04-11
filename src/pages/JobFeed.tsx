@@ -123,8 +123,9 @@ const JobFeed = () => {
     if (sourceFilter !== 'all') count++;
     if (hasSalary !== 'all') count++;
     if (dateFilter !== 'all') count++;
+    if (employmentTypeFilter !== 'all') count++;
     return count;
-  }, [companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter]);
+  }, [companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, employmentTypeFilter]);
 
   const clearAllFilters = () => {
     setCompanyFilter('all');
@@ -137,6 +138,7 @@ const JobFeed = () => {
     setSourceFilter('all');
     setHasSalary('all');
     setDateFilter('all');
+    setEmploymentTypeFilter('all');
     setStatusFilter('all');
     setSearch('');
   };
