@@ -53,6 +53,7 @@ const JobFeed = () => {
   const [gccSearching, setGccSearching] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [subTab, setSubTab] = useState<SubTab>('all');
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const emptyJob = { title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' };
   const [multiJobs, setMultiJobs] = useState([{ ...emptyJob }]);
