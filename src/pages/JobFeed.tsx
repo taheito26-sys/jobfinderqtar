@@ -831,7 +831,7 @@ const JobFeed = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map(job => (
+          {subTabFiltered.map(job => (
             <JobCardList
               key={job.id}
               job={job}
