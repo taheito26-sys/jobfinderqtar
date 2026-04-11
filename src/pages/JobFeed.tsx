@@ -1024,6 +1024,15 @@ const JobCardGrid = ({ job, match, selected, onSelect, onDelete, onArchive, onUn
             </div>
             <div className="flex items-center gap-1">
               <div onClick={e => onSelect(e, job.id)}><Checkbox checked={selected} className="pointer-events-none" /></div>
+              {isArchiveView ? (
+                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0" onClick={(e) => onUnarchive(e, job.id)} title="Restore">
+                  <RotateCcw className="w-3 h-3" />
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-muted-foreground h-6 w-6 p-0" onClick={(e) => onArchive(e, job.id)} title="Archive">
+                  <Archive className="w-3 h-3" />
+                </Button>
+              )}
               <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive h-6 w-6 p-0" onClick={(e) => onDelete(e, job.id)}>
                 <Trash2 className="w-3 h-3" />
               </Button>
