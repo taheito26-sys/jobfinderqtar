@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { Palette, Loader2, Download, Columns2, AlignLeft, LayoutTemplate, FileText, File, Crown } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
@@ -32,7 +33,7 @@ const TEMPLATES: Template[] = [
   {
     id: 'executive',
     label: 'Executive',
-    desc: 'Sophisticated serif layout for senior roles and leadership positions.',
+    desc: 'Sophisticated layout for senior roles and leadership positions.',
     icon: <Crown className="w-6 h-6" />,
     features: ['Serif fonts', 'Title case', 'Wider margins'],
   },
@@ -59,6 +60,8 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
   const [selected, setSelected] = useState('classic');
   const [format, setFormat] = useState<ExportFormat>('pdf');
   const [generating, setGenerating] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressLabel, setProgressLabel] = useState('');
 
   const handleGenerate = async () => {
     if (!document?.parsed_content) {
@@ -66,13 +69,17 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
       return;
     }
     setGenerating(true);
+    setProgress(10);
+    setProgressLabel('Preparing document...');
+
     try {
-      // Build the full URL to call the edge function directly with fetch
-      // so we can get the binary response as a blob
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
       const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
       const session = (await supabase.auth.getSession()).data.session;
-      
+
+      setProgress(30);
+      setProgressLabel('Generating styled document...');
+
       const response = await fetch(`${supabaseUrl}/functions/v1/generate-document`, {
         method: 'POST',
         headers: {
@@ -89,33 +96,48 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
         }),
       });
 
+      setProgress(70);
+      setProgressLabel('Processing response...');
+
       const contentType = response.headers.get('content-type') || '';
-      
+
       if (contentType.includes('application/json')) {
         const json = await response.json();
         if (json.error) throw new Error(json.error);
         if (json.download_url) window.open(json.download_url, '_blank');
         toast({ title: 'CV generated!', description: `Your ${selected} styled CV is ready.` });
       } else {
-        // Binary file response — trigger download
+        setProgress(85);
+        setProgressLabel('Downloading file...');
+
         const blob = await response.blob();
+        // Extract filename from Content-Disposition header
+        const disposition = response.headers.get('content-disposition') || '';
+        const filenameMatch = disposition.match(/filename="?([^";\n]+)"?/);
+        const ext = format === 'docx' ? 'docx' : 'pdf';
+        const fileName = filenameMatch?.[1] || `CV_${selected}.${ext}`;
+
         const url = URL.createObjectURL(blob);
         const a = window.document.createElement('a');
         a.href = url;
-        const ext = format === 'docx' ? 'docx' : 'pdf';
-        a.download = `CV_${selected}.${ext}`;
+        a.download = fileName;
         window.document.body.appendChild(a);
         a.click();
         window.document.body.removeChild(a);
         URL.revokeObjectURL(url);
+
+        setProgress(100);
+        setProgressLabel('Complete!');
         toast({ title: 'CV downloaded!', description: `Your ${selected} styled CV (${format.toUpperCase()}) has been downloaded.` });
       }
 
-      onOpenChange(false);
+      setTimeout(() => onOpenChange(false), 500);
     } catch (err: any) {
       toast({ title: 'Generation failed', description: err.message, variant: 'destructive' });
     }
     setGenerating(false);
+    setProgress(0);
+    setProgressLabel('');
   };
 
   const parsed = document?.parsed_content;
@@ -123,7 +145,7 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Palette className="w-5 h-5 text-primary" />
@@ -162,7 +184,7 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
         </div>
 
         {/* Format Toggle */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-medium text-foreground">Export format:</span>
           <div className="flex gap-1 bg-muted rounded-lg p-1">
             <button
@@ -212,6 +234,17 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
         {!hasContent && (
           <div className="bg-destructive/10 rounded-lg p-3 text-center">
             <p className="text-sm text-destructive">This document hasn't been parsed yet. Parse it first to generate a styled resume.</p>
+          </div>
+        )}
+
+        {/* Progress Bar */}
+        {generating && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>{progressLabel}</span>
+              <span>{progress}%</span>
+            </div>
+            <Progress value={progress} className="h-2" />
           </div>
         )}
 
