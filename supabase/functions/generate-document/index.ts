@@ -50,17 +50,42 @@ serve(async (req) => {
       doc = tailoredDoc;
     }
 
-    const { data: profile } = await supabase
+    const { data: dbProfile } = await supabase
       .from("profiles_v2")
       .select("full_name, email, phone, linkedin_url, location")
       .eq("user_id", user.id)
       .single();
 
-    const content = doc.content as any;
+    const rawContent = doc.content as any;
     const isCoverLetter = doc.document_type === "cover_letter";
     const jobTitle = (doc as any).jobs?.title || "Position";
     const company = (doc as any).jobs?.company || "Company";
-    const candidateName = profile?.full_name || "Candidate";
+
+    // Normalize field names: parsed_content uses "employment", generator expects "experience"
+    // Also map "achievements" to "highlights" per entry
+    const experience = (rawContent?.experience || rawContent?.employment || []).map((e: any) => ({
+      ...e,
+      highlights: e.highlights || e.achievements || [],
+    }));
+    const education = rawContent?.education || [];
+    const certifications = rawContent?.certifications || [];
+
+    const content = {
+      ...rawContent,
+      experience,
+      education,
+      certifications,
+    };
+
+    // For direct parsed_content mode, use embedded contact info; fall back to profile
+    const profile = {
+      full_name: rawContent?.full_name || dbProfile?.full_name || "Candidate",
+      email: rawContent?.email || dbProfile?.email,
+      phone: rawContent?.phone || dbProfile?.phone,
+      location: rawContent?.location || dbProfile?.location,
+      linkedin_url: rawContent?.linkedin_url || dbProfile?.linkedin_url,
+    };
+    const candidateName = profile.full_name;
 
     let fileBuffer: Uint8Array;
     let mimeType: string;
@@ -150,7 +175,8 @@ function generatePDF(
       for (const exp of content.experience) {
         lines.push("");
         lines.push(`__BOLD__${exp.title}__ENDBOLD__ — ${exp.company}`);
-        lines.push(`${exp.start_date} – ${exp.is_current ? "Present" : exp.end_date || "N/A"}`);
+        if (exp.location) lines.push(exp.location);
+        lines.push(`${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || "N/A"}`);
         if (exp.highlights?.length) {
           for (const h of exp.highlights) {
             const wrapped = wrapText(`• ${h}`, 85);
@@ -160,12 +186,36 @@ function generatePDF(
       }
     }
 
+    if (content?.education?.length) {
+      lines.push("");
+      lines.push("__BOLD__EDUCATION__ENDBOLD__");
+      lines.push("__LINE__");
+      for (const edu of content.education) {
+        lines.push("");
+        lines.push(`__BOLD__${edu.degree}__ENDBOLD__${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`);
+        lines.push(edu.institution || "");
+        if (edu.start_date || edu.end_date) {
+          lines.push(`${edu.start_date || ""} – ${edu.end_date || "Present"}`);
+        }
+        if (edu.gpa) lines.push(`GPA: ${edu.gpa}`);
+      }
+    }
+
     if (content?.skills?.length) {
       lines.push("");
       lines.push("__BOLD__SKILLS__ENDBOLD__");
       lines.push("__LINE__");
       const wrapped = wrapText(content.skills.join(", "), 90);
       lines.push(...wrapped);
+    }
+
+    if (content?.certifications?.length) {
+      lines.push("");
+      lines.push("__BOLD__CERTIFICATIONS__ENDBOLD__");
+      lines.push("__LINE__");
+      for (const cert of content.certifications) {
+        lines.push(`• ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`);
+      }
     }
   }
 
