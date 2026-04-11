@@ -88,19 +88,22 @@ async function extractJobWithAI(text: string, sourceUrl: string, userId: string)
 TEXT:
 ${text}`;
 
-  // Try Lovable AI Gateway first (always available, no API key needed)
-  const providers = [
-    {
+  // Try Lovable AI Gateway first (always available with LOVABLE_API_KEY)
+  const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+  const providers: Array<{name: string; url: string; headers: Record<string,string>; body: any; extractContent: (d:any)=>string}> = [];
+  
+  if (lovableKey) {
+    providers.push({
       name: 'Lovable AI',
       url: 'https://ai.gateway.lovable.dev/v1/chat/completions',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+        'Authorization': `Bearer ${lovableKey}`,
       },
       body: { model: 'google/gemini-3-flash-preview', messages: [{ role: 'user', content: prompt }], temperature: 0.1 },
       extractContent: (data: any) => data.choices?.[0]?.message?.content || '',
-    },
-  ];
+    });
+  }
 
   // Also try user's configured providers as fallback
   try {
