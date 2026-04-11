@@ -60,28 +60,39 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
     }
     setGenerating(true);
     try {
-      const { data, error } = await supabase.functions.invoke('generate-document', {
-        body: {
+      // Build the full URL to call the edge function directly with fetch
+      // so we can get the binary response as a blob
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const session = (await supabase.auth.getSession()).data.session;
+      
+      const response = await fetch(`${supabaseUrl}/functions/v1/generate-document`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'apikey': supabaseKey,
+        },
+        body: JSON.stringify({
           document_id: document.id,
           template: selected,
           parsed_content: document.parsed_content,
           document_type: 'cv',
           format,
-        },
+        }),
       });
 
-      if (error) {
-        // Edge function returned binary (file download) — check if it's a blob
-        throw error;
-      }
-
-      // If response is an object with error, throw
-      if (data?.error) throw new Error(data.error);
-
-      // The edge function returns the file as a binary response
-      // supabase.functions.invoke returns it as a Blob when content-type isn't JSON
-      if (data instanceof Blob) {
-        const url = URL.createObjectURL(data);
+      const contentType = response.headers.get('content-type') || '';
+      
+      if (contentType.includes('application/json')) {
+        const json = await response.json();
+        if (json.error) throw new Error(json.error);
+        if (json.download_url) window.open(json.download_url, '_blank');
+        toast({ title: 'CV generated!', description: `Your ${selected} styled CV is ready.` });
+      } else {
+        // Binary file response — trigger download
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
         const a = window.document.createElement('a');
         a.href = url;
         const ext = format === 'docx' ? 'docx' : 'pdf';
@@ -91,11 +102,6 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
         window.document.body.removeChild(a);
         URL.revokeObjectURL(url);
         toast({ title: 'CV downloaded!', description: `Your ${selected} styled CV (${format.toUpperCase()}) has been downloaded.` });
-      } else if (data?.download_url) {
-        window.open(data.download_url, '_blank');
-        toast({ title: 'CV generated!', description: `Your ${selected} styled CV is ready.` });
-      } else {
-        toast({ title: 'CV generated!', description: `Your ${selected} styled CV is ready.` });
       }
 
       onOpenChange(false);
