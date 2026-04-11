@@ -57,12 +57,20 @@ const SettingsPage = () => {
       });
 
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (data?.error && !data?.fallback) throw new Error(data.error);
 
-      setTestStatus('success');
-      setTestModel(data.model || '');
-      setTestMessage(data.message || 'Connection successful');
-      toast({ title: 'Connection test passed', description: `Model: ${data.model || 'OK'}` });
+      if (data?.fallback) {
+        // Soft error: key is valid but rate limited or billing issue
+        setTestStatus('success');
+        setTestModel(data.model || '');
+        setTestMessage(data.message || 'Key valid but temporarily limited');
+        toast({ title: 'API key is valid', description: data.message });
+      } else {
+        setTestStatus('success');
+        setTestModel(data.model || '');
+        setTestMessage(data.message || 'Connection successful');
+        toast({ title: 'Connection test passed', description: `Model: ${data.model || 'OK'}` });
+      }
     } catch (err: any) {
       setTestStatus('error');
       setTestMessage(err.message || 'Connection failed');
