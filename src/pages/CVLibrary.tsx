@@ -320,6 +320,73 @@ const CVLibrary = () => {
         </div>
       )}
 
+      {/* Preview Dialog with PDF embed */}
+      <Dialog open={!!previewDoc} onOpenChange={() => { setPreviewDoc(null); setPreviewUrl(null); }}>
+        <DialogContent className="max-w-4xl h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Eye className="w-5 h-5" />
+              {previewDoc?.title}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 overflow-hidden rounded-lg border bg-muted">
+            {previewUrl ? (
+              previewDoc?.mime_type === 'application/pdf' ? (
+                <iframe src={previewUrl} className="w-full h-full min-h-[60vh]" title="PDF Preview" />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full gap-4 p-8">
+                  <FileText className="w-16 h-16 text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">Preview not available for this file type.</p>
+                  <Button asChild variant="outline">
+                    <a href={previewUrl} target="_blank" rel="noopener noreferrer">Download to View</a>
+                  </Button>
+                </div>
+              )
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+              </div>
+            )}
+          </div>
+          {previewDoc && (
+            <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t">
+              <div className="flex items-center gap-3">
+                <span className="flex items-center gap-1"><History className="w-3 h-3" />Version {previewDoc.version || 1}</span>
+                <span>{previewDoc.file_name}</span>
+                {previewDoc.file_size && <span>{Math.round(previewDoc.file_size / 1024)} KB</span>}
+              </div>
+              <span>Uploaded {new Date(previewDoc.created_at).toLocaleDateString()}</span>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Template Selection */}
+      <Dialog open={false}>
+        <DialogContent>
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Palette className="w-5 h-5" />Choose CV Template</DialogTitle></DialogHeader>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { id: 'classic', label: 'Classic', desc: 'Clean, traditional layout' },
+              { id: 'modern', label: 'Modern', desc: 'Contemporary two-column' },
+              { id: 'minimal', label: 'Minimal', desc: 'Simple, ATS-friendly' },
+            ].map(t => (
+              <button
+                key={t.id}
+                onClick={() => setSelectedTemplate(t.id)}
+                className={`p-4 rounded-lg border-2 text-left transition-all ${selectedTemplate === t.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'}`}
+              >
+                <div className="w-full h-20 bg-muted rounded mb-2 flex items-center justify-center">
+                  <FileText className="w-8 h-8 text-muted-foreground/50" />
+                </div>
+                <p className="text-sm font-medium">{t.label}</p>
+                <p className="text-xs text-muted-foreground">{t.desc}</p>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Import Confirmation Dialog */}
       <Dialog open={!!importDoc} onOpenChange={() => setImportDoc(null)}>
         <DialogContent>
