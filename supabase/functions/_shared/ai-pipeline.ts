@@ -272,11 +272,26 @@ export async function runPipeline(opts: {
   if (!config.enabled || config.providers.length <= 1) {
     const provider = config.primary;
     console.log(`[Pipeline] Single mode: ${provider.name} (${provider.model})`);
-    const result = await callProvider(provider, [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ], tools, toolChoice, maxTokens);
-    return { result, providerChain: [`${provider.name} (${provider.model})`] };
+    try {
+      const result = await callProvider(provider, [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ], tools, toolChoice, maxTokens);
+      return { result, providerChain: [`${provider.name} (${provider.model})`] };
+    } catch (err: any) {
+      // If primary provider fails and it's not Lovable, fall back to Lovable AI
+      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+      if (provider.provider !== "lovable" && lovableKey) {
+        console.warn(`[Pipeline] ${provider.name} failed (${err.message}), falling back to Lovable AI`);
+        const fallback = buildProvider("lovable", lovableKey, lovableKey);
+        const result = await callProvider(fallback, [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ], tools, toolChoice, maxTokens);
+        return { result, providerChain: [`${provider.name} (failed)`, `Lovable AI (${fallback.model})`] };
+      }
+      throw err;
+    }
   }
 
   const chain: string[] = [];
