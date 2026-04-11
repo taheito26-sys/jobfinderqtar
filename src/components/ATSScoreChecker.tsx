@@ -46,6 +46,13 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
 
       const cv = docs[0];
       const parsedContent = (cv.parsed_content || {}) as Record<string, any>;
+
+      // Get user skills
+      const { data: skills } = await supabase.from('profile_skills')
+        .select('skill_name').eq('user_id', userId);
+      const userSkills = (skills || []).map(s => s.skill_name.toLowerCase());
+
+      // Get employment
       const { data: employment } = await supabase.from('employment_history')
         .select('title, description, achievements').eq('user_id', userId);
 
