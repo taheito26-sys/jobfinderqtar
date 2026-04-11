@@ -22,18 +22,33 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) throw new Error("Unauthorized");
 
-    const { document_id, format = "pdf" } = await req.json();
-    if (!document_id) throw new Error("document_id is required");
+    const body = await req.json();
+    const { document_id, format = "pdf", parsed_content, template, document_type } = body;
+
+    if (!document_id && !parsed_content) throw new Error("document_id or parsed_content is required");
     if (!["pdf", "docx"].includes(format)) throw new Error("format must be 'pdf' or 'docx'");
 
-    const { data: doc, error: docError } = await supabase
-      .from("tailored_documents")
-      .select("*, jobs(title, company)")
-      .eq("id", document_id)
-      .eq("user_id", user.id)
-      .single();
+    let doc: any = null;
 
-    if (docError || !doc) throw new Error("Document not found");
+    if (parsed_content) {
+      // Direct content mode (from CVTemplateSelector / master_documents)
+      doc = {
+        content: parsed_content,
+        document_type: document_type || "cv",
+        jobs: null,
+      };
+    } else {
+      // Lookup from tailored_documents
+      const { data: tailoredDoc, error: docError } = await supabase
+        .from("tailored_documents")
+        .select("*, jobs(title, company)")
+        .eq("id", document_id)
+        .eq("user_id", user.id)
+        .single();
+
+      if (docError || !tailoredDoc) throw new Error("Document not found");
+      doc = tailoredDoc;
+    }
 
     const { data: profile } = await supabase
       .from("profiles_v2")
