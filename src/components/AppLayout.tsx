@@ -46,7 +46,7 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
             <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
               <Briefcase className="w-4 h-4 text-primary-foreground" />
             </div>
-            {!collapsed && <span className="font-semibold text-foreground truncate">JobOps</span>}
+            {!collapsed && <span className="font-semibold text-foreground truncate">FindMeAJob</span>}
           </div>
           <button
             onClick={() => setCollapsed(!collapsed)}
@@ -103,7 +103,7 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
           <button onClick={() => setMobileOpen(true)} className="text-muted-foreground lg:hidden">
             <Menu className="w-5 h-5" />
           </button>
-          <span className="ml-3 font-semibold text-foreground lg:hidden">JobOps</span>
+          <span className="ml-3 font-semibold text-foreground lg:hidden">FindMeAJob</span>
           <div className="ml-auto">
             <NotificationBell />
           </div>
