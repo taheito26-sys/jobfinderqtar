@@ -30,6 +30,7 @@ interface ProfileData {
   desired_salary_max: number;
   desired_salary_currency: string;
   desired_seniority: string;
+  desired_titles: string[];
   linkedin_url: string;
   github_url: string;
   portfolio_url: string;
@@ -46,9 +47,10 @@ const Profile = () => {
     full_name: '', headline: '', summary: '', location: '', country: '',
     visa_status: '', work_authorization: '', remote_preference: 'flexible',
     desired_salary_min: 0, desired_salary_max: 0, desired_salary_currency: 'USD',
-    desired_seniority: '', linkedin_url: '', github_url: '', portfolio_url: '',
+    desired_seniority: '', desired_titles: [], linkedin_url: '', github_url: '', portfolio_url: '',
     phone: '', email: '',
   });
+  const [newDesiredTitle, setNewDesiredTitle] = useState('');
   const [skills, setSkills] = useState<any[]>([]);
   const [newSkill, setNewSkill] = useState('');
   const [employment, setEmployment] = useState<any[]>([]);
