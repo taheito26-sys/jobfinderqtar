@@ -259,12 +259,52 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
 
     const scores = JSON.parse(result.tool_arguments);
 
+    // Generate embeddings and compute semantic similarity
+    let semanticSimilarity = 0;
+    try {
+      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
+      if (lovableKey) {
+        const supabaseAdmin = createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+        );
+
+        // Check if profile embedding exists
+        const { data: profileEmb } = await supabaseAdmin
+          .from("profile_embeddings")
+          .select("embedding")
+          .eq("user_id", user.id)
+          .eq("section", "full")
+          .maybeSingle();
+
+        // Check if job embedding exists
+        const { data: jobEmb } = await supabaseAdmin
+          .from("job_embeddings")
+          .select("embedding")
+          .eq("job_id", job_id)
+          .maybeSingle();
+
+        if (profileEmb?.embedding && jobEmb?.embedding) {
+          // Compute cosine similarity using pgvector
+          const { data: simResult } = await supabaseAdmin.rpc("compute_similarity", {
+            _user_id: user.id,
+            _job_id: job_id,
+          });
+          if (simResult !== null && simResult !== undefined) {
+            semanticSimilarity = Math.round(simResult * 100) / 100;
+          }
+        }
+      }
+    } catch (embErr: any) {
+      console.warn("Semantic similarity computation skipped:", embErr.message);
+    }
+
     // Upsert match
     const { data: match, error: matchError } = await supabase.from("job_matches").upsert({
       user_id: user.id,
       job_id,
       ...scores,
-      semantic_similarity: 0,
+      semantic_similarity: semanticSimilarity,
       scored_at: new Date().toISOString(),
     }, { onConflict: "user_id,job_id" }).select().single();
 
