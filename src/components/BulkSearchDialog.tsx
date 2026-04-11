@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -32,18 +33,25 @@ interface BulkSearchDialogProps {
 }
 
 const QUICK_SEARCHES = [
-  'Software Engineer Qatar',
-  'Project Manager Doha',
-  'Data Analyst Qatar',
-  'Marketing Manager Doha',
-  'Mechanical Engineer Qatar',
-  'Finance Analyst Doha',
+  'Software Engineer',
+  'Project Manager',
+  'Data Analyst',
+  'Marketing Manager',
+  'Mechanical Engineer',
+  'Finance Analyst',
+];
+
+const COUNTRIES = [
+  '', 'Qatar', 'UAE', 'Saudi Arabia', 'Bahrain', 'Kuwait', 'Oman',
+  'United States', 'United Kingdom', 'Canada', 'Australia', 'Germany',
+  'France', 'Netherlands', 'Singapore', 'India', 'Remote',
 ];
 
 const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogProps) => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [query, setQuery] = useState('');
+  const [country, setCountry] = useState('');
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -59,14 +67,13 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
 
     try {
       const { data, error } = await supabase.functions.invoke('search-jobs', {
-        body: { query: query.trim(), limit: 15 },
+        body: { query: query.trim(), limit: 15, country: country || undefined },
       });
 
       if (error) {
         toast({ title: 'Search failed', description: error.message, variant: 'destructive' });
       } else if (data?.jobs?.length > 0) {
         setResults(data.jobs);
-        // Auto-select all
         setSelected(new Set(data.jobs.map((_: any, i: number) => i)));
         toast({ title: `Found ${data.jobs.length} jobs` });
       } else {
@@ -132,6 +139,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
 
   const resetState = () => {
     setQuery('');
+    setCountry('');
     setResults([]);
     setSelected(new Set());
     setImported(new Set());
@@ -163,15 +171,27 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
             </div>
           </div>
 
-          {/* Search input */}
+          {/* Search input + country filter */}
           <div className="flex gap-2">
             <Input
-              placeholder='e.g. "Software Engineer Qatar"'
+              placeholder='e.g. "Software Engineer"'
               value={query}
               onChange={e => setQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
               disabled={searching}
+              className="flex-1"
             />
+            <Select value={country} onValueChange={setCountry}>
+              <SelectTrigger className="w-[160px]">
+                <SelectValue placeholder="Any Country" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Any Country</SelectItem>
+                {COUNTRIES.filter(Boolean).map(c => (
+                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button onClick={handleSearch} disabled={searching || !query.trim()}>
               {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Search'}
             </Button>
@@ -181,7 +201,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
           {searching && (
             <div className="text-center py-8 text-muted-foreground">
               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
-              <p className="text-sm">Searching job boards...</p>
+              <p className="text-sm">Searching job boards{country && country !== 'all' ? ` in ${country}` : ''}...</p>
             </div>
           )}
 
@@ -239,12 +259,22 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
                           {job.employment_type && (
                             <Badge variant="secondary" className="text-[10px] capitalize">{job.employment_type}</Badge>
                           )}
+                          {job.seniority_level && (
+                            <Badge variant="secondary" className="text-[10px]">{job.seniority_level}</Badge>
+                          )}
                           {job.salary_min && (
                             <Badge variant="secondary" className="text-[10px]">
                               {job.salary_currency || ''} {job.salary_min?.toLocaleString()}{job.salary_max ? ` - ${job.salary_max.toLocaleString()}` : ''}
                             </Badge>
                           )}
                         </div>
+                        {Array.isArray(job.requirements) && job.requirements.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {job.requirements.slice(0, 3).map((r, i) => (
+                              <span key={i} className="text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded">{r}</span>
+                            ))}
+                          </div>
+                        )}
                         {isImported && <span className="text-[10px] text-score-excellent font-medium">Imported ✓</span>}
                       </div>
                     </div>

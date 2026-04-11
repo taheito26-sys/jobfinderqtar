@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { query, limit = 10 } = await req.json();
+    const { query, limit = 10, country } = await req.json();
     if (!query) {
       return new Response(JSON.stringify({ error: 'Search query is required' }), {
         status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -44,9 +44,9 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log('Searching jobs:', query, 'limit:', limit);
+    const searchQuery = country ? `${query} ${country} job listing` : `${query} job listing`;
+    console.log('Searching jobs:', searchQuery, 'limit:', limit);
 
-    // Use Firecrawl search API to find job listings
     const searchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
       method: 'POST',
       headers: {
@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        query: `${query} job listing`,
+        query: searchQuery,
         limit: Math.min(limit, 20),
       }),
     });
@@ -68,13 +68,105 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Process results into structured job objects
-    const results = (searchData.data || []).map((result: any) => {
-      const markdown = result.markdown || '';
-      const title = result.metadata?.title || result.title || '';
-      const description = result.metadata?.description || markdown.substring(0, 1000);
+    const rawResults = (searchData.data || []);
 
-      // Try to extract company from title (common pattern: "Job Title - Company")
+    // Use AI to extract structured job details from results
+    const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+    if (lovableKey && rawResults.length > 0) {
+      try {
+        const summaries = rawResults.map((r: any, i: number) => {
+          const title = r.metadata?.title || r.title || '';
+          const desc = r.metadata?.description || '';
+          const markdown = (r.markdown || '').substring(0, 800);
+          return `[${i}] URL: ${r.url}\nTitle: ${title}\nDescription: ${desc}\nContent: ${markdown}`;
+        }).join('\n---\n');
+
+        const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${lovableKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'google/gemini-3-flash-preview',
+            messages: [
+              {
+                role: 'system',
+                content: 'You extract structured job listing data. Return ONLY valid JSON array. No markdown wrapping.'
+              },
+              {
+                role: 'user',
+                content: `Extract job details from these search results. Return a JSON array of objects with these fields:
+- index (number matching [N] above)
+- title (job title only, not company)
+- company (company name)
+- location (city/country)
+- remote_type ("remote"|"hybrid"|"onsite"|"unknown")
+- employment_type ("full-time"|"part-time"|"contract"|"internship")
+- seniority_level (e.g. "Senior", "Mid", "Junior", "")
+- salary_min (number or null)
+- salary_max (number or null)
+- salary_currency (e.g. "USD","QAR" or null)
+- requirements (array of key requirements, max 5)
+
+Skip entries that are not actual job postings (e.g. job board homepages, articles).
+
+Results:
+${summaries}`
+              }
+            ],
+            temperature: 0.1,
+          }),
+        });
+
+        if (aiResponse.ok) {
+          const aiData = await aiResponse.json();
+          const raw = aiData.choices?.[0]?.message?.content || '[]';
+          const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+          
+          try {
+            const parsed = JSON.parse(cleaned);
+            if (Array.isArray(parsed)) {
+              const enriched = parsed.map((p: any) => {
+                const source = rawResults[p.index];
+                if (!source) return null;
+                return {
+                  title: p.title || 'Untitled Job',
+                  company: p.company || 'Unknown Company',
+                  location: p.location || '',
+                  remote_type: p.remote_type || 'unknown',
+                  description: source.metadata?.description || (source.markdown || '').substring(0, 1000),
+                  salary_min: p.salary_min || null,
+                  salary_max: p.salary_max || null,
+                  salary_currency: p.salary_currency || null,
+                  employment_type: p.employment_type || 'full-time',
+                  seniority_level: p.seniority_level || '',
+                  requirements: Array.isArray(p.requirements) ? p.requirements : [],
+                  apply_url: source.url || '',
+                  source_url: source.url || '',
+                };
+              }).filter(Boolean);
+
+              if (enriched.length > 0) {
+                console.log(`AI extracted ${enriched.length} structured jobs for: ${query}`);
+                return new Response(JSON.stringify({ success: true, jobs: enriched }), {
+                  headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                });
+              }
+            }
+          } catch (e) {
+            console.error('AI parse error, falling back:', e);
+          }
+        }
+      } catch (e) {
+        console.error('AI extraction failed, falling back:', e);
+      }
+    }
+
+    // Fallback: basic extraction without AI
+    const results = rawResults.map((result: any) => {
+      const title = result.metadata?.title || result.title || '';
+      const description = result.metadata?.description || (result.markdown || '').substring(0, 1000);
       const titleParts = title.split(/\s[-–|@]\s/);
       const jobTitle = titleParts[0]?.trim() || 'Untitled Job';
       const company = titleParts[1]?.trim() || 'Unknown Company';

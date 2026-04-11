@@ -30,6 +30,7 @@ interface ProfileData {
   desired_salary_max: number;
   desired_salary_currency: string;
   desired_seniority: string;
+  desired_titles: string[];
   linkedin_url: string;
   github_url: string;
   portfolio_url: string;
@@ -46,9 +47,10 @@ const Profile = () => {
     full_name: '', headline: '', summary: '', location: '', country: '',
     visa_status: '', work_authorization: '', remote_preference: 'flexible',
     desired_salary_min: 0, desired_salary_max: 0, desired_salary_currency: 'USD',
-    desired_seniority: '', linkedin_url: '', github_url: '', portfolio_url: '',
+    desired_seniority: '', desired_titles: [], linkedin_url: '', github_url: '', portfolio_url: '',
     phone: '', email: '',
   });
+  const [newDesiredTitle, setNewDesiredTitle] = useState('');
   const [skills, setSkills] = useState<any[]>([]);
   const [newSkill, setNewSkill] = useState('');
   const [employment, setEmployment] = useState<any[]>([]);
@@ -73,7 +75,10 @@ const Profile = () => {
         supabase.from('certifications').select('*').eq('user_id', user.id).order('issue_date', { ascending: false }),
         supabase.from('proof_points').select('*').eq('user_id', user.id).order('created_at', { ascending: false }),
       ]);
-      if (profileRes.data) setProfile(profileRes.data as any);
+      if (profileRes.data) {
+        const p = profileRes.data as any;
+        setProfile({ ...p, desired_titles: Array.isArray(p.desired_titles) ? p.desired_titles : [] });
+      }
       setSkills(skillsRes.data ?? []);
       setEmployment(empRes.data ?? []);
       setEducation(eduRes.data ?? []);
@@ -164,6 +169,40 @@ const Profile = () => {
               </div>
               <div className="space-y-2"><Label>Min Salary</Label><Input type="number" value={profile.desired_salary_min} onChange={e => updateField('desired_salary_min', Number(e.target.value))} /></div>
               <div className="space-y-2"><Label>Max Salary</Label><Input type="number" value={profile.desired_salary_max} onChange={e => updateField('desired_salary_max', Number(e.target.value))} /></div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader><CardTitle className="text-base">Desired Job Titles</CardTitle></CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground mb-3">These titles power the automated hourly job search. Add the roles you're targeting.</p>
+              <div className="flex gap-2 mb-4">
+                <Input
+                  value={newDesiredTitle}
+                  onChange={e => setNewDesiredTitle(e.target.value)}
+                  placeholder="e.g. Senior Software Engineer"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newDesiredTitle.trim()) {
+                      setProfile(prev => ({ ...prev, desired_titles: [...prev.desired_titles, newDesiredTitle.trim()] }));
+                      setNewDesiredTitle('');
+                    }
+                  }}
+                />
+                <Button size="sm" onClick={() => {
+                  if (newDesiredTitle.trim()) {
+                    setProfile(prev => ({ ...prev, desired_titles: [...prev.desired_titles, newDesiredTitle.trim()] }));
+                    setNewDesiredTitle('');
+                  }
+                }}><Plus className="w-4 h-4" /></Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {profile.desired_titles.map((title, i) => (
+                  <Badge key={i} variant="secondary" className="gap-1 pr-1">
+                    {title}
+                    <button onClick={() => setProfile(prev => ({ ...prev, desired_titles: prev.desired_titles.filter((_, idx) => idx !== i) }))} className="ml-1 hover:text-destructive"><X className="w-3 h-3" /></button>
+                  </Badge>
+                ))}
+                {profile.desired_titles.length === 0 && <p className="text-sm text-muted-foreground">No desired titles set. The auto-search won't run without them.</p>}
+              </div>
             </CardContent>
           </Card>
           <Card>
