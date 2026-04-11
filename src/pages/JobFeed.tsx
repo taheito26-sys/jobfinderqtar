@@ -22,7 +22,7 @@ import {
   Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe, Linkedin,
   Filter, X, ChevronDown, Clock, DollarSign, Briefcase, Star, LayoutGrid, List,
   ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3,
-  Plane
+  Plane, Archive, RotateCcw
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
@@ -421,7 +421,7 @@ const JobFeed = () => {
     <div className="animate-fade-in">
       <PageHeader
         title="Job Feed"
-        description={`${stats.total} jobs tracked • ${stats.scored} scored • ${stats.applyRec} recommended`}
+        description={statusFilter === 'archived' ? `${stats.archived} archived jobs` : `${stats.total} jobs tracked • ${stats.scored} scored • ${stats.applyRec} recommended`}
         actions={
           <div className="flex gap-2 flex-wrap">
             {stats.unscored > 0 && (
