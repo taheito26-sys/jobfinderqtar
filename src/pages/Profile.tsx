@@ -537,6 +537,45 @@ const Profile = () => {
           }}
         />
       )}
+
+      {/* CV Picker Dialog */}
+      <Dialog open={cvPickerOpen} onOpenChange={setCvPickerOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Extract Profile from CV</DialogTitle>
+            <DialogDescription>
+              Select an uploaded CV to auto-fill your profile fields, skills, experience, education, and certifications using AI.
+            </DialogDescription>
+          </DialogHeader>
+          {loadingCvs ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : cvDocuments.length === 0 ? (
+            <div className="text-center py-8">
+              <FileText className="w-10 h-10 mx-auto text-muted-foreground mb-2" />
+              <p className="text-sm text-muted-foreground">No CVs uploaded yet. Go to the CV Library to upload one first.</p>
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              {cvDocuments.map(doc => (
+                <button
+                  key={doc.id}
+                  onClick={() => extractFromCv(doc.id)}
+                  className="w-full flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 transition-colors text-left"
+                >
+                  <FileText className="w-5 h-5 text-primary shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-sm text-foreground truncate">{doc.title}</p>
+                    <p className="text-xs text-muted-foreground">{doc.file_name} • {new Date(doc.created_at).toLocaleDateString()}</p>
+                  </div>
+                  {doc.is_primary && <Badge variant="secondary" className="text-xs shrink-0">Primary</Badge>}
+                </button>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
