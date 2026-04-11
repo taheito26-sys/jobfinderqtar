@@ -172,6 +172,40 @@ const Profile = () => {
             </CardContent>
           </Card>
           <Card>
+            <CardHeader><CardTitle className="text-base">Desired Job Titles</CardTitle></CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground mb-3">These titles power the automated hourly job search. Add the roles you're targeting.</p>
+              <div className="flex gap-2 mb-4">
+                <Input
+                  value={newDesiredTitle}
+                  onChange={e => setNewDesiredTitle(e.target.value)}
+                  placeholder="e.g. Senior Software Engineer"
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && newDesiredTitle.trim()) {
+                      setProfile(prev => ({ ...prev, desired_titles: [...prev.desired_titles, newDesiredTitle.trim()] }));
+                      setNewDesiredTitle('');
+                    }
+                  }}
+                />
+                <Button size="sm" onClick={() => {
+                  if (newDesiredTitle.trim()) {
+                    setProfile(prev => ({ ...prev, desired_titles: [...prev.desired_titles, newDesiredTitle.trim()] }));
+                    setNewDesiredTitle('');
+                  }
+                }}><Plus className="w-4 h-4" /></Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {profile.desired_titles.map((title, i) => (
+                  <Badge key={i} variant="secondary" className="gap-1 pr-1">
+                    {title}
+                    <button onClick={() => setProfile(prev => ({ ...prev, desired_titles: prev.desired_titles.filter((_, idx) => idx !== i) }))} className="ml-1 hover:text-destructive"><X className="w-3 h-3" /></button>
+                  </Badge>
+                ))}
+                {profile.desired_titles.length === 0 && <p className="text-sm text-muted-foreground">No desired titles set. The auto-search won't run without them.</p>}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
             <CardHeader><CardTitle className="text-base">Links</CardTitle></CardHeader>
             <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2"><Label>LinkedIn</Label><Input value={profile.linkedin_url} onChange={e => updateField('linkedin_url', e.target.value)} /></div>
