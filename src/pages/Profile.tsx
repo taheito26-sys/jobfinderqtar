@@ -17,6 +17,7 @@ import EmploymentModal from '@/components/EmploymentModal';
 import EducationModal from '@/components/EducationModal';
 import CertificationModal from '@/components/CertificationModal';
 import ProofPointModal from '@/components/ProofPointModal';
+import ProfileStrengthMeter from '@/components/ProfileStrengthMeter';
 
 interface ProfileData {
   full_name: string;
@@ -323,6 +324,21 @@ const Profile = () => {
         }
       />
 
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        {/* Strength Meter Sidebar */}
+        <div className="lg:col-span-1 space-y-4">
+          <ProfileStrengthMeter
+            profile={profile}
+            skills={skills}
+            employment={employment}
+            education={education}
+            certifications={certifications}
+            proofPoints={proofPoints}
+          />
+        </div>
+
+        {/* Main Content */}
+        <div className="lg:col-span-3">
       <Tabs defaultValue="personal" className="space-y-4">
         <TabsList>
           <TabsTrigger value="personal">Personal</TabsTrigger>
@@ -559,6 +575,8 @@ const Profile = () => {
           </Card>
         </TabsContent>
       </Tabs>
+        </div>
+      </div>
 
       {/* Modals */}
       {empModal.open && user && (

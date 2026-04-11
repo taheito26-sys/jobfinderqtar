@@ -556,6 +556,79 @@ const JobDetail = () => {
                 </CardContent>
               </Card>
 
+              {/* Requirements vs Skills Matrix */}
+              {(job.requirements as any[])?.length > 0 && (
+                <Card>
+                  <CardHeader><CardTitle className="text-base flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-primary" />Requirements Matrix
+                  </CardTitle></CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {(job.requirements as string[]).map((req, i) => {
+                        const isMissing = (match.missing_requirements as string[] || []).some(
+                          (m: string) => m.toLowerCase().includes(req.toLowerCase().slice(0, 15)) ||
+                            req.toLowerCase().includes(m.toLowerCase().slice(0, 15))
+                        );
+                        const isBlocker = (match.blockers as string[] || []).some(
+                          (b: string) => b.toLowerCase().includes(req.toLowerCase().slice(0, 15))
+                        );
+                        return (
+                          <div key={i} className={`flex items-start gap-2 p-2 rounded-md text-sm ${isBlocker ? 'bg-destructive/10' : isMissing ? 'bg-score-fair/10' : 'bg-score-excellent/10'}`}>
+                            {isBlocker ? (
+                              <XCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+                            ) : isMissing ? (
+                              <AlertTriangle className="w-4 h-4 text-score-fair flex-shrink-0 mt-0.5" />
+                            ) : (
+                              <CheckCircle2 className="w-4 h-4 text-score-excellent flex-shrink-0 mt-0.5" />
+                            )}
+                            <span className="text-foreground">{req}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-3 mt-3 text-[10px] text-muted-foreground">
+                      <span className="flex items-center gap-1"><CheckCircle2 className="w-3 h-3 text-score-excellent" />Met</span>
+                      <span className="flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-score-fair" />Gap</span>
+                      <span className="flex items-center gap-1"><XCircle className="w-3 h-3 text-destructive" />Blocker</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Interview Prep Tips */}
+              {match.overall_score >= 50 && (
+                <Card className="border-primary/20">
+                  <CardHeader><CardTitle className="text-base flex items-center gap-2">
+                    <Zap className="w-4 h-4 text-primary" />Interview Prep Tips
+                  </CardTitle></CardHeader>
+                  <CardContent className="space-y-2">
+                    {(match.missing_requirements as string[] || []).length > 0 && (
+                      <div className="text-sm">
+                        <p className="font-medium text-foreground mb-1">Address these gaps:</p>
+                        <ul className="space-y-1">
+                          {(match.missing_requirements as string[]).slice(0, 3).map((r: string, i: number) => (
+                            <li key={i} className="text-muted-foreground text-xs">• Prepare an explanation for: {r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {(match.match_reasons as string[] || []).length > 0 && (
+                      <div className="text-sm">
+                        <p className="font-medium text-foreground mb-1">Emphasize your strengths:</p>
+                        <ul className="space-y-1">
+                          {(match.match_reasons as string[]).slice(0, 3).map((r: string, i: number) => (
+                            <li key={i} className="text-xs text-muted-foreground">✓ {r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/50">
+                      Research {job.company}'s recent news and culture before your interview.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
               {(match.match_reasons as any[])?.length > 0 && (
                 <Card>
                   <CardHeader><CardTitle className="text-base flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-score-excellent" />Match Reasons</CardTitle></CardHeader>
