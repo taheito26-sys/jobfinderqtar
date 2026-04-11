@@ -13,8 +13,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2 } from 'lucide-react';
+import { Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import ImportJobDialog from '@/components/ImportJobDialog';
 
 const JobFeed = () => {
   const { user } = useAuth();
@@ -27,6 +28,7 @@ const JobFeed = () => {
   const [sortBy, setSortBy] = useState('newest');
   const [addOpen, setAddOpen] = useState(false);
   const [batchScoring, setBatchScoring] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [newJob, setNewJob] = useState({ title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' });
 
   useEffect(() => {
@@ -122,6 +124,9 @@ const JobFeed = () => {
                 {batchScoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Scoring...</> : <><Zap className="w-4 h-4 mr-2" />Score All ({unscoredCount})</>}
               </Button>
             )}
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Globe className="w-4 h-4 mr-2" />Import URL
+            </Button>
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger asChild>
                 <Button><Plus className="w-4 h-4 mr-2" />Add Job</Button>
@@ -226,6 +231,12 @@ const JobFeed = () => {
           })}
         </div>
       )}
+
+      <ImportJobDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onJobAdded={(job) => setJobs([job, ...jobs])}
+      />
     </div>
   );
 };
