@@ -1,14 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { Loader2, Search, MapPin, Building2, Plus, CheckCircle2 } from 'lucide-react';
+import { Loader2, Search, MapPin, Building2, Plus, CheckCircle2, User, Briefcase, Sparkles } from 'lucide-react';
 
 interface SearchResult {
   title: string;
@@ -47,10 +48,14 @@ const COUNTRIES = [
   'France', 'Netherlands', 'Singapore', 'India', 'Remote',
 ];
 
+type SearchMode = 'free' | 'profile' | 'company';
+
 const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogProps) => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const [searchMode, setSearchMode] = useState<SearchMode>('free');
   const [query, setQuery] = useState('');
+  const [companyQuery, setCompanyQuery] = useState('');
   const [country, setCountry] = useState('');
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -58,16 +63,76 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState<Set<number>>(new Set());
 
+  // Profile data
+  const [profileTitles, setProfileTitles] = useState<string[]>([]);
+  const [profileIndustries, setProfileIndustries] = useState<string[]>([]);
+  const [profileCountry, setProfileCountry] = useState('');
+  const [profileSeniority, setProfileSeniority] = useState('');
+  const [selectedProfileTitle, setSelectedProfileTitle] = useState('');
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
+  useEffect(() => {
+    if (open && user && !profileLoaded) {
+      loadProfile();
+    }
+  }, [open, user]);
+
+  const loadProfile = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('profiles_v2')
+      .select('desired_titles, desired_industries, country, desired_seniority')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (data) {
+      const titles = Array.isArray(data.desired_titles) ? (data.desired_titles as string[]) : [];
+      const industries = Array.isArray(data.desired_industries) ? (data.desired_industries as string[]) : [];
+      setProfileTitles(titles);
+      setProfileIndustries(industries);
+      setProfileCountry(data.country || '');
+      setProfileSeniority(data.desired_seniority || '');
+    }
+    setProfileLoaded(true);
+  };
+
+  const buildSearchQuery = (): string => {
+    if (searchMode === 'free') return query.trim();
+    if (searchMode === 'company') {
+      const title = query.trim();
+      const company = companyQuery.trim();
+      if (!company) return '';
+      return title ? `${title} at ${company}` : `jobs at ${company}`;
+    }
+    // profile mode
+    const title = selectedProfileTitle || (profileTitles.length > 0 ? profileTitles[0] : '');
+    if (!title) return '';
+    const parts = [title];
+    if (profileSeniority) parts.unshift(profileSeniority);
+    return parts.join(' ');
+  };
+
+  const getEffectiveCountry = (): string => {
+    if (country && country !== 'all') return country;
+    if (searchMode === 'profile' && profileCountry) return profileCountry;
+    return '';
+  };
+
   const handleSearch = async () => {
-    if (!query.trim()) return;
+    const searchQuery = buildSearchQuery();
+    if (!searchQuery) {
+      toast({ title: 'Missing query', description: 'Please enter a search term.', variant: 'destructive' });
+      return;
+    }
     setSearching(true);
     setResults([]);
     setSelected(new Set());
     setImported(new Set());
 
     try {
+      const effectiveCountry = getEffectiveCountry();
       const { data, error } = await supabase.functions.invoke('search-jobs', {
-        body: { query: query.trim(), limit: 15, country: country || undefined },
+        body: { query: searchQuery, limit: 15, country: effectiveCountry || undefined },
       });
 
       if (error) {
@@ -83,6 +148,48 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
       toast({ title: 'Error', description: 'Search failed', variant: 'destructive' });
     }
 
+    setSearching(false);
+  };
+
+  const handleProfileSearchAll = async () => {
+    if (profileTitles.length === 0) {
+      toast({ title: 'No profile titles', description: 'Add desired job titles in your Profile first.', variant: 'destructive' });
+      return;
+    }
+    setSearching(true);
+    setResults([]);
+    setSelected(new Set());
+    setImported(new Set());
+
+    const allJobs: SearchResult[] = [];
+    const effectiveCountry = getEffectiveCountry();
+
+    for (const title of profileTitles.slice(0, 3)) {
+      const searchQ = profileSeniority ? `${profileSeniority} ${title}` : title;
+      try {
+        const { data } = await supabase.functions.invoke('search-jobs', {
+          body: { query: searchQ, limit: 10, country: effectiveCountry || undefined },
+        });
+        if (data?.jobs) allJobs.push(...data.jobs);
+      } catch { /* skip */ }
+    }
+
+    // Dedupe by apply_url
+    const seen = new Set<string>();
+    const deduped = allJobs.filter(j => {
+      const key = j.apply_url || `${j.title}|${j.company}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    if (deduped.length > 0) {
+      setResults(deduped);
+      setSelected(new Set(deduped.map((_, i) => i)));
+      toast({ title: `Found ${deduped.length} jobs across ${Math.min(profileTitles.length, 3)} titles` });
+    } else {
+      toast({ title: 'No results', description: 'Try adjusting your profile preferences.' });
+    }
     setSearching(false);
   };
 
@@ -104,7 +211,6 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     if (!user || selected.size === 0) return;
     setImporting(true);
 
-    // Fetch existing jobs for dedup
     const { data: existingJobs } = await supabase
       .from('jobs')
       .select('title, company, apply_url')
@@ -114,8 +220,6 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     const existingKeys = new Set((existingJobs || []).map(j => `${j.title?.toLowerCase()}|${j.company?.toLowerCase()}`));
 
     const toImport = results.filter((_, i) => selected.has(i) && !imported.has(i));
-    
-    // Filter out duplicates
     const deduped = toImport.filter(job => {
       if (job.apply_url && existingUrls.has(job.apply_url)) return false;
       const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
@@ -154,8 +258,8 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
       results.forEach((_, i) => { if (selected.has(i)) newImported.add(i); });
       setImported(newImported);
       onJobsAdded(data);
-      const msg = skipped > 0 
-        ? `Imported ${data.length} jobs! (${skipped} duplicates skipped)` 
+      const msg = skipped > 0
+        ? `Imported ${data.length} jobs! (${skipped} duplicates skipped)`
         : `Imported ${data.length} jobs!`;
       toast({ title: msg });
     }
@@ -168,13 +272,18 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
 
   const resetState = () => {
     setQuery('');
+    setCompanyQuery('');
     setCountry('');
     setResults([]);
     setSelected(new Set());
     setImported(new Set());
+    setSelectedProfileTitle('');
   };
 
   const unimportedSelected = [...selected].filter(i => !imported.has(i)).length;
+  const canSearch = searchMode === 'free' ? !!query.trim() :
+    searchMode === 'company' ? !!companyQuery.trim() :
+    !!selectedProfileTitle || profileTitles.length > 0;
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) resetState(); }}>
@@ -187,50 +296,193 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
         </DialogHeader>
 
         <div className="space-y-4">
-          {/* Quick searches */}
-          <div>
-            <p className="text-xs text-muted-foreground mb-2">Quick searches:</p>
-            <div className="flex flex-wrap gap-1.5">
-              {QUICK_SEARCHES.map(q => (
-                <Badge key={q} variant="outline" className="text-xs cursor-pointer hover:bg-accent"
-                  onClick={() => { setQuery(q); }}>
-                  {q}
-                </Badge>
-              ))}
-            </div>
-          </div>
+          {/* Search mode tabs */}
+          <Tabs value={searchMode} onValueChange={(v) => setSearchMode(v as SearchMode)}>
+            <TabsList className="w-full grid grid-cols-3">
+              <TabsTrigger value="free" className="text-xs gap-1.5">
+                <Search className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Free Search</span>
+                <span className="sm:hidden">Search</span>
+              </TabsTrigger>
+              <TabsTrigger value="profile" className="text-xs gap-1.5">
+                <User className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">From Profile</span>
+                <span className="sm:hidden">Profile</span>
+              </TabsTrigger>
+              <TabsTrigger value="company" className="text-xs gap-1.5">
+                <Building2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">By Company</span>
+                <span className="sm:hidden">Company</span>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-          {/* Search input + country filter */}
-          <div className="flex gap-2">
-            <Input
-              placeholder='e.g. "Software Engineer"'
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleSearch()}
-              disabled={searching}
-              className="flex-1"
-            />
-            <Select value={country} onValueChange={setCountry}>
-              <SelectTrigger className="w-[160px]">
-                <SelectValue placeholder="Any Country" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any Country</SelectItem>
-                {COUNTRIES.filter(Boolean).map(c => (
-                  <SelectItem key={c} value={c}>{c}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleSearch} disabled={searching || !query.trim()}>
-              {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Search'}
-            </Button>
-          </div>
+          {/* FREE SEARCH MODE */}
+          {searchMode === 'free' && (
+            <>
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Quick searches:</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {QUICK_SEARCHES.map(q => (
+                    <Badge key={q} variant="outline" className="text-xs cursor-pointer hover:bg-accent"
+                      onClick={() => setQuery(q)}>
+                      {q}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  placeholder='e.g. "Software Engineer"'
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                  disabled={searching}
+                  className="flex-1"
+                />
+                <div className="flex gap-2">
+                  <Select value={country} onValueChange={setCountry}>
+                    <SelectTrigger className="w-[140px] sm:w-[160px]">
+                      <SelectValue placeholder="Any Country" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Any Country</SelectItem>
+                      {COUNTRIES.filter(Boolean).map(c => (
+                        <SelectItem key={c} value={c}>{c}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button onClick={handleSearch} disabled={searching || !query.trim()}>
+                    {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Search'}
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* PROFILE SEARCH MODE */}
+          {searchMode === 'profile' && (
+            <div className="space-y-3">
+              {profileTitles.length === 0 && profileLoaded ? (
+                <div className="text-center py-4 text-muted-foreground">
+                  <User className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm font-medium">No desired titles in your profile</p>
+                  <p className="text-xs">Go to Profile → Preferences to add desired job titles.</p>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-2">Your desired titles:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {profileTitles.map(t => (
+                        <Badge
+                          key={t}
+                          variant={selectedProfileTitle === t ? 'default' : 'outline'}
+                          className="text-xs cursor-pointer hover:bg-accent"
+                          onClick={() => setSelectedProfileTitle(selectedProfileTitle === t ? '' : t)}
+                        >
+                          <Briefcase className="w-3 h-3 mr-1" />
+                          {t}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                  {profileIndustries.length > 0 && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Industries: <span className="text-foreground">{profileIndustries.join(', ')}</span></p>
+                    </div>
+                  )}
+                  {(profileCountry || profileSeniority) && (
+                    <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      {profileCountry && <span>📍 {profileCountry}</span>}
+                      {profileSeniority && <span>📊 {profileSeniority}</span>}
+                    </div>
+                  )}
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Select value={country} onValueChange={setCountry}>
+                      <SelectTrigger className="w-full sm:w-[160px]">
+                        <SelectValue placeholder={profileCountry || 'Any Country'} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Any Country</SelectItem>
+                        {COUNTRIES.filter(Boolean).map(c => (
+                          <SelectItem key={c} value={c}>{c}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <div className="flex gap-2 flex-1">
+                      <Button
+                        onClick={handleSearch}
+                        disabled={searching || !selectedProfileTitle}
+                        variant="outline"
+                        className="flex-1"
+                      >
+                        {searching ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Search className="w-4 h-4 mr-2" />}
+                        Search Selected
+                      </Button>
+                      <Button
+                        onClick={handleProfileSearchAll}
+                        disabled={searching || profileTitles.length === 0}
+                        className="flex-1"
+                      >
+                        {searching ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                        Search All Titles
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* COMPANY SEARCH MODE */}
+          {searchMode === 'company' && (
+            <div className="space-y-3">
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">Find jobs at a specific company:</p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Input
+                  placeholder="Company name (e.g. Egis, AECOM)"
+                  value={companyQuery}
+                  onChange={e => setCompanyQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                  disabled={searching}
+                  className="flex-1"
+                />
+                <Input
+                  placeholder="Job title (optional)"
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                  disabled={searching}
+                  className="flex-1"
+                />
+              </div>
+              <div className="flex gap-2">
+                <Select value={country} onValueChange={setCountry}>
+                  <SelectTrigger className="w-[140px] sm:w-[160px]">
+                    <SelectValue placeholder="Any Country" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any Country</SelectItem>
+                    {COUNTRIES.filter(Boolean).map(c => (
+                      <SelectItem key={c} value={c}>{c}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button onClick={handleSearch} disabled={searching || !companyQuery.trim()} className="flex-1 sm:flex-initial">
+                  {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Search'}
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Results */}
           {searching && (
             <div className="text-center py-8 text-muted-foreground">
               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2" />
-              <p className="text-sm">Searching job boards{country && country !== 'all' ? ` in ${country}` : ''}...</p>
+              <p className="text-sm">Searching job boards{getEffectiveCountry() ? ` in ${getEffectiveCountry()}` : ''}...</p>
             </div>
           )}
 
@@ -277,7 +529,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
                       )}
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-sm text-foreground truncate">{job.title}</h4>
-                        <p className="text-xs text-muted-foreground flex items-center gap-2">
+                        <p className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                           <span className="flex items-center gap-1"><Building2 className="w-3 h-3" />{job.company}</span>
                           {job.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{job.location}</span>}
                         </p>
