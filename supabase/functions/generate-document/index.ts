@@ -229,18 +229,56 @@ function generatePDF(
 
   if (isCoverLetter) {
     addLine(name, true, style.nameSize);
-    if (profile?.email) addLine(profile.email);
-    if (profile?.phone) addLine(profile.phone);
-    if (profile?.location) addLine(profile.location);
+    // Contact line (single line, matching CV style)
+    const clContactParts: string[] = [];
+    if (profile?.location) clContactParts.push(profile.location);
+    if (profile?.phone) clContactParts.push(profile.phone);
+    if (profile?.email) clContactParts.push(profile.email);
+    if (clContactParts.length) addLine(clContactParts.join("  •  "), false, 9);
+    addSep();
     addBlank();
+
+    // Date
+    const today = new Date();
+    const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    addLine(`${months[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`, false, style.bodySize);
+    addBlank();
+
+    // Recipient
     addLine(`Re: ${jobTitle} at ${company}`, true, style.headingSize);
     addBlank();
-    const text = typeof content === "string" ? content : content?.content || JSON.stringify(content);
-    for (const para of text.split(/\n\n|\n/)) {
-      if (para.trim()) {
-        for (const wl of wrapText(para.trim(), 90)) addLine(wl);
+
+    // Extract the actual letter text from various possible formats
+    let letterText = "";
+    if (typeof content === "string") {
+      letterText = content;
+    } else if (content?.letter_text) {
+      letterText = content.letter_text;
+    } else if (content?.content && typeof content.content === "string") {
+      letterText = content.content;
+    } else if (content?.content?.letter_text) {
+      letterText = content.content.letter_text;
+    } else {
+      // Last resort: try to find any string field that looks like a letter
+      for (const key of Object.keys(content || {})) {
+        const val = content[key];
+        if (typeof val === "string" && val.length > 100 && val.includes("Dear")) {
+          letterText = val;
+          break;
+        }
       }
-      addBlank();
+      if (!letterText) letterText = content?.summary || "";
+    }
+
+    // Clean up escaped newlines and split into proper paragraphs
+    letterText = letterText.replace(/\\n/g, "\n");
+    const paragraphs = letterText.split(/\n\n+/);
+    for (const para of paragraphs) {
+      const cleaned = para.replace(/\n/g, " ").trim();
+      if (cleaned) {
+        for (const wl of wrapText(cleaned, 90)) addLine(wl);
+        addBlank();
+      }
     }
   } else {
     // Name
@@ -487,16 +525,56 @@ function generateDOCX(
   const nameSize = style.nameSize * 2;
 
   if (isCoverLetter) {
-    p(name, true, nameSize);
-    if (profile?.email) p(profile.email, false, bodySize - 2);
-    if (profile?.phone) p(profile.phone, false, bodySize - 2);
-    if (profile?.location) p(profile.location, false, bodySize - 2);
+    const nameAlign = template === "modern" || template === "executive" ? "center" : undefined;
+    p(name, true, nameSize, accentHex, nameAlign);
+
+    // Contact line (single line, matching CV style)
+    const clContactParts: string[] = [];
+    if (profile?.location) clContactParts.push(profile.location);
+    if (profile?.phone) clContactParts.push(profile.phone);
+    if (profile?.email) clContactParts.push(profile.email);
+    const clSep = template === "modern" ? "  •  " : "  |  ";
+    if (clContactParts.length) p(clContactParts.join(clSep), false, bodySize - 2, undefined, nameAlign);
+    hr();
     paragraphs.push("<w:p/>");
-    p(`Re: ${jobTitle} at ${company}`, true, bodySize);
+
+    // Date
+    const today = new Date();
+    const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    p(`${monthNames[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`, false, bodySize);
     paragraphs.push("<w:p/>");
-    const text = typeof content === "string" ? content : content?.content || JSON.stringify(content);
-    for (const para of text.split(/\n\n|\n/)) {
-      if (para.trim()) p(para.trim(), false, bodySize);
+
+    // Subject
+    p(`Re: ${jobTitle} at ${company}`, true, headingSize, accentHex);
+    paragraphs.push("<w:p/>");
+
+    // Extract the actual letter text
+    let letterText = "";
+    if (typeof content === "string") {
+      letterText = content;
+    } else if (content?.letter_text) {
+      letterText = content.letter_text;
+    } else if (content?.content && typeof content.content === "string") {
+      letterText = content.content;
+    } else if (content?.content?.letter_text) {
+      letterText = content.content.letter_text;
+    } else {
+      for (const key of Object.keys(content || {})) {
+        const val = content[key];
+        if (typeof val === "string" && val.length > 100 && val.includes("Dear")) {
+          letterText = val;
+          break;
+        }
+      }
+      if (!letterText) letterText = content?.summary || "";
+    }
+
+    // Clean up escaped newlines and split into proper paragraphs
+    letterText = letterText.replace(/\\n/g, "\n");
+    const letterParas = letterText.split(/\n\n+/);
+    for (const lp of letterParas) {
+      const cleaned = lp.replace(/\n/g, " ").trim();
+      if (cleaned) p(cleaned, false, bodySize);
       else paragraphs.push("<w:p/>");
     }
   } else {
