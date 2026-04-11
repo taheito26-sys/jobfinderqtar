@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X, FileText, Mail } from 'lucide-react';
+import { GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X, FileText, Mail, Download, Loader2 } from 'lucide-react';
 
 const TailoringReview = () => {
   const { user } = useAuth();
