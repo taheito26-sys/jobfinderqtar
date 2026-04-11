@@ -74,7 +74,7 @@ async function extractJobWithAI(text: string, sourceUrl: string, userId: string)
   "title": "Job title",
   "company": "Company name",
   "location": "Job location",
-  "remote_type": "remote|hybrid|onsite|unknown",
+  "remote_type": "remote|hybrid|onsite|unknown" (IMPORTANT: If the job has a physical location like a city/country and does NOT explicitly say 'remote' or 'work from home', set this to 'onsite'. Only use 'remote' if the posting explicitly states remote work. A job in 'Doha, Qatar' is 'onsite' unless it says otherwise.),
   "description": "Full job description",
   "salary_min": null,
   "salary_max": null,

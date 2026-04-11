@@ -104,8 +104,34 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     if (!user || selected.size === 0) return;
     setImporting(true);
 
+    // Fetch existing jobs for dedup
+    const { data: existingJobs } = await supabase
+      .from('jobs')
+      .select('title, company, apply_url')
+      .eq('user_id', user.id);
+
+    const existingUrls = new Set((existingJobs || []).map(j => j.apply_url).filter(Boolean));
+    const existingKeys = new Set((existingJobs || []).map(j => `${j.title?.toLowerCase()}|${j.company?.toLowerCase()}`));
+
     const toImport = results.filter((_, i) => selected.has(i) && !imported.has(i));
-    const insertData = toImport.map(job => ({
+    
+    // Filter out duplicates
+    const deduped = toImport.filter(job => {
+      if (job.apply_url && existingUrls.has(job.apply_url)) return false;
+      const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
+      if (existingKeys.has(key)) return false;
+      return true;
+    });
+
+    const skipped = toImport.length - deduped.length;
+
+    if (deduped.length === 0) {
+      toast({ title: 'All duplicates', description: `${skipped} job(s) already exist in your feed.` });
+      setImporting(false);
+      return;
+    }
+
+    const insertData = deduped.map(job => ({
       user_id: user.id,
       title: job.title,
       company: job.company,
@@ -128,7 +154,10 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
       results.forEach((_, i) => { if (selected.has(i)) newImported.add(i); });
       setImported(newImported);
       onJobsAdded(data);
-      toast({ title: `Imported ${data.length} jobs!` });
+      const msg = skipped > 0 
+        ? `Imported ${data.length} jobs! (${skipped} duplicates skipped)` 
+        : `Imported ${data.length} jobs!`;
+      toast({ title: msg });
     }
     if (error) {
       toast({ title: 'Import error', description: error.message, variant: 'destructive' });
