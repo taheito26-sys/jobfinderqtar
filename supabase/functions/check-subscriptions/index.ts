@@ -55,6 +55,52 @@ function extractJobFromResult(result: any): { title: string; company: string; de
   };
 }
 
+// Check if a job result is relevant to the subscription target
+function isRelevantJob(job: { title: string; company: string; description: string; apply_url: string }, sub: any): boolean {
+  const subName = (sub.name || '').toLowerCase();
+  const subUrl = (sub.url || '').toLowerCase();
+  const subQuery = (sub.search_query || '').toLowerCase();
+  const jobTitle = job.title.toLowerCase();
+  const jobCompany = job.company.toLowerCase();
+  const jobUrl = job.apply_url.toLowerCase();
+  const jobDesc = job.description.toLowerCase();
+
+  // Skip generic non-job pages
+  if (/privacy|cookie|terms|login|sign.?up|404|not found/i.test(job.title)) return false;
+
+  switch (sub.subscription_type) {
+    case 'company':
+      // Job must mention the company name in company field, title, URL, or description
+      return jobCompany.includes(subName) || jobUrl.includes(subName.replace(/\s+/g, '')) ||
+             jobDesc.includes(subName) || jobTitle.includes(subName);
+
+    case 'careers_url':
+      // Job URL must be from the same domain as the careers URL
+      try {
+        const subDomain = new URL(subUrl).hostname.replace('www.', '');
+        const jobDomain = new URL(jobUrl).hostname.replace('www.', '');
+        return jobDomain.includes(subDomain) || subDomain.includes(jobDomain);
+      } catch {
+        return jobUrl.includes(subName.replace(/\s+/g, '').toLowerCase());
+      }
+
+    case 'linkedin_company':
+    case 'linkedin_profile':
+      // Must be from LinkedIn or mention the company/person name
+      return jobUrl.includes('linkedin.com') || jobCompany.includes(subName) || jobDesc.includes(subName);
+
+    case 'keyword_alert':
+      // Must match the search query keywords
+      const keywords = subQuery.split(/\s+/).filter((k: string) => k.length > 2);
+      if (keywords.length === 0) return true;
+      const combined = `${jobTitle} ${jobCompany} ${jobDesc}`;
+      return keywords.some((kw: string) => combined.includes(kw));
+
+    default:
+      return true;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -130,6 +176,7 @@ Deno.serve(async (req) => {
             const job = extractJobFromResult(result);
             if (!job || !job.title) continue;
             if (!job.company) job.company = sub.name;
+            if (!isRelevantJob(job, sub)) continue;
             
             if (job.apply_url && existingUrls.has(job.apply_url)) continue;
             const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
@@ -180,6 +227,7 @@ Deno.serve(async (req) => {
             const job = extractJobFromResult(results[0]);
             if (!job || !job.title) continue;
             if (!job.company) job.company = sub.name;
+            if (!isRelevantJob(job, sub)) continue;
 
             const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
             if (existingKeys.has(key)) continue;
@@ -222,6 +270,7 @@ Deno.serve(async (req) => {
             const job = extractJobFromResult(result);
             if (!job || !job.title) continue;
             if (!job.company) job.company = sub.name;
+            if (!isRelevantJob(job, sub)) continue;
 
             if (job.apply_url && existingUrls.has(job.apply_url)) continue;
             const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
@@ -263,6 +312,7 @@ Deno.serve(async (req) => {
           for (const result of results) {
             const job = extractJobFromResult(result);
             if (!job || !job.title) continue;
+            if (!isRelevantJob(job, sub)) continue;
 
             if (job.apply_url && existingUrls.has(job.apply_url)) continue;
             const key = `${job.title.toLowerCase()}|${(job.company || 'unknown').toLowerCase()}`;
