@@ -549,7 +549,7 @@ const JobFeed = () => {
               </Button>
             ))}
           </div>
-          <div className="flex gap-2 items-center flex-wrap">
+          <div className="flex gap-2 items-end flex-col sm:flex-row">
             <Input
               placeholder='Job title e.g. "Software Engineer", "PM"...'
               value={gccSearchQuery}
@@ -593,7 +593,7 @@ const JobFeed = () => {
           )}
         </div>
         <Select value={sortBy} onValueChange={setSortBy}>
-          <SelectTrigger className="w-[150px]">
+          <SelectTrigger className="w-[130px] shrink-0">
             <ArrowUpDown className="w-3.5 h-3.5 mr-1.5" />
             <SelectValue placeholder="Sort" />
           </SelectTrigger>
