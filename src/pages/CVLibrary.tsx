@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette } from 'lucide-react';
+import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette, Download } from 'lucide-react';
+import CVTemplateSelector from '@/components/CVTemplateSelector';
 
 const CVLibrary = () => {
   const { user } = useAuth();
