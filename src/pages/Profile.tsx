@@ -105,7 +105,7 @@ const Profile = () => {
     setSkills(skills.filter(s => s.id !== id));
   };
 
-  const deleteItem = async (table: string, id: string, setter: Function, list: any[]) => {
+  const deleteItem = async (table: 'employment_history' | 'education_history' | 'certifications' | 'proof_points', id: string, setter: Function, list: any[]) => {
     await supabase.from(table).delete().eq('id', id);
     setter(list.filter((i: any) => i.id !== id));
     toast({ title: 'Deleted' });
