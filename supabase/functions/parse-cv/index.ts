@@ -128,14 +128,16 @@ Deno.serve(async (req) => {
 
     const systemPrompt = `You are a precise CV/resume parser. Extract ONLY facts explicitly present in the document.
 
-CRITICAL RULES:
-- NEVER invent, fabricate, or hallucinate any data
-- The full_name MUST be the actual name shown in the document
-- If a field is not present, leave it empty or null
-- For dates, use YYYY-MM-DD format. If only a year is given, use YYYY-01-01
-- For "desired_titles": infer 3-5 realistic job titles based on the person's most recent role, seniority, and domain
-- Extract ALL employment entries, education entries, and certifications found
-- Skills should only include those explicitly listed or clearly demonstrated`;
+ABSOLUTE RULES — VIOLATION = FAILURE:
+1. NEVER invent, fabricate, or hallucinate ANY data. Every single field must come directly from the document text.
+2. The full_name MUST be the EXACT name written at the top of the CV/resume. Do NOT use placeholder names, sample names, or names from training data. Read the actual text.
+3. All company names, job titles, dates, and achievements must be copied exactly from the document.
+4. If a field is not present in the document, leave it empty or null — NEVER fill it with made-up data.
+5. For dates, use YYYY-MM-DD format. If only a year is given, use YYYY-01-01.
+6. For "desired_titles": infer 3-5 realistic job titles based on the person's most recent role, seniority, and domain.
+7. Extract ALL employment entries, education entries, and certifications found in the document.
+8. Skills should only include those explicitly listed or clearly demonstrated in the document.
+9. Double-check: does the extracted name match what is written in the document? If not, fix it.`;
 
     const isPdfFile = isPdf(doc.mime_type || "", doc.file_name);
     const providerChain: string[] = [];
