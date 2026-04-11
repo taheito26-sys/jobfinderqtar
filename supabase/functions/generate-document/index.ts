@@ -211,9 +211,8 @@ function generatePDF(
         lines.push("");
         lines.push(`__BOLD__${edu.degree}__ENDBOLD__${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`);
         lines.push(edu.institution || "");
-        if (edu.start_date || edu.end_date) {
-          lines.push(`${edu.start_date || ""} – ${edu.end_date || "Present"}`);
-        }
+        const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
+        if (dateParts.length) lines.push(dateParts.join(" – "));
         if (edu.gpa) lines.push(`GPA: ${edu.gpa}`);
       }
     }
