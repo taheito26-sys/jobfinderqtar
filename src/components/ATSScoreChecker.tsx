@@ -23,6 +23,16 @@ interface ATSResult {
   matched_keywords: string[];
   missing_keywords: string[];
   suggestions: string[];
+  fixes: ATSFix[];
+}
+
+interface ATSFix {
+  id: string;
+  label: string;
+  description: string;
+  type: 'add_skill' | 'add_summary' | 'add_experience';
+  data?: any;
+  applied?: boolean;
 }
 
 const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreCheckerProps) => {
