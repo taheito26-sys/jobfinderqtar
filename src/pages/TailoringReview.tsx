@@ -17,6 +17,7 @@ const TailoringReview = () => {
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'cv' | 'cover_letter'>('all');
 
   useEffect(() => {
