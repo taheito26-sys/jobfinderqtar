@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
@@ -13,8 +13,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, ExternalLink, MapPin, Building2, AlertTriangle, CheckCircle2, XCircle,
-  Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare
+  Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare, RefreshCw, Settings, Bot
 } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 function isLinkedInSource(job: any): boolean {
   if (!job) return false;
@@ -27,6 +28,15 @@ function isLinkedInSource(job: any): boolean {
     return sourceUrl.includes('linkedin.com');
   }
 }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  lovable: 'Lovable AI',
+  anthropic: 'Claude (Anthropic)',
+  openai: 'ChatGPT (OpenAI)',
+  gemini: 'Gemini (Google)',
+};
+
+const PROVIDER_ORDER = ['lovable', 'anthropic', 'openai', 'gemini'];
 
 const JobDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -45,7 +55,30 @@ const JobDetail = () => {
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [markedApplied, setMarkedApplied] = useState(false);
 
+  // AI provider state
+  const [currentProvider, setCurrentProvider] = useState('lovable');
+  const [pipelineEnabled, setPipelineEnabled] = useState(false);
+  const [lastAiChain, setLastAiChain] = useState<string[]>([]);
+
+  // Retry countdown state
+  const [retryCountdown, setRetryCountdown] = useState(0);
+  const [retryDocType, setRetryDocType] = useState<'cv' | 'cover_letter' | null>(null);
+  const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const isLinkedin = isLinkedInSource(job);
+
+  // Load user's AI provider preference
+  useEffect(() => {
+    if (!user) return;
+    supabase.from('user_preferences').select('key, value').eq('user_id', user.id)
+      .in('key', ['ai_provider', 'ai_pipeline_enabled'])
+      .then(({ data }) => {
+        (data || []).forEach((p: any) => {
+          if (p.key === 'ai_provider') setCurrentProvider(p.value || 'lovable');
+          if (p.key === 'ai_pipeline_enabled') setPipelineEnabled(p.value === 'true');
+        });
+      });
+  }, [user]);
 
   useEffect(() => {
     if (!user || !id) return;
@@ -61,13 +94,51 @@ const JobDetail = () => {
     load();
   }, [id, user]);
 
+  // Cleanup countdown on unmount
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) clearInterval(countdownRef.current);
+    };
+  }, []);
+
+  const startCountdown = (seconds: number, docType: 'cv' | 'cover_letter') => {
+    setRetryCountdown(seconds);
+    setRetryDocType(docType);
+    if (countdownRef.current) clearInterval(countdownRef.current);
+    countdownRef.current = setInterval(() => {
+      setRetryCountdown(prev => {
+        if (prev <= 1) {
+          if (countdownRef.current) clearInterval(countdownRef.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const switchProvider = async (newProvider: string) => {
+    if (!user) return;
+    await supabase.from('user_preferences').upsert(
+      { user_id: user.id, key: 'ai_provider', value: newProvider },
+      { onConflict: 'user_id,key' }
+    );
+    setCurrentProvider(newProvider);
+    toast({ title: `Switched to ${PROVIDER_LABELS[newProvider]}`, description: 'Try tailoring again.' });
+  };
+
+  const getNextProvider = () => {
+    const idx = PROVIDER_ORDER.indexOf(currentProvider);
+    for (let i = 1; i < PROVIDER_ORDER.length; i++) {
+      const next = PROVIDER_ORDER[(idx + i) % PROVIDER_ORDER.length];
+      if (next !== currentProvider) return next;
+    }
+    return currentProvider;
+  };
+
   const logEvent = async (eventType: string, metadata: any = {}) => {
     if (!user || !id) return;
     await supabase.from('application_events').insert({
-      user_id: user.id,
-      job_id: id,
-      event_type: eventType,
-      metadata: metadata as any,
+      user_id: user.id, job_id: id, event_type: eventType, metadata: metadata as any,
     });
   };
 
@@ -91,12 +162,19 @@ const JobDetail = () => {
     if (!user || !id) return;
     const setter = docType === 'cv' ? setTailoring : setTailoringCL;
     setter(true);
+    setLastAiChain([]);
     try {
       const { data, error } = await supabase.functions.invoke('tailor-cv', {
         body: { job_id: id, document_type: docType },
       });
       if (error) throw error;
+
+      // Store AI chain info if returned
+      if (data?.ai_chain) setLastAiChain(data.ai_chain);
+
       if (data?.fallback || (data?.error && !data?.content)) {
+        const isRateLimit = data?.error?.includes('rate limit') || data?.error?.includes('Rate limit');
+        
         if (data?.error?.includes('Profile not found') || data?.error?.includes('profile')) {
           toast({
             title: 'Profile is empty',
@@ -104,10 +182,19 @@ const JobDetail = () => {
             variant: 'destructive',
             duration: 8000,
           });
+        } else if (isRateLimit) {
+          // Start countdown and offer provider switch
+          startCountdown(30, docType);
+          toast({
+            title: `${PROVIDER_LABELS[currentProvider]} is rate limited`,
+            description: 'Auto-retry countdown started. You can also switch AI provider below.',
+            variant: 'destructive',
+            duration: 8000,
+          });
         } else {
           toast({
             title: 'Temporarily unavailable',
-            description: data?.error || 'AI provider is busy. Please wait 30-60 seconds and try again.',
+            description: data?.error || 'AI provider is busy. Please wait and try again.',
             variant: 'destructive',
             duration: 6000,
           });
@@ -115,15 +202,22 @@ const JobDetail = () => {
         setter(false);
         return;
       }
-      await logEvent(docType === 'cv' ? 'cv_tailored' : 'cover_letter_generated', { job_id: id });
-      toast({ title: docType === 'cv' ? 'CV tailored!' : 'Cover letter generated!', description: 'View it in Tailoring Review.' });
+
+      await logEvent(docType === 'cv' ? 'cv_tailored' : 'cover_letter_generated', {
+        job_id: id,
+        ai_chain: data?.ai_chain,
+      });
+      toast({
+        title: docType === 'cv' ? 'CV tailored!' : 'Cover letter generated!',
+        description: data?.ai_chain ? `AI chain: ${data.ai_chain.join(' → ')}` : 'View it in Tailoring Review.',
+      });
       navigate('/tailoring');
     } catch (err: any) {
       const msg = err.message || '';
       if (msg.includes('Profile not found') || msg.includes('profile')) {
         toast({
           title: 'Profile is empty',
-          description: 'Please complete your profile first. Go to Profile → "Extract from CV" to auto-fill from your uploaded CV.',
+          description: 'Please complete your profile first.',
           variant: 'destructive',
           duration: 8000,
         });
@@ -132,6 +226,14 @@ const JobDetail = () => {
       }
     }
     setter(false);
+  };
+
+  const retryTailoring = () => {
+    if (retryDocType) {
+      setRetryCountdown(0);
+      if (countdownRef.current) clearInterval(countdownRef.current);
+      tailorDocument(retryDocType);
+    }
   };
 
   const openApplyUrl = async () => {
@@ -153,7 +255,6 @@ const JobDetail = () => {
     if (!user || !id) return;
     setCreatingDraft(true);
     try {
-      // For LinkedIn jobs, force manual mode
       const mode = isLinkedin ? 'manual' : draftMode;
       const { data, error } = await supabase.from('application_drafts').insert({
         user_id: user.id, job_id: id, match_id: match?.id || null,
@@ -188,6 +289,8 @@ const JobDetail = () => {
     { label: 'Language Fit', score: match.language_fit_score },
     { label: 'Work Auth Fit', score: match.work_auth_fit_score },
   ] : [];
+
+  const nextProvider = getNextProvider();
 
   return (
     <div className="animate-fade-in">
@@ -228,7 +331,6 @@ const JobDetail = () => {
                 {match && <ScoreBadge score={match.overall_score} size="lg" showLabel />}
               </div>
 
-              {/* LinkedIn manual-submit notice */}
               {isLinkedin && (
                 <div className="mt-4 flex items-start gap-2 p-3 rounded-lg border border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
                   <Linkedin className="w-4 h-4 text-[#0A66C2] mt-0.5 flex-shrink-0" />
@@ -281,6 +383,126 @@ const JobDetail = () => {
         </div>
 
         <div className="space-y-4">
+          {/* Current AI Provider indicator */}
+          <Card>
+            <CardContent className="pt-4 pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-primary" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">AI Provider</p>
+                    <p className="text-sm font-medium text-foreground">{PROVIDER_LABELS[currentProvider] || currentProvider}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  {pipelineEnabled && (
+                    <Badge variant="secondary" className="text-[10px]">Pipeline ON</Badge>
+                  )}
+                  <Link to="/settings">
+                    <Button variant="ghost" size="sm" className="h-7 w-7 p-0">
+                      <Settings className="w-3.5 h-3.5 text-muted-foreground" />
+                    </Button>
+                  </Link>
+                </div>
+              </div>
+              {lastAiChain.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-border">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Last AI chain used</p>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {lastAiChain.map((name, i) => (
+                      <span key={i} className="flex items-center gap-0.5">
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0">{name}</Badge>
+                        {i < lastAiChain.length - 1 && <span className="text-muted-foreground text-[10px]">→</span>}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Retry countdown card */}
+          {(retryCountdown > 0 || retryDocType) && retryCountdown > 0 && (
+            <Card className="border-amber-300 dark:border-amber-700 bg-amber-50/50 dark:bg-amber-950/20">
+              <CardContent className="pt-4 pb-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-spin" />
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Rate Limited</p>
+                    <p className="text-xs text-muted-foreground">
+                      {PROVIDER_LABELS[currentProvider]} is busy. Retry in <span className="font-mono font-bold text-foreground">{retryCountdown}s</span>
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 text-xs"
+                    disabled={retryCountdown > 0}
+                    onClick={retryTailoring}
+                  >
+                    <RefreshCw className="w-3 h-3 mr-1" />Retry Now
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="flex-1 text-xs"
+                    onClick={async () => {
+                      await switchProvider(nextProvider);
+                      if (retryDocType) {
+                        setRetryCountdown(0);
+                        if (countdownRef.current) clearInterval(countdownRef.current);
+                        // Small delay to let provider switch propagate
+                        setTimeout(() => tailorDocument(retryDocType!), 500);
+                      }
+                    }}
+                  >
+                    Switch to {PROVIDER_LABELS[nextProvider]?.split(' ')[0]}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Retry ready (countdown finished) */}
+          {retryCountdown === 0 && retryDocType && (
+            <Card className="border-green-300 dark:border-green-700 bg-green-50/50 dark:bg-green-950/20">
+              <CardContent className="pt-4 pb-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400" />
+                  <p className="text-sm font-medium text-foreground">Ready to retry</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" className="flex-1 text-xs" onClick={retryTailoring}>
+                    <RefreshCw className="w-3 h-3 mr-1" />Retry {retryDocType === 'cv' ? 'CV' : 'Cover Letter'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 text-xs"
+                    onClick={async () => {
+                      await switchProvider(nextProvider);
+                      setRetryCountdown(0);
+                      if (countdownRef.current) clearInterval(countdownRef.current);
+                      setTimeout(() => tailorDocument(retryDocType!), 500);
+                    }}
+                  >
+                    Try {PROVIDER_LABELS[nextProvider]?.split(' ')[0]} instead
+                  </Button>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="w-full text-xs text-muted-foreground"
+                  onClick={() => setRetryDocType(null)}
+                >
+                  Dismiss
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Apply workflow CTA card */}
           <Card>
             <CardHeader><CardTitle className="text-base">Apply Workflow</CardTitle></CardHeader>
