@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, ExternalLink, MapPin, Building2, AlertTriangle, CheckCircle2, XCircle,
-  Zap, FileText, Send, Loader2
+  Zap, FileText, Send, Loader2, Mail
 } from 'lucide-react';
 
 const JobDetail = () => {
@@ -26,6 +26,7 @@ const JobDetail = () => {
   const [loading, setLoading] = useState(true);
   const [scoring, setScoring] = useState(false);
   const [tailoring, setTailoring] = useState(false);
+  const [tailoringCL, setTailoringCL] = useState(false);
   const [draftModal, setDraftModal] = useState(false);
   const [draftMode, setDraftMode] = useState('manual');
   const [draftNotes, setDraftNotes] = useState('');
@@ -49,9 +50,7 @@ const JobDetail = () => {
     if (!user || !id) return;
     setScoring(true);
     try {
-      const { data, error } = await supabase.functions.invoke('score-job', {
-        body: { job_id: id },
-      });
+      const { data, error } = await supabase.functions.invoke('score-job', { body: { job_id: id } });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       setMatch(data);
@@ -62,21 +61,22 @@ const JobDetail = () => {
     setScoring(false);
   };
 
-  const tailorCV = async () => {
+  const tailorDocument = async (docType: 'cv' | 'cover_letter') => {
     if (!user || !id) return;
-    setTailoring(true);
+    const setter = docType === 'cv' ? setTailoring : setTailoringCL;
+    setter(true);
     try {
       const { data, error } = await supabase.functions.invoke('tailor-cv', {
-        body: { job_id: id, document_type: 'cv' },
+        body: { job_id: id, document_type: docType },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-      toast({ title: 'CV tailored!', description: 'View it in Tailoring Review.' });
+      toast({ title: docType === 'cv' ? 'CV tailored!' : 'Cover letter generated!', description: 'View it in Tailoring Review.' });
       navigate('/tailoring');
     } catch (err: any) {
       toast({ title: 'Tailoring failed', description: err.message, variant: 'destructive' });
     }
-    setTailoring(false);
+    setter(false);
   };
 
   const createDraft = async () => {
@@ -84,23 +84,14 @@ const JobDetail = () => {
     setCreatingDraft(true);
     try {
       const { data, error } = await supabase.from('application_drafts').insert({
-        user_id: user.id,
-        job_id: id,
-        match_id: match?.id || null,
-        apply_mode: draftMode,
-        status: 'draft',
-        notes: draftNotes,
+        user_id: user.id, job_id: id, match_id: match?.id || null,
+        apply_mode: draftMode, status: 'draft', notes: draftNotes,
       }).select().single();
       if (error) throw error;
-
       await supabase.from('activity_log').insert({
-        user_id: user.id,
-        action: 'created_draft',
-        entity_type: 'application_draft',
-        entity_id: data.id,
-        details: { job_title: job.title, company: job.company, mode: draftMode },
+        user_id: user.id, action: 'created_draft', entity_type: 'application_draft',
+        entity_id: data.id, details: { job_title: job.title, company: job.company, mode: draftMode },
       });
-
       toast({ title: 'Draft created' });
       setDraftModal(false);
       navigate('/applications');
@@ -148,6 +139,11 @@ const JobDetail = () => {
                     {job.employment_type && <Badge variant="outline">{job.employment_type}</Badge>}
                     <Badge variant="secondary" className="capitalize">{job.status}</Badge>
                   </div>
+                  {(job.salary_min || job.salary_max) && (
+                    <p className="text-sm text-muted-foreground mt-2">
+                      {job.salary_currency} {job.salary_min?.toLocaleString()}{job.salary_max ? ` – ${job.salary_max.toLocaleString()}` : ''}
+                    </p>
+                  )}
                 </div>
                 {match && <ScoreBadge score={match.overall_score} size="lg" showLabel />}
               </div>
@@ -178,17 +174,32 @@ const JobDetail = () => {
               </CardContent>
             </Card>
           )}
+
+          {(job.nice_to_haves as any[])?.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">Nice to Have</CardTitle></CardHeader>
+              <CardContent>
+                <ul className="space-y-1">
+                  {(job.nice_to_haves as string[]).map((item, i) => (
+                    <li key={i} className="text-sm text-muted-foreground flex items-start gap-2"><span className="mt-0.5">○</span>{item}</li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <div className="space-y-4">
-          {/* Action Buttons */}
           <Card>
             <CardContent className="pt-6 space-y-2">
               <Button className="w-full" onClick={scoreJob} disabled={scoring}>
                 {scoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Scoring...</> : <><Zap className="w-4 h-4 mr-2" />{match ? 'Re-score Job' : 'Score Job'}</>}
               </Button>
-              <Button variant="outline" className="w-full" onClick={tailorCV} disabled={tailoring}>
+              <Button variant="outline" className="w-full" onClick={() => tailorDocument('cv')} disabled={tailoring}>
                 {tailoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Tailoring...</> : <><FileText className="w-4 h-4 mr-2" />Tailor CV</>}
+              </Button>
+              <Button variant="outline" className="w-full" onClick={() => tailorDocument('cover_letter')} disabled={tailoringCL}>
+                {tailoringCL ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating...</> : <><Mail className="w-4 h-4 mr-2" />Generate Cover Letter</>}
               </Button>
               <Button variant="outline" className="w-full" onClick={() => setDraftModal(true)}>
                 <Send className="w-4 h-4 mr-2" />Create Draft
@@ -255,7 +266,6 @@ const JobDetail = () => {
         </div>
       </div>
 
-      {/* Draft Modal */}
       <Dialog open={draftModal} onOpenChange={setDraftModal}>
         <DialogContent>
           <DialogHeader><DialogTitle>Create Application Draft</DialogTitle></DialogHeader>
@@ -270,7 +280,7 @@ const JobDetail = () => {
             </div>
             {draftMode === 'auto_submit' && (
               <div className="p-3 rounded-lg border border-warning/30 bg-warning/5">
-                <p className="text-xs text-warning flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Auto-submit requires approval before each submission. Will stop on CAPTCHA/MFA.</p>
+                <p className="text-xs text-warning flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Auto-submit requires approval before each submission.</p>
               </div>
             )}
             <div className="space-y-2">
