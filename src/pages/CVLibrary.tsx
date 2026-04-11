@@ -7,7 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { FileText, Upload, Trash2, Star, StarOff } from 'lucide-react';
+import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles } from 'lucide-react';
 
 const CVLibrary = () => {
   const { user } = useAuth();
@@ -15,6 +15,7 @@ const CVLibrary = () => {
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [parsing, setParsing] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -54,6 +55,24 @@ const CVLibrary = () => {
     }
     if (error) toast({ title: 'Error', description: error.message, variant: 'destructive' });
     setUploading(false);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const parseCV = async (docId: string) => {
+    setParsing(docId);
+    try {
+      const { data, error } = await supabase.functions.invoke('parse-cv', {
+        body: { document_id: docId },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      setDocuments(documents.map(d => d.id === docId ? { ...d, parsed_content: data.parsed } : d));
+      toast({ title: 'CV parsed!', description: 'Profile data extracted. Review in Profile tab.' });
+    } catch (err: any) {
+      toast({ title: 'Parse failed', description: err.message, variant: 'destructive' });
+    }
+    setParsing(null);
   };
 
   const deleteDoc = async (id: string, filePath: string) => {
@@ -70,6 +89,8 @@ const CVLibrary = () => {
     setDocuments(documents.map(d => ({ ...d, is_primary: d.id === id })));
   };
 
+  const hasParsedContent = (doc: any) => doc.parsed_content && Object.keys(doc.parsed_content).length > 0;
+
   return (
     <div className="animate-fade-in">
       <PageHeader
@@ -77,7 +98,7 @@ const CVLibrary = () => {
         description="Upload and manage your master documents"
         actions={
           <>
-            <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.doc,.docx" onChange={handleUpload} />
+            <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.doc,.docx,.txt" onChange={handleUpload} />
             <Button onClick={() => fileInputRef.current?.click()} disabled={uploading}>
               <Upload className="w-4 h-4 mr-2" />{uploading ? 'Uploading...' : 'Upload CV'}
             </Button>
@@ -110,12 +131,16 @@ const CVLibrary = () => {
                     <div className="flex items-center gap-2 mt-2">
                       {doc.is_primary && <Badge variant="default" className="text-xs">Primary</Badge>}
                       <Badge variant="outline" className="text-xs">{doc.document_type}</Badge>
+                      {hasParsedContent(doc) && <Badge variant="secondary" className="text-xs">Parsed</Badge>}
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-2 mt-4">
-                  <Button variant="ghost" size="sm" onClick={() => togglePrimary(doc.id)}>
+                  <Button variant="ghost" size="sm" onClick={() => togglePrimary(doc.id)} title={doc.is_primary ? 'Unset primary' : 'Set as primary'}>
                     {doc.is_primary ? <StarOff className="w-4 h-4" /> : <Star className="w-4 h-4" />}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => parseCV(doc.id)} disabled={parsing === doc.id}>
+                    {parsing === doc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                   </Button>
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteDoc(doc.id, doc.file_path)}>
                     <Trash2 className="w-4 h-4" />
