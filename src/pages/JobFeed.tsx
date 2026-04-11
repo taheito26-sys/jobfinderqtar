@@ -21,7 +21,8 @@ import { toast } from 'sonner';
 import {
   Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe, Linkedin,
   Filter, X, ChevronDown, Clock, DollarSign, Briefcase, Star, LayoutGrid, List,
-  ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3
+  ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3,
+  Plane
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
@@ -42,6 +43,10 @@ const JobFeed = () => {
   const [batchScoring, setBatchScoring] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkSearchOpen, setBulkSearchOpen] = useState(false);
+  const [gccSearchQuery, setGccSearchQuery] = useState('');
+  const [gccSearchCountry, setGccSearchCountry] = useState('');
+  const [gccSearchRemoteOnly, setGccSearchRemoteOnly] = useState(true);
+  const [gccSearching, setGccSearching] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
@@ -201,6 +206,58 @@ const JobFeed = () => {
     }
     toast.success(`Scored ${scored} jobs`, { description: unscored.length > 10 ? `${unscored.length - 10} remaining.` : 'All done!' });
     setBatchScoring(false);
+  };
+
+  const GCC_COUNTRIES = [
+    { code: 'Qatar', flag: '🇶🇦' },
+    { code: 'Saudi Arabia', flag: '🇸🇦' },
+    { code: 'UAE', flag: '🇦🇪' },
+    { code: 'Kuwait', flag: '🇰🇼' },
+    { code: 'Bahrain', flag: '🇧🇭' },
+    { code: 'Oman', flag: '🇴🇲' },
+  ];
+
+  const searchGccJobs = async () => {
+    if (!user || !gccSearchQuery.trim()) return;
+    setGccSearching(true);
+    try {
+      const searchQuery = gccSearchRemoteOnly
+        ? `${gccSearchQuery.trim()} remote`
+        : gccSearchQuery.trim();
+      const country = gccSearchCountry || undefined;
+      const { data, error } = await supabase.functions.invoke('search-jobs', {
+        body: { query: searchQuery, limit: 15, country },
+      });
+      if (error) {
+        toast.error('Search failed: ' + error.message);
+      } else if (data?.jobs?.length > 0) {
+        const insertData = data.jobs.map((job: any) => ({
+          user_id: user.id,
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          remote_type: gccSearchRemoteOnly ? 'remote' : (job.remote_type || 'unknown'),
+          description: job.description,
+          salary_min: job.salary_min,
+          salary_max: job.salary_max,
+          salary_currency: job.salary_currency,
+          employment_type: job.employment_type,
+          seniority_level: job.seniority_level,
+          requirements: job.requirements as any,
+          apply_url: job.apply_url,
+        }));
+        const { data: inserted } = await supabase.from('jobs').insert(insertData).select();
+        if (inserted) {
+          setJobs(prev => [...inserted, ...prev]);
+          toast.success(`Found & imported ${inserted.length} ${gccSearchRemoteOnly ? 'remote ' : ''}jobs${gccSearchCountry ? ` in ${gccSearchCountry}` : ' in GCC'}`);
+        }
+      } else {
+        toast('No jobs found. Try a different query or country.');
+      }
+    } catch {
+      toast.error('Search failed');
+    }
+    setGccSearching(false);
   };
 
   const toggleJobSelect = useCallback((e: React.MouseEvent, jobId: string) => {
@@ -370,6 +427,58 @@ const JobFeed = () => {
           <StatCard icon={Clock} label="Unscored" value={stats.unscored} />
         </div>
       )}
+
+      {/* GCC Remote Jobs Search */}
+      <Card className="mb-4">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Plane className="w-4 h-4 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">Search Remote Jobs in GCC Countries</h3>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {GCC_COUNTRIES.map(c => (
+              <Button
+                key={c.code}
+                variant={gccSearchCountry === c.code ? 'default' : 'outline'}
+                size="sm"
+                className="text-xs h-7 gap-1"
+                onClick={() => setGccSearchCountry(gccSearchCountry === c.code ? '' : c.code)}
+              >
+                <span>{c.flag}</span>{c.code}
+              </Button>
+            ))}
+          </div>
+          <div className="flex gap-2 items-center flex-wrap">
+            <Input
+              placeholder='Job title e.g. "Software Engineer", "PM"...'
+              value={gccSearchQuery}
+              onChange={e => setGccSearchQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && searchGccJobs()}
+              className="flex-1 min-w-[200px]"
+              disabled={gccSearching}
+            />
+            <div className="flex items-center gap-1.5">
+              <Checkbox
+                id="gcc-remote"
+                checked={gccSearchRemoteOnly}
+                onCheckedChange={(v) => setGccSearchRemoteOnly(!!v)}
+              />
+              <label htmlFor="gcc-remote" className="text-xs text-muted-foreground cursor-pointer">Remote only</label>
+            </div>
+            <Button onClick={searchGccJobs} disabled={gccSearching || !gccSearchQuery.trim()} size="sm" className="gap-1.5">
+              {gccSearching ? <><Loader2 className="w-4 h-4 animate-spin" />Searching...</> : <><Search className="w-4 h-4" />Search &amp; Import</>}
+            </Button>
+          </div>
+          {gccSearchCountry && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Searching {gccSearchRemoteOnly ? 'remote jobs' : 'all jobs'} in <span className="font-medium text-foreground">{gccSearchCountry}</span>
+            </p>
+          )}
+          {!gccSearchCountry && (
+            <p className="text-xs text-muted-foreground mt-2">Select a country above or search across all GCC regions</p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Search + Controls */}
       <div className="flex gap-2 mb-2 flex-wrap items-center">
