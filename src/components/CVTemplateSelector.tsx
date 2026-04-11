@@ -93,6 +93,8 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
           parsed_content: document.parsed_content,
           document_type: 'cv',
           format,
+          job_title: document.job_title || document.title,
+          company: document.company,
         }),
       });
 
