@@ -33,6 +33,7 @@ import StealthApplyPanel from '@/components/StealthApplyPanel';
 import AutoApplyQueue from '@/components/AutoApplyQueue';
 
 type ViewMode = 'list' | 'grid';
+type SubTab = 'all' | 'remote' | 'onsite' | string; // string for country names
 
 const JobFeed = () => {
   const { user } = useAuth();
