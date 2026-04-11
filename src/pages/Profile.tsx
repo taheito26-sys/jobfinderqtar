@@ -10,7 +10,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, X, Save, Briefcase, GraduationCap, Award, Star, Pencil, Trash2, Zap, FileText, Loader2, Sparkles, Linkedin } from 'lucide-react';
+import { Plus, X, Save, Briefcase, GraduationCap, Award, Star, Pencil, Trash2, Zap, FileText, Loader2, Sparkles, Linkedin, RotateCcw } from 'lucide-react';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import EmptyState from '@/components/EmptyState';
 import EmploymentModal from '@/components/EmploymentModal';
@@ -77,6 +78,44 @@ const Profile = () => {
   const [linkedinUrl, setLinkedinUrl] = useState('');
   const [linkedinText, setLinkedinText] = useState('');
   const [importingLinkedin, setImportingLinkedin] = useState(false);
+  const [clearing, setClearing] = useState(false);
+
+  const clearProfile = async () => {
+    if (!user) return;
+    setClearing(true);
+    try {
+      await Promise.all([
+        supabase.from('profiles_v2').update({
+          full_name: '', headline: '', summary: '', email: '', phone: '',
+          location: '', country: '', visa_status: '', work_authorization: '',
+          desired_titles: [], desired_industries: [], desired_seniority: '',
+          desired_salary_min: 0, desired_salary_max: 0, linkedin_url: '',
+          github_url: '', portfolio_url: '',
+        }).eq('user_id', user.id),
+        supabase.from('profile_skills').delete().eq('user_id', user.id),
+        supabase.from('employment_history').delete().eq('user_id', user.id),
+        supabase.from('education_history').delete().eq('user_id', user.id),
+        supabase.from('certifications').delete().eq('user_id', user.id),
+        supabase.from('proof_points').delete().eq('user_id', user.id),
+      ]);
+      setProfile({
+        full_name: '', headline: '', summary: '', location: '', country: '',
+        visa_status: '', work_authorization: '', remote_preference: 'flexible',
+        desired_salary_min: 0, desired_salary_max: 0, desired_salary_currency: 'USD',
+        desired_seniority: '', desired_titles: [], linkedin_url: '', github_url: '', portfolio_url: '',
+        phone: '', email: '',
+      });
+      setSkills([]);
+      setEmployment([]);
+      setEducation([]);
+      setCertifications([]);
+      setProofPoints([]);
+      toast({ title: 'Profile cleared', description: 'All profile data has been removed. You can start fresh.' });
+    } catch (err: any) {
+      toast({ title: 'Clear failed', description: err.message, variant: 'destructive' });
+    }
+    setClearing(false);
+  };
 
   const importFromLinkedin = async () => {
     if (!user || !linkedinText.trim()) return;
@@ -309,6 +348,28 @@ const Profile = () => {
         description="Your canonical professional profile — the source of truth for all tailored documents"
         actions={
           <div className="flex gap-2 flex-wrap">
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/10" disabled={clearing}>
+                  {clearing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-2" />}
+                  {clearing ? 'Clearing...' : 'Clear Profile'}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Clear entire profile?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete all your profile data including skills, employment history, education, certifications, and proof points. This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={clearProfile} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    Yes, clear everything
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
             <Button variant="outline" onClick={() => setLinkedinDialogOpen(true)} disabled={importingLinkedin}>
               {importingLinkedin ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Linkedin className="w-4 h-4 mr-2" />}
               {importingLinkedin ? 'Importing...' : 'Import LinkedIn'}

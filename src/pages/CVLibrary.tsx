@@ -48,7 +48,7 @@ const CVLibrary = () => {
       const p = data.parsed;
       setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, parsed_content: p } : d));
 
-      // Auto-import to profile — clear existing data first to avoid duplicates
+      // Auto-import to profile — merge/delta approach (never wipe existing data)
       const profileUpdate: any = {};
       if (p.full_name) profileUpdate.full_name = p.full_name;
       if (p.headline) profileUpdate.headline = p.headline;
@@ -57,43 +57,65 @@ const CVLibrary = () => {
       if (p.phone) profileUpdate.phone = p.phone;
       if (p.location) profileUpdate.location = p.location;
       if (p.country) profileUpdate.country = p.country;
-      if (Array.isArray(p.desired_titles) && p.desired_titles.length > 0) profileUpdate.desired_titles = p.desired_titles;
+      if (Array.isArray(p.desired_titles) && p.desired_titles.length > 0) {
+        // Merge desired titles with existing ones
+        const { data: existingProfile } = await supabase.from('profiles_v2').select('desired_titles').eq('user_id', user.id).maybeSingle();
+        const existingTitles: string[] = Array.isArray(existingProfile?.desired_titles) ? existingProfile.desired_titles as string[] : [];
+        const mergedTitles = [...new Set([...existingTitles, ...p.desired_titles])];
+        profileUpdate.desired_titles = mergedTitles;
+      }
       if (Object.keys(profileUpdate).length > 0) {
         await supabase.from('profiles_v2').upsert({ user_id: user.id, ...profileUpdate }, { onConflict: 'user_id' });
       }
 
-      // Clear existing profile data to avoid duplicates on re-import
-      await Promise.all([
-        supabase.from('profile_skills').delete().eq('user_id', user.id),
-        supabase.from('employment_history').delete().eq('user_id', user.id),
-        supabase.from('education_history').delete().eq('user_id', user.id),
-        supabase.from('certifications').delete().eq('user_id', user.id),
+      // Fetch existing data to compute delta
+      const [existingSkills, existingEmp, existingEdu, existingCerts] = await Promise.all([
+        supabase.from('profile_skills').select('skill_name').eq('user_id', user.id),
+        supabase.from('employment_history').select('title, company').eq('user_id', user.id),
+        supabase.from('education_history').select('degree, institution').eq('user_id', user.id),
+        supabase.from('certifications').select('name, issuing_organization').eq('user_id', user.id),
       ]);
+      const existingSkillNames = new Set((existingSkills.data ?? []).map((s: any) => s.skill_name.toLowerCase()));
+      const existingEmpKeys = new Set((existingEmp.data ?? []).map((e: any) => `${e.title}|||${e.company}`.toLowerCase()));
+      const existingEduKeys = new Set((existingEdu.data ?? []).map((e: any) => `${e.degree}|||${e.institution}`.toLowerCase()));
+      const existingCertKeys = new Set((existingCerts.data ?? []).map((c: any) => `${c.name}|||${c.issuing_organization}`.toLowerCase()));
 
       if (Array.isArray(p.skills) && p.skills.length > 0) {
-        await supabase.from('profile_skills').insert(p.skills.map((s: string) => ({ user_id: user.id, skill_name: s })));
+        const newSkills = p.skills.filter((s: string) => !existingSkillNames.has(s.toLowerCase()));
+        if (newSkills.length > 0) {
+          await supabase.from('profile_skills').insert(newSkills.map((s: string) => ({ user_id: user.id, skill_name: s })));
+        }
       }
 
       if (Array.isArray(p.employment) && p.employment.length > 0) {
-        await supabase.from('employment_history').insert(p.employment.map((e: any, i: number) => ({
-          user_id: user.id, title: e.title || 'Untitled', company: e.company || 'Unknown',
-          location: e.location || '', start_date: e.start_date || '2020-01-01',
-          end_date: e.end_date || null, is_current: e.is_current || false,
-          description: e.description || '', achievements: Array.isArray(e.achievements) ? e.achievements : [], sort_order: i,
-        })));
+        const newEmp = p.employment.filter((e: any) => !existingEmpKeys.has(`${e.title || 'Untitled'}|||${e.company || 'Unknown'}`.toLowerCase()));
+        if (newEmp.length > 0) {
+          await supabase.from('employment_history').insert(newEmp.map((e: any, i: number) => ({
+            user_id: user.id, title: e.title || 'Untitled', company: e.company || 'Unknown',
+            location: e.location || '', start_date: e.start_date || '2020-01-01',
+            end_date: e.end_date || null, is_current: e.is_current || false,
+            description: e.description || '', achievements: Array.isArray(e.achievements) ? e.achievements : [], sort_order: i,
+          })));
+        }
       }
 
       if (Array.isArray(p.education) && p.education.length > 0) {
-        await supabase.from('education_history').insert(p.education.map((e: any, i: number) => ({
-          user_id: user.id, degree: e.degree || 'Degree', institution: e.institution || 'Institution',
-          field_of_study: e.field_of_study || '', start_date: e.start_date || null, end_date: e.end_date || null, sort_order: i,
-        })));
+        const newEdu = p.education.filter((e: any) => !existingEduKeys.has(`${e.degree || 'Degree'}|||${e.institution || 'Institution'}`.toLowerCase()));
+        if (newEdu.length > 0) {
+          await supabase.from('education_history').insert(newEdu.map((e: any, i: number) => ({
+            user_id: user.id, degree: e.degree || 'Degree', institution: e.institution || 'Institution',
+            field_of_study: e.field_of_study || '', start_date: e.start_date || null, end_date: e.end_date || null, sort_order: i,
+          })));
+        }
       }
 
       if (Array.isArray(p.certifications) && p.certifications.length > 0) {
-        await supabase.from('certifications').insert(p.certifications.map((c: any) => ({
-          user_id: user.id, name: c.name || 'Certification', issuing_organization: c.issuing_organization || 'Unknown', issue_date: c.issue_date || null,
-        })));
+        const newCerts = p.certifications.filter((c: any) => !existingCertKeys.has(`${c.name || 'Certification'}|||${c.issuing_organization || 'Unknown'}`.toLowerCase()));
+        if (newCerts.length > 0) {
+          await supabase.from('certifications').insert(newCerts.map((c: any) => ({
+            user_id: user.id, name: c.name || 'Certification', issuing_organization: c.issuing_organization || 'Unknown', issue_date: c.issue_date || null,
+          })));
+        }
       }
 
       await supabase.from('activity_log').insert({
@@ -157,7 +179,7 @@ const CVLibrary = () => {
     const p = importDoc.parsed_content;
 
     try {
-      // Upsert profile basics including desired_titles and country
+      // Upsert profile basics — merge desired_titles
       const profileUpdate: any = {};
       if (p.full_name) profileUpdate.full_name = p.full_name;
       if (p.headline) profileUpdate.headline = p.headline;
@@ -167,56 +189,66 @@ const CVLibrary = () => {
       if (p.location) profileUpdate.location = p.location;
       if (p.country) profileUpdate.country = p.country;
       if (Array.isArray(p.desired_titles) && p.desired_titles.length > 0) {
-        profileUpdate.desired_titles = p.desired_titles;
+        const { data: existingProfile } = await supabase.from('profiles_v2').select('desired_titles').eq('user_id', user.id).maybeSingle();
+        const existingTitles: string[] = Array.isArray(existingProfile?.desired_titles) ? existingProfile.desired_titles as string[] : [];
+        profileUpdate.desired_titles = [...new Set([...existingTitles, ...p.desired_titles])];
       }
       if (Object.keys(profileUpdate).length > 0) {
         await supabase.from('profiles_v2').upsert({ user_id: user.id, ...profileUpdate }, { onConflict: 'user_id' });
       }
 
-      // Clear existing data first to avoid duplicates
-      await Promise.all([
-        supabase.from('profile_skills').delete().eq('user_id', user.id),
-        supabase.from('employment_history').delete().eq('user_id', user.id),
-        supabase.from('education_history').delete().eq('user_id', user.id),
-        supabase.from('certifications').delete().eq('user_id', user.id),
+      // Fetch existing data for delta detection
+      const [existingSkills, existingEmp, existingEdu, existingCerts] = await Promise.all([
+        supabase.from('profile_skills').select('skill_name').eq('user_id', user.id),
+        supabase.from('employment_history').select('title, company').eq('user_id', user.id),
+        supabase.from('education_history').select('degree, institution').eq('user_id', user.id),
+        supabase.from('certifications').select('name, issuing_organization').eq('user_id', user.id),
       ]);
+      const existingSkillNames = new Set((existingSkills.data ?? []).map((s: any) => s.skill_name.toLowerCase()));
+      const existingEmpKeys = new Set((existingEmp.data ?? []).map((e: any) => `${e.title}|||${e.company}`.toLowerCase()));
+      const existingEduKeys = new Set((existingEdu.data ?? []).map((e: any) => `${e.degree}|||${e.institution}`.toLowerCase()));
+      const existingCertKeys = new Set((existingCerts.data ?? []).map((c: any) => `${c.name}|||${c.issuing_organization}`.toLowerCase()));
 
-      // Import skills
+      // Import only new skills
       if (Array.isArray(p.skills) && p.skills.length > 0) {
-        await supabase.from('profile_skills').insert(
-          p.skills.map((s: string) => ({ user_id: user.id, skill_name: s }))
-        );
+        const newSkills = p.skills.filter((s: string) => !existingSkillNames.has(s.toLowerCase()));
+        if (newSkills.length > 0) {
+          await supabase.from('profile_skills').insert(newSkills.map((s: string) => ({ user_id: user.id, skill_name: s })));
+        }
       }
 
-      // Import employment
+      // Import only new employment
       if (Array.isArray(p.employment) && p.employment.length > 0) {
-        await supabase.from('employment_history').insert(
-          p.employment.map((e: any, i: number) => ({
+        const newEmp = p.employment.filter((e: any) => !existingEmpKeys.has(`${e.title || 'Untitled'}|||${e.company || 'Unknown'}`.toLowerCase()));
+        if (newEmp.length > 0) {
+          await supabase.from('employment_history').insert(newEmp.map((e: any, i: number) => ({
             user_id: user.id, title: e.title || 'Untitled', company: e.company || 'Unknown',
             location: e.location || '', start_date: e.start_date || '2020-01-01',
             end_date: e.end_date || null, is_current: e.is_current || false,
             description: e.description || '', achievements: Array.isArray(e.achievements) ? e.achievements : [], sort_order: i,
-          }))
-        );
+          })));
+        }
       }
 
-      // Import education
+      // Import only new education
       if (Array.isArray(p.education) && p.education.length > 0) {
-        await supabase.from('education_history').insert(
-          p.education.map((e: any, i: number) => ({
+        const newEdu = p.education.filter((e: any) => !existingEduKeys.has(`${e.degree || 'Degree'}|||${e.institution || 'Institution'}`.toLowerCase()));
+        if (newEdu.length > 0) {
+          await supabase.from('education_history').insert(newEdu.map((e: any, i: number) => ({
             user_id: user.id, degree: e.degree || 'Degree', institution: e.institution || 'Institution',
             field_of_study: e.field_of_study || '', start_date: e.start_date || null, end_date: e.end_date || null, sort_order: i,
-          }))
-        );
+          })));
+        }
       }
 
-      // Import certifications
+      // Import only new certifications
       if (Array.isArray(p.certifications) && p.certifications.length > 0) {
-        await supabase.from('certifications').insert(
-          p.certifications.map((c: any) => ({
+        const newCerts = p.certifications.filter((c: any) => !existingCertKeys.has(`${c.name || 'Certification'}|||${c.issuing_organization || 'Unknown'}`.toLowerCase()));
+        if (newCerts.length > 0) {
+          await supabase.from('certifications').insert(newCerts.map((c: any) => ({
             user_id: user.id, name: c.name || 'Certification', issuing_organization: c.issuing_organization || 'Unknown', issue_date: c.issue_date || null,
-          }))
-        );
+          })));
+        }
       }
 
       await supabase.from('activity_log').insert({
