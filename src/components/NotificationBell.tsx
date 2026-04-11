@@ -102,7 +102,7 @@ const NotificationBell = () => {
           </div>
         </div>
 
-        <ScrollArea className="max-h-[350px]">
+        <ScrollArea className="h-[350px]">
           {notifications.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground text-sm">
               No notifications yet
