@@ -24,7 +24,7 @@ const QuickApplyButton = ({ job, userId, size = 'sm', className = '' }: QuickApp
       const { data: draft, error: draftError } = await supabase.from('application_drafts').insert({
         user_id: userId,
         job_id: job.id,
-        apply_mode: 'quick',
+        apply_mode: 'assisted',
         status: 'ready',
         notes: 'Created via Quick Apply',
       }).select().single();
