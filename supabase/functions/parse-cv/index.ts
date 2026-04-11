@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -48,7 +48,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Fetch document record
     const { data: doc, error: docError } = await supabase
       .from("master_documents")
       .select("*")
@@ -63,7 +62,6 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Download file content
     const { data: fileData, error: dlError } = await supabase.storage
       .from("documents")
       .download(doc.file_path);
@@ -80,14 +78,6 @@ Deno.serve(async (req) => {
 
     const fileText = await fileData.text();
 
-    // Fetch profile to provide context
-    const { data: profile } = await supabase
-      .from("profiles_v2")
-      .select("full_name")
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    // Call AI to extract structured data
     const apiKey = Deno.env.get("LOVABLE_API_KEY");
     if (!apiKey) {
       return new Response(
@@ -102,12 +92,14 @@ Deno.serve(async (req) => {
     const prompt = `Extract structured professional data from this CV/resume text. Return ONLY valid JSON with this structure:
 {
   "full_name": "string",
-  "headline": "string",
-  "summary": "string",
+  "headline": "string (professional headline/title)",
+  "summary": "string (professional summary)",
   "email": "string",
   "phone": "string",
-  "location": "string",
+  "location": "string (city)",
+  "country": "string (country)",
   "skills": ["skill1", "skill2"],
+  "desired_titles": ["Job Title 1", "Job Title 2", "Job Title 3"],
   "employment": [
     {
       "title": "string",
@@ -138,11 +130,13 @@ Deno.serve(async (req) => {
   ]
 }
 
+IMPORTANT for desired_titles: Infer 3-5 job titles this person would likely be searching for based on their experience, current role, skills, and seniority level. For example, if they are a "Senior Software Engineer", suggest titles like "Senior Software Engineer", "Lead Software Engineer", "Staff Engineer", "Software Architect", "Engineering Manager".
+
 CV Text:
 ${fileText.substring(0, 15000)}`;
 
     const aiResponse = await fetch(
-      "https://api.lovable.dev/v1/chat/completions",
+      "https://ai.gateway.lovable.dev/v1/chat/completions",
       {
         method: "POST",
         headers: {
@@ -150,7 +144,7 @@ ${fileText.substring(0, 15000)}`;
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "gemini-1.5-flash",
+          model: "google/gemini-3-flash-preview",
           messages: [
             {
               role: "system",
@@ -180,7 +174,6 @@ ${fileText.substring(0, 15000)}`;
     const rawContent =
       aiData.choices?.[0]?.message?.content || "{}";
     
-    // Clean potential markdown wrapper
     const cleaned = rawContent
       .replace(/```json\n?/g, "")
       .replace(/```\n?/g, "")
