@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2 } from 'lucide-react';
+import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette } from 'lucide-react';
 
 const CVLibrary = () => {
   const { user } = useAuth();
@@ -21,6 +21,9 @@ const CVLibrary = () => {
   const [parsing, setParsing] = useState<string | null>(null);
   const [importDoc, setImportDoc] = useState<any>(null);
   const [importing, setImporting] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<any>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState('classic');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
