@@ -9,10 +9,43 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { Plug, Shield, Bell, Loader2, CheckCircle2, XCircle, Zap, GitBranch } from 'lucide-react';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
+
+const MODEL_OPTIONS: Record<string, { label: string; value: string }[]> = {
+  lovable: [
+    { label: 'Gemini 3 Flash (Default)', value: 'google/gemini-3-flash-preview' },
+    { label: 'Gemini 3.1 Pro', value: 'google/gemini-3.1-pro-preview' },
+    { label: 'Gemini 2.5 Pro', value: 'google/gemini-2.5-pro' },
+    { label: 'Gemini 2.5 Flash', value: 'google/gemini-2.5-flash' },
+    { label: 'Gemini 2.5 Flash Lite', value: 'google/gemini-2.5-flash-lite' },
+    { label: 'GPT-5', value: 'openai/gpt-5' },
+    { label: 'GPT-5 Mini', value: 'openai/gpt-5-mini' },
+    { label: 'GPT-5.2', value: 'openai/gpt-5.2' },
+  ],
+  openai: [
+    { label: 'GPT-4o (Default)', value: 'gpt-4o' },
+    { label: 'GPT-4o Mini', value: 'gpt-4o-mini' },
+    { label: 'GPT-4 Turbo', value: 'gpt-4-turbo' },
+    { label: 'o1', value: 'o1' },
+    { label: 'o1 Mini', value: 'o1-mini' },
+  ],
+  gemini: [
+    { label: 'Gemini 2.5 Flash (Default)', value: 'gemini-2.5-flash' },
+    { label: 'Gemini 2.5 Pro', value: 'gemini-2.5-pro' },
+    { label: 'Gemini 2.0 Flash', value: 'gemini-2.0-flash' },
+    { label: 'Gemini 1.5 Pro', value: 'gemini-1.5-pro' },
+  ],
+  anthropic: [
+    { label: 'Claude Sonnet 4 (Default)', value: 'claude-sonnet-4-20250514' },
+    { label: 'Claude Opus 4', value: 'claude-opus-4-20250514' },
+    { label: 'Claude Haiku 3.5', value: 'claude-3-5-haiku-20241022' },
+    { label: 'Claude Sonnet 3.5 v2', value: 'claude-3-5-sonnet-20241022' },
+  ],
+};
 
 const SettingsPage = () => {
   const { user, signOut } = useAuth();
@@ -84,11 +117,30 @@ const SettingsPage = () => {
   const hasKey = currentProvider === 'lovable' || !!prefs['ai_api_key'];
   const pipelineEnabled = prefs['ai_pipeline_enabled'] === 'true';
 
-  // Count configured pipeline providers
   const pipelineProviders: string[] = ['Lovable AI'];
   if (prefs['ai_key_openai']) pipelineProviders.push('OpenAI');
   if (prefs['ai_key_gemini']) pipelineProviders.push('Gemini');
   if (prefs['ai_key_anthropic']) pipelineProviders.push('Claude');
+
+  const ModelSelector = ({ providerKey, prefKey, label }: { providerKey: string; prefKey: string; label?: string }) => {
+    const models = MODEL_OPTIONS[providerKey] || [];
+    const currentModel = prefs[prefKey] || models[0]?.value || '';
+    return (
+      <div className="space-y-1.5">
+        {label && <Label className="text-xs text-muted-foreground">{label}</Label>}
+        <Select value={currentModel} onValueChange={(v) => setPref(prefKey, v)}>
+          <SelectTrigger className="h-9 text-xs">
+            <SelectValue placeholder="Select model" />
+          </SelectTrigger>
+          <SelectContent>
+            {models.map(m => (
+              <SelectItem key={m.value} value={m.value} className="text-xs">{m.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  };
 
   return (
     <div className="animate-fade-in">
@@ -140,6 +192,8 @@ const SettingsPage = () => {
                 <option value="gemini">Gemini (Google Direct)</option>
               </select>
             </div>
+
+            <ModelSelector providerKey={currentProvider} prefKey="ai_model_primary" label="Model" />
 
             {currentProvider !== 'lovable' && (
               <div className="space-y-2">
@@ -249,38 +303,54 @@ const SettingsPage = () => {
                 </div>
 
                 <div className="space-y-3">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Provider API Keys</p>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Provider API Keys & Models</p>
 
-                  <div className="space-y-2">
-                    <Label className="text-sm">OpenAI API Key</Label>
+                  {/* Lovable AI Model */}
+                  <div className="space-y-2 p-3 rounded-lg border border-border">
+                    <Label className="text-sm flex items-center gap-2">
+                      Lovable AI <Badge variant="outline" className="text-xs">Always included</Badge>
+                    </Label>
+                    <ModelSelector providerKey="lovable" prefKey="ai_model_lovable" label="Model" />
+                  </div>
+
+                  {/* OpenAI */}
+                  <div className="space-y-2 p-3 rounded-lg border border-border">
+                    <Label className="text-sm">OpenAI</Label>
                     <Input
                       type="password"
                       placeholder="sk-proj-..."
                       value={prefs['ai_key_openai'] || ''}
                       onChange={e => setPref('ai_key_openai', e.target.value)}
                     />
+                    <ModelSelector providerKey="openai" prefKey="ai_model_openai" label="Model" />
                     <p className="text-xs text-muted-foreground">Reviewer — platform.openai.com → API Keys</p>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-sm">Google Gemini API Key</Label>
+                  {/* Gemini */}
+                  <div className="space-y-2 p-3 rounded-lg border border-border">
+                    <Label className="text-sm">Google Gemini</Label>
                     <Input
                       type="password"
                       placeholder="AIza..."
                       value={prefs['ai_key_gemini'] || ''}
                       onChange={e => setPref('ai_key_gemini', e.target.value)}
                     />
+                    <ModelSelector providerKey="gemini" prefKey="ai_model_gemini" label="Model" />
                     <p className="text-xs text-muted-foreground">Reviewer — aistudio.google.com → API Keys</p>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-sm">Anthropic (Claude) API Key <Badge variant="outline" className="text-xs ml-1">Finalizer</Badge></Label>
+                  {/* Anthropic */}
+                  <div className="space-y-2 p-3 rounded-lg border border-border">
+                    <Label className="text-sm flex items-center gap-2">
+                      Anthropic (Claude) <Badge variant="outline" className="text-xs">Finalizer</Badge>
+                    </Label>
                     <Input
                       type="password"
                       placeholder="sk-ant-..."
                       value={prefs['ai_key_anthropic'] || ''}
                       onChange={e => setPref('ai_key_anthropic', e.target.value)}
                     />
+                    <ModelSelector providerKey="anthropic" prefKey="ai_model_anthropic" label="Model" />
                     <p className="text-xs text-muted-foreground">Final reviewer & executor — console.anthropic.com → API Keys</p>
                   </div>
                 </div>
