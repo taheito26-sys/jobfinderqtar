@@ -89,9 +89,11 @@ Deno.serve(async (req) => {
           const results = searchData.data || [];
 
           for (const result of results) {
-            const extracted = result.json || {};
-            const jobTitle = extracted.title || result.title || '';
-            const company = extracted.company || '';
+            const markdown = result.markdown || '';
+            const rawTitle = result.metadata?.title || result.title || '';
+            const titleParts = rawTitle.split(/\s[-–|@]\s/);
+            const jobTitle = titleParts[0]?.trim() || '';
+            const company = titleParts[1]?.trim() || '';
             const applyUrl = result.url || '';
 
             // Skip if no meaningful data
@@ -109,15 +111,15 @@ Deno.serve(async (req) => {
               user_id: profile.user_id,
               title: jobTitle,
               company,
-              location: extracted.location || '',
-              remote_type: extracted.remote_type || 'unknown',
-              description: extracted.description || (result.markdown || '').substring(0, 2000),
-              salary_min: extracted.salary_min || null,
-              salary_max: extracted.salary_max || null,
-              salary_currency: extracted.salary_currency || null,
-              employment_type: extracted.employment_type || 'full-time',
-              seniority_level: extracted.seniority_level || '',
-              requirements: (extracted.requirements || []) as any,
+              location: '',
+              remote_type: 'unknown',
+              description: (result.metadata?.description || markdown).substring(0, 2000),
+              salary_min: null,
+              salary_max: null,
+              salary_currency: null,
+              employment_type: 'full-time',
+              seniority_level: '',
+              requirements: [],
               apply_url: applyUrl,
             }).select('id, title, company').single();
 
