@@ -13,8 +13,20 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, ExternalLink, MapPin, Building2, AlertTriangle, CheckCircle2, XCircle,
-  Zap, FileText, Send, Loader2, Mail
+  Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare
 } from 'lucide-react';
+
+function isLinkedInSource(job: any): boolean {
+  if (!job) return false;
+  const raw = job.raw_data as any;
+  if (raw?.source === 'linkedin') return true;
+  const sourceUrl = job.source_url || job.apply_url || '';
+  try {
+    return new URL(sourceUrl).hostname.includes('linkedin.com');
+  } catch {
+    return sourceUrl.includes('linkedin.com');
+  }
+}
 
 const JobDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -31,6 +43,9 @@ const JobDetail = () => {
   const [draftMode, setDraftMode] = useState('manual');
   const [draftNotes, setDraftNotes] = useState('');
   const [creatingDraft, setCreatingDraft] = useState(false);
+  const [markedApplied, setMarkedApplied] = useState(false);
+
+  const isLinkedin = isLinkedInSource(job);
 
   useEffect(() => {
     if (!user || !id) return;
@@ -46,6 +61,16 @@ const JobDetail = () => {
     load();
   }, [id, user]);
 
+  const logEvent = async (eventType: string, metadata: any = {}) => {
+    if (!user || !id) return;
+    await supabase.from('application_events').insert({
+      user_id: user.id,
+      job_id: id,
+      event_type: eventType,
+      metadata: metadata as any,
+    });
+  };
+
   const scoreJob = async () => {
     if (!user || !id) return;
     setScoring(true);
@@ -54,6 +79,7 @@ const JobDetail = () => {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       setMatch(data);
+      await logEvent('job_scored', { overall_score: data.overall_score });
       toast({ title: 'Job scored!', description: `Match score: ${data.overall_score}/100` });
     } catch (err: any) {
       toast({ title: 'Scoring failed', description: err.message, variant: 'destructive' });
@@ -83,6 +109,7 @@ const JobDetail = () => {
         }
         throw new Error(data.error);
       }
+      await logEvent(docType === 'cv' ? 'cv_tailored' : 'cover_letter_generated', { job_id: id });
       toast({ title: docType === 'cv' ? 'CV tailored!' : 'Cover letter generated!', description: 'View it in Tailoring Review.' });
       navigate('/tailoring');
     } catch (err: any) {
@@ -101,18 +128,36 @@ const JobDetail = () => {
     setter(false);
   };
 
+  const openApplyUrl = async () => {
+    const applyUrl = job.apply_url || job.source_url;
+    if (applyUrl) {
+      await logEvent('opened_apply_url', { url: applyUrl, source: isLinkedin ? 'linkedin' : 'web' });
+      window.open(applyUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const markApplied = async () => {
+    if (!user || !id) return;
+    await logEvent('marked_applied', { method: 'manual', source: isLinkedin ? 'linkedin' : 'web' });
+    setMarkedApplied(true);
+    toast({ title: 'Marked as applied', description: 'Application status recorded.' });
+  };
+
   const createDraft = async () => {
     if (!user || !id) return;
     setCreatingDraft(true);
     try {
+      // For LinkedIn jobs, force manual mode
+      const mode = isLinkedin ? 'manual' : draftMode;
       const { data, error } = await supabase.from('application_drafts').insert({
         user_id: user.id, job_id: id, match_id: match?.id || null,
-        apply_mode: draftMode, status: 'draft', notes: draftNotes,
+        apply_mode: mode, status: 'draft', notes: draftNotes,
       }).select().single();
       if (error) throw error;
+      await logEvent('created_draft', { draft_id: data.id, mode });
       await supabase.from('activity_log').insert({
         user_id: user.id, action: 'created_draft', entity_type: 'application_draft',
-        entity_id: data.id, details: { job_title: job.title, company: job.company, mode: draftMode },
+        entity_id: data.id, details: { job_title: job.title, company: job.company, mode } as any,
       });
       toast({ title: 'Draft created' });
       setDraftModal(false);
@@ -153,7 +198,14 @@ const JobDetail = () => {
                   <Building2 className="w-6 h-6 text-muted-foreground" />
                 </div>
                 <div className="flex-1">
-                  <h1 className="text-xl font-bold text-foreground">{job.title}</h1>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h1 className="text-xl font-bold text-foreground">{job.title}</h1>
+                    {isLinkedin && (
+                      <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800">
+                        <Linkedin className="w-3 h-3 mr-1" /> Imported from LinkedIn
+                      </Badge>
+                    )}
+                  </div>
                   <p className="text-muted-foreground">{job.company}</p>
                   <div className="flex flex-wrap items-center gap-2 mt-2">
                     {job.location && <span className="flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="w-3 h-3" />{job.location}</span>}
@@ -169,9 +221,20 @@ const JobDetail = () => {
                 </div>
                 {match && <ScoreBadge score={match.overall_score} size="lg" showLabel />}
               </div>
-              {job.apply_url && (
-                <Button variant="outline" size="sm" className="mt-4" asChild>
-                  <a href={job.apply_url} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-4 h-4 mr-2" />View Listing</a>
+
+              {/* LinkedIn manual-submit notice */}
+              {isLinkedin && (
+                <div className="mt-4 flex items-start gap-2 p-3 rounded-lg border border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
+                  <Linkedin className="w-4 h-4 text-[#0A66C2] mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">Manual submit required.</span> This app helps you prepare tailored materials. You'll submit your application directly on LinkedIn.
+                  </p>
+                </div>
+              )}
+
+              {(job.apply_url || job.source_url) && (
+                <Button variant="outline" size="sm" className="mt-4" onClick={openApplyUrl}>
+                  <ExternalLink className="w-4 h-4 mr-2" />View Original Listing
                 </Button>
               )}
             </CardContent>
@@ -212,16 +275,31 @@ const JobDetail = () => {
         </div>
 
         <div className="space-y-4">
+          {/* Apply workflow CTA card */}
           <Card>
-            <CardContent className="pt-6 space-y-2">
+            <CardHeader><CardTitle className="text-base">Apply Workflow</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
               <Button className="w-full" onClick={scoreJob} disabled={scoring}>
-                {scoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Scoring...</> : <><Zap className="w-4 h-4 mr-2" />{match ? 'Re-score Job' : 'Score Job'}</>}
+                {scoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Scoring...</> : <><Zap className="w-4 h-4 mr-2" />{match ? 'Re-score Job' : '1. Score Job'}</>}
               </Button>
               <Button variant="outline" className="w-full" onClick={() => tailorDocument('cv')} disabled={tailoring}>
-                {tailoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Tailoring...</> : <><FileText className="w-4 h-4 mr-2" />Tailor CV</>}
+                {tailoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Tailoring...</> : <><FileText className="w-4 h-4 mr-2" />2. Tailor CV</>}
               </Button>
               <Button variant="outline" className="w-full" onClick={() => tailorDocument('cover_letter')} disabled={tailoringCL}>
-                {tailoringCL ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating...</> : <><Mail className="w-4 h-4 mr-2" />Generate Cover Letter</>}
+                {tailoringCL ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Generating...</> : <><Mail className="w-4 h-4 mr-2" />3. Generate Cover Letter</>}
+              </Button>
+              {(job.apply_url || job.source_url) && (
+                <Button variant="outline" className="w-full" onClick={openApplyUrl}>
+                  <ExternalLink className="w-4 h-4 mr-2" />4. Open Application URL
+                </Button>
+              )}
+              <Button
+                variant={markedApplied ? 'secondary' : 'outline'}
+                className="w-full"
+                onClick={markApplied}
+                disabled={markedApplied}
+              >
+                <CheckSquare className="w-4 h-4 mr-2" />{markedApplied ? 'Applied ✓' : '5. Mark Applied'}
               </Button>
               <Button variant="outline" className="w-full" onClick={() => setDraftModal(true)}>
                 <Send className="w-4 h-4 mr-2" />Create Draft
@@ -294,17 +372,18 @@ const JobDetail = () => {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Application Mode</Label>
-              <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={draftMode} onChange={e => setDraftMode(e.target.value)}>
-                <option value="manual">Manual — You apply using tailored docs</option>
-                <option value="assisted">Assisted — System pre-fills, you review</option>
-                <option value="auto_submit">Auto-Submit — Requires explicit approval</option>
-              </select>
+              {isLinkedin ? (
+                <div className="p-3 rounded-lg border border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
+                  <p className="text-sm text-foreground font-medium">Manual</p>
+                  <p className="text-xs text-muted-foreground">LinkedIn jobs require manual submission. Prepare your materials here, then apply on LinkedIn directly.</p>
+                </div>
+              ) : (
+                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={draftMode} onChange={e => setDraftMode(e.target.value)}>
+                  <option value="manual">Manual — You apply using tailored docs</option>
+                  <option value="assisted">Assisted — System pre-fills, you review</option>
+                </select>
+              )}
             </div>
-            {draftMode === 'auto_submit' && (
-              <div className="p-3 rounded-lg border border-warning/30 bg-warning/5">
-                <p className="text-xs text-warning flex items-center gap-1"><AlertTriangle className="w-3 h-3" />Auto-submit requires approval before each submission.</p>
-              </div>
-            )}
             <div className="space-y-2">
               <Label>Notes</Label>
               <Textarea value={draftNotes} onChange={e => setDraftNotes(e.target.value)} rows={3} placeholder="Any notes for this application..." />

@@ -6,13 +6,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Briefcase, ArrowRight } from 'lucide-react';
+import { Briefcase, ArrowRight, Linkedin } from 'lucide-react';
+import { Separator } from '@/components/ui/separator';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [linkedinLoading, setLinkedinLoading] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -41,6 +43,20 @@ const Auth = () => {
     }
   };
 
+  const handleLinkedInLogin = async () => {
+    setLinkedinLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'linkedin_oidc',
+        options: { redirectTo: window.location.origin + '/' },
+      });
+      if (error) throw error;
+    } catch (error: any) {
+      toast({ title: 'LinkedIn sign-in failed', description: error.message, variant: 'destructive' });
+      setLinkedinLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <div className="w-full max-w-md space-y-6">
@@ -59,7 +75,26 @@ const Auth = () => {
               {isLogin ? 'Enter your credentials to access your dashboard' : 'Start building your professional profile'}
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4">
+            <Button
+              variant="outline"
+              className="w-full"
+              onClick={handleLinkedInLogin}
+              disabled={linkedinLoading}
+            >
+              <Linkedin className="w-4 h-4 mr-2 text-[#0A66C2]" />
+              {linkedinLoading ? 'Redirecting...' : 'Continue with LinkedIn'}
+            </Button>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <Separator className="w-full" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">or</span>
+              </div>
+            </div>
+
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
@@ -89,7 +124,7 @@ const Auth = () => {
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             </form>
-            <div className="mt-4 text-center">
+            <div className="text-center">
               <button
                 onClick={() => setIsLogin(!isLogin)}
                 className="text-sm text-muted-foreground hover:text-foreground transition-colors"
