@@ -313,18 +313,74 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
 
             <Separator />
 
-            {/* Suggestions */}
-            <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1.5">Suggestions</p>
-              <div className="space-y-1.5">
-                {result.suggestions.map((s, i) => (
-                  <div key={i} className="flex items-start gap-2 text-xs">
-                    <AlertCircle className="w-3 h-3 text-primary mt-0.5 flex-shrink-0" />
-                    <span className="text-foreground">{s}</span>
-                  </div>
-                ))}
+            {/* Actionable Fixes */}
+            {result.fixes.filter(f => !f.applied).length > 0 && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                    <Wrench className="w-3 h-3" /> Quick Fixes
+                  </p>
+                  {result.fixes.filter(f => f.type === 'add_skill' && !f.applied).length > 1 && (
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="h-6 text-[10px] gap-1 px-2"
+                      disabled={applying !== null}
+                      onClick={applyAllSkillFixes}
+                    >
+                      {applying === 'all' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                      Add all missing skills
+                    </Button>
+                  )}
+                </div>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {result.fixes.filter(f => !f.applied).slice(0, 10).map(fix => (
+                    <div key={fix.id} className="flex items-center justify-between gap-2 p-1.5 rounded-md bg-muted/50 border border-border">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-foreground truncate">{fix.label}</p>
+                        <p className="text-[10px] text-muted-foreground line-clamp-1">{fix.description}</p>
+                      </div>
+                      {fix.type === 'add_skill' && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-6 w-6 p-0 flex-shrink-0"
+                          disabled={applying !== null}
+                          onClick={() => applyFix(fix)}
+                        >
+                          {applying === fix.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* Applied fixes */}
+            {result.fixes.filter(f => f.applied).length > 0 && (
+              <div className="flex items-center gap-1.5 text-xs text-score-excellent">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{result.fixes.filter(f => f.applied).length} fix(es) applied — click Re-check to update score</span>
+              </div>
+            )}
+
+            <Separator />
+
+            {/* Suggestions */}
+            {result.suggestions.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Suggestions</p>
+                <div className="space-y-1.5">
+                  {result.suggestions.map((s, i) => (
+                    <div key={i} className="flex items-start gap-2 text-xs">
+                      <AlertCircle className="w-3 h-3 text-primary mt-0.5 flex-shrink-0" />
+                      <span className="text-foreground">{s}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <Button onClick={runCheck} variant="outline" size="sm" className="w-full gap-1.5 mt-2">
               <Sparkles className="w-3.5 h-3.5" />Re-check
