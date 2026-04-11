@@ -124,6 +124,25 @@ function buildProvider(name: string, key: string, lovableKey: string, model?: st
   };
 }
 
+/** Retry a function with exponential backoff on 429 */
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, baseDelay = 3000): Promise<T> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const is429 = err?.status === 429 || err?.message?.includes("Rate limited") || err?.message?.includes("429");
+      if (is429 && attempt < retries) {
+        const delay = baseDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        console.log(`[Retry] Rate limited, waiting ${Math.round(delay)}ms (attempt ${attempt + 1}/${retries})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Max retries exceeded");
+}
+
 /** Call a single AI provider with messages + optional tool calling */
 export async function callProvider(
   config: ProviderConfig,
@@ -132,10 +151,12 @@ export async function callProvider(
   toolChoice?: any,
   maxTokens = 8192
 ): Promise<{ tool_arguments: string; raw?: any }> {
-  if (config.provider === "anthropic") {
-    return callAnthropic(config, messages, tools, toolChoice, maxTokens);
-  }
-  return callOpenAICompat(config, messages, tools, toolChoice);
+  return withRetry(async () => {
+    if (config.provider === "anthropic") {
+      return callAnthropic(config, messages, tools, toolChoice, maxTokens);
+    }
+    return callOpenAICompat(config, messages, tools, toolChoice);
+  });
 }
 
 async function callAnthropic(
