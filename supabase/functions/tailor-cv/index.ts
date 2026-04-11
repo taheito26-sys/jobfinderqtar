@@ -182,17 +182,49 @@ ${match ? `Match Score: ${match.overall_score}/100
 Match Reasons: ${JSON.stringify(match.match_reasons)}
 Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
 
+    const contentSchema = document_type === "cv"
+      ? {
+          type: "object",
+          properties: {
+            summary: { type: "string", description: "Tailored professional summary" },
+            experience: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  company: { type: "string" },
+                  title: { type: "string" },
+                  start_date: { type: "string" },
+                  end_date: { type: "string" },
+                  is_current: { type: "boolean" },
+                  highlights: { type: "array", items: { type: "string" } },
+                },
+                required: ["company", "title", "start_date", "highlights"],
+              },
+            },
+            skills: { type: "array", items: { type: "string" } },
+          },
+          required: ["summary", "experience", "skills"],
+        }
+      : {
+          type: "object",
+          properties: {
+            letter_text: { type: "string", description: "The full cover letter text" },
+          },
+          required: ["letter_text"],
+        };
+
     const tools = [{
       type: "function",
       function: {
         name: "generate_tailored_document",
-        description: "Return the tailored document content",
+        description: "Return the tailored document content with all fields populated",
         parameters: {
           type: "object",
           properties: {
-            content: { type: "object", description: "The tailored document content" },
-            changes_summary: { type: "array", items: { type: "string" } },
-            unsupported_claims: { type: "array", items: { type: "string" } },
+            content: contentSchema,
+            changes_summary: { type: "array", items: { type: "string" }, description: "List of changes made and why" },
+            unsupported_claims: { type: "array", items: { type: "string" }, description: "Claims that could not be verified from profile data" },
           },
           required: ["content", "changes_summary", "unsupported_claims"],
         },

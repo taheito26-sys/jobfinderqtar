@@ -267,7 +267,7 @@ const TailoringReview = () => {
 
 const CoverLetterView = ({ content }: { content: any }) => {
   if (!content) return null;
-  const text = typeof content === 'string' ? content : content.content || JSON.stringify(content, null, 2);
+  const text = typeof content === 'string' ? content : content.letter_text || content.content || JSON.stringify(content, null, 2);
   return (
     <Card>
       <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Mail className="w-4 h-4" />Cover Letter</CardTitle></CardHeader>
