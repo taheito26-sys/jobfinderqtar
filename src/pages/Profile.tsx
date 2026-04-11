@@ -660,6 +660,33 @@ const Profile = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* LinkedIn Import Dialog */}
+      <Dialog open={linkedinDialogOpen} onOpenChange={setLinkedinDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import from LinkedIn</DialogTitle>
+            <DialogDescription>
+              Paste your LinkedIn profile URL to auto-fill your profile with your professional data.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>LinkedIn Profile URL</Label>
+              <Input
+                value={linkedinUrl}
+                onChange={e => setLinkedinUrl(e.target.value)}
+                placeholder="https://linkedin.com/in/yourname"
+                onKeyDown={e => { if (e.key === 'Enter' && linkedinUrl.trim()) importFromLinkedin(); }}
+              />
+              <p className="text-xs text-muted-foreground">Make sure your LinkedIn profile is set to public for best results.</p>
+            </div>
+            <Button onClick={importFromLinkedin} className="w-full" disabled={!linkedinUrl.trim() || importingLinkedin}>
+              {importingLinkedin ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing...</> : <><Linkedin className="w-4 h-4 mr-2" />Import Profile</>}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
