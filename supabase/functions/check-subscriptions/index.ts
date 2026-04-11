@@ -176,6 +176,7 @@ Deno.serve(async (req) => {
             const job = extractJobFromResult(result);
             if (!job || !job.title) continue;
             if (!job.company) job.company = sub.name;
+            if (!isRelevantJob(job, sub)) continue;
             
             if (job.apply_url && existingUrls.has(job.apply_url)) continue;
             const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
@@ -226,6 +227,7 @@ Deno.serve(async (req) => {
             const job = extractJobFromResult(results[0]);
             if (!job || !job.title) continue;
             if (!job.company) job.company = sub.name;
+            if (!isRelevantJob(job, sub)) continue;
 
             const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
             if (existingKeys.has(key)) continue;
@@ -268,6 +270,7 @@ Deno.serve(async (req) => {
             const job = extractJobFromResult(result);
             if (!job || !job.title) continue;
             if (!job.company) job.company = sub.name;
+            if (!isRelevantJob(job, sub)) continue;
 
             if (job.apply_url && existingUrls.has(job.apply_url)) continue;
             const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
@@ -309,6 +312,7 @@ Deno.serve(async (req) => {
           for (const result of results) {
             const job = extractJobFromResult(result);
             if (!job || !job.title) continue;
+            if (!isRelevantJob(job, sub)) continue;
 
             if (job.apply_url && existingUrls.has(job.apply_url)) continue;
             const key = `${job.title.toLowerCase()}|${(job.company || 'unknown').toLowerCase()}`;
