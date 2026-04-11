@@ -48,7 +48,7 @@ const extractProfileTool = {
   type: "function",
   function: {
     name: "extract_profile",
-    description: "Extract structured professional profile data from CV/resume text. Only extract facts explicitly present in the text — never invent or hallucinate data.",
+    description: "Extract structured professional profile data from CV/resume. Only extract facts explicitly present — never invent data.",
     parameters: {
       type: "object",
       properties: {
@@ -60,26 +60,17 @@ const extractProfileTool = {
         location: { type: "string", description: "City or location" },
         country: { type: "string", description: "Country" },
         linkedin_url: { type: "string", description: "LinkedIn profile URL if present" },
-        skills: {
-          type: "array", items: { type: "string" },
-          description: "Technical and professional skills explicitly listed"
-        },
-        desired_titles: {
-          type: "array", items: { type: "string" },
-          description: "3-5 job titles inferred from experience and current role"
-        },
+        skills: { type: "array", items: { type: "string" }, description: "Technical and professional skills explicitly listed" },
+        desired_titles: { type: "array", items: { type: "string" }, description: "3-5 job titles inferred from experience and current role" },
         employment: {
           type: "array",
           items: {
             type: "object",
             properties: {
-              title: { type: "string" },
-              company: { type: "string" },
-              location: { type: "string" },
+              title: { type: "string" }, company: { type: "string" }, location: { type: "string" },
               start_date: { type: "string", description: "YYYY-MM-DD format" },
               end_date: { type: "string", description: "YYYY-MM-DD or null if current" },
-              is_current: { type: "boolean" },
-              description: { type: "string" },
+              is_current: { type: "boolean" }, description: { type: "string" },
               achievements: { type: "array", items: { type: "string" } }
             },
             required: ["title", "company"]
@@ -90,11 +81,8 @@ const extractProfileTool = {
           items: {
             type: "object",
             properties: {
-              degree: { type: "string" },
-              institution: { type: "string" },
-              field_of_study: { type: "string" },
-              start_date: { type: "string" },
-              end_date: { type: "string" }
+              degree: { type: "string" }, institution: { type: "string" },
+              field_of_study: { type: "string" }, start_date: { type: "string" }, end_date: { type: "string" }
             },
             required: ["degree", "institution"]
           }
@@ -104,9 +92,7 @@ const extractProfileTool = {
           items: {
             type: "object",
             properties: {
-              name: { type: "string" },
-              issuing_organization: { type: "string" },
-              issue_date: { type: "string" }
+              name: { type: "string" }, issuing_organization: { type: "string" }, issue_date: { type: "string" }
             },
             required: ["name", "issuing_organization"]
           }
@@ -118,46 +104,17 @@ const extractProfileTool = {
   }
 };
 
-async function callAIWithTools(config: AIConfig, messages: any[], tools: any[], tool_choice: any): Promise<string> {
-  if (config.provider === "anthropic") {
-    const systemMsg = messages.find((m: any) => m.role === "system")?.content || "";
-    const userMsgs = messages.filter((m: any) => m.role !== "system");
-    const body: any = {
-      model: config.model, max_tokens: 8192, system: systemMsg, messages: userMsgs,
-      tools: tools.map((t: any) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })),
-      tool_choice: { type: "tool", name: tool_choice.function.name },
-    };
-    const response = await fetch(config.url, {
-      method: "POST",
-      headers: { "x-api-key": config.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) { const err = await response.text(); console.error("Anthropic error:", err); throw new Error(`AI error: ${response.status}`); }
-    const data = await response.json();
-    const toolUse = data.content?.find((c: any) => c.type === "tool_use");
-    if (toolUse) return JSON.stringify(toolUse.input);
-    throw new Error("No tool call returned from Anthropic");
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
+  return btoa(binary);
+}
 
-  const body: any = { model: config.model, messages, tools, tool_choice };
-  const response = await fetch(config.url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error("AI error:", response.status, errText);
-    if (response.status === 429) throw Object.assign(new Error("Rate limited — please try again in a moment"), { status: 429 });
-    if (response.status === 402) throw Object.assign(new Error("AI credits exhausted — add funds in Settings → Workspace → Usage"), { status: 402 });
-    throw new Error(`AI error: ${response.status}`);
-  }
-  const data = await response.json();
-  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (toolCall) return toolCall.function.arguments;
-  // Fallback: try to parse content as JSON
-  const content = data.choices?.[0]?.message?.content || "{}";
-  return content;
+function isPdf(mimeType: string, fileName: string): boolean {
+  return mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf");
 }
 
 Deno.serve(async (req) => {
@@ -209,47 +166,100 @@ Deno.serve(async (req) => {
       });
     }
 
-    const fileText = await fileData.text();
-    const truncatedText = fileText.substring(0, 20000);
-
-    const systemPrompt = `You are a precise CV/resume parser. Extract ONLY facts explicitly present in the text.
+    const systemPrompt = `You are a precise CV/resume parser. Extract ONLY facts explicitly present in the document.
 
 CRITICAL RULES:
 - NEVER invent, fabricate, or hallucinate any data
-- If a field is not present in the CV, leave it empty or null
+- The full_name MUST be the actual name shown in the document
+- If a field is not present, leave it empty or null
 - For dates, use YYYY-MM-DD format. If only a year is given, use YYYY-01-01
 - For "desired_titles": infer 3-5 realistic job titles based on the person's most recent role, seniority, and domain
 - Extract ALL employment entries, education entries, and certifications found
 - Skills should only include those explicitly listed or clearly demonstrated`;
 
-    const userPrompt = `Parse this CV/resume and extract all professional data:\n\n${truncatedText}`;
+    const isPdfFile = isPdf(doc.mime_type || "", doc.file_name);
+    let userContent: any;
 
-    const rawResult = await callAIWithTools(
-      aiConfig,
-      [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
-      [extractProfileTool],
-      { type: "function", function: { name: "extract_profile" } }
-    );
+    if (isPdfFile) {
+      // Send PDF as base64 for multimodal AI processing
+      const arrayBuffer = await fileData.arrayBuffer();
+      const base64 = arrayBufferToBase64(arrayBuffer);
+      console.log(`Sending PDF as base64 (${Math.round(base64.length / 1024)}KB) to AI`);
+
+      if (aiConfig.provider === "anthropic") {
+        // Anthropic uses document type for PDFs
+        userContent = [
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+          { type: "text", text: "Parse this CV/resume and extract all professional data. The person's name should match what's written on the document." }
+        ];
+      } else {
+        // OpenAI-compatible (Lovable gateway, Gemini, OpenAI) - use image_url with data URI for PDFs
+        userContent = [
+          { type: "text", text: "Parse this CV/resume and extract all professional data. The person's name should match what's written on the document." },
+          { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64}` } }
+        ];
+      }
+    } else {
+      // Plain text files
+      const fileText = await fileData.text();
+      const truncatedText = fileText.substring(0, 20000);
+      userContent = `Parse this CV/resume and extract all professional data:\n\n${truncatedText}`;
+    }
+
+    // Call AI with tool calling
+    let rawResult: string;
+
+    if (aiConfig.provider === "anthropic") {
+      const body = {
+        model: aiConfig.model, max_tokens: 8192, system: systemPrompt,
+        messages: [{ role: "user", content: userContent }],
+        tools: [{ name: "extract_profile", description: extractProfileTool.function.description, input_schema: extractProfileTool.function.parameters }],
+        tool_choice: { type: "tool", name: "extract_profile" },
+      };
+      const response = await fetch(aiConfig.url, {
+        method: "POST",
+        headers: { "x-api-key": aiConfig.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) { const err = await response.text(); console.error("Anthropic error:", err); throw new Error(`AI error: ${response.status}`); }
+      const data = await response.json();
+      const toolUse = data.content?.find((c: any) => c.type === "tool_use");
+      if (!toolUse) throw new Error("No tool call returned from AI");
+      rawResult = JSON.stringify(toolUse.input);
+    } else {
+      const body = {
+        model: aiConfig.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userContent },
+        ],
+        tools: [extractProfileTool],
+        tool_choice: { type: "function", function: { name: "extract_profile" } },
+      };
+      const response = await fetch(aiConfig.url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        console.error("AI error:", response.status, errText);
+        throw new Error(`AI error: ${response.status}`);
+      }
+      const data = await response.json();
+      const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+      rawResult = toolCall ? toolCall.function.arguments : (data.choices?.[0]?.message?.content || "{}");
+    }
 
     let parsed;
     try {
       parsed = JSON.parse(rawResult);
     } catch {
-      // Try to clean markdown fences
       const cleaned = rawResult.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       parsed = JSON.parse(cleaned);
     }
 
-    // Validation: check that full_name appears in source text
-    if (parsed.full_name) {
-      const nameNorm = parsed.full_name.toLowerCase().replace(/\s+/g, " ");
-      const textNorm = truncatedText.toLowerCase().replace(/\s+/g, " ");
-      if (!textNorm.includes(nameNorm)) {
-        console.warn(`Validation warning: extracted name "${parsed.full_name}" not found in CV text`);
-        parsed._validation_warnings = parsed._validation_warnings || [];
-        parsed._validation_warnings.push(`Name "${parsed.full_name}" may be inaccurate — not found verbatim in CV`);
-      }
-    }
+    console.log(`Extracted: name="${parsed.full_name}", ${(parsed.skills || []).length} skills, ${(parsed.employment || []).length} jobs`);
 
     await supabase.from("master_documents").update({ parsed_content: parsed }).eq("id", document_id);
 
