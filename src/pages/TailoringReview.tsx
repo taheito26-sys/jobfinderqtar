@@ -6,9 +6,10 @@ import EmptyState from '@/components/EmptyState';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X } from 'lucide-react';
+import { GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X, FileText, Mail } from 'lucide-react';
 
 const TailoringReview = () => {
   const { user } = useAuth();
@@ -16,6 +17,7 @@ const TailoringReview = () => {
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any>(null);
+  const [filter, setFilter] = useState<'all' | 'cv' | 'cover_letter'>('all');
 
   useEffect(() => {
     if (!user) return;
@@ -23,6 +25,8 @@ const TailoringReview = () => {
       .order('created_at', { ascending: false })
       .then(({ data }) => { setDocuments(data ?? []); setLoading(false); });
   }, [user]);
+
+  const filtered = filter === 'all' ? documents : documents.filter(d => d.document_type === filter);
 
   const updateApproval = async (id: string, status: string) => {
     const updates: any = { approval_status: status };
@@ -56,6 +60,9 @@ const TailoringReview = () => {
     }
   };
 
+  const cvCount = documents.filter(d => d.document_type === 'cv').length;
+  const clCount = documents.filter(d => d.document_type === 'cover_letter').length;
+
   return (
     <div className="animate-fade-in">
       <PageHeader
@@ -63,21 +70,37 @@ const TailoringReview = () => {
         description="Review side-by-side diffs, resolve unsupported claims, and approve documents"
       />
 
+      {!loading && documents.length > 0 && (
+        <Tabs value={filter} onValueChange={(v) => setFilter(v as any)} className="mb-4">
+          <TabsList>
+            <TabsTrigger value="all">All ({documents.length})</TabsTrigger>
+            <TabsTrigger value="cv" className="flex items-center gap-1.5">
+              <FileText className="w-3.5 h-3.5" />CVs ({cvCount})
+            </TabsTrigger>
+            <TabsTrigger value="cover_letter" className="flex items-center gap-1.5">
+              <Mail className="w-3.5 h-3.5" />Cover Letters ({clCount})
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      )}
+
       {loading ? (
         <p className="text-muted-foreground text-center py-8">Loading...</p>
-      ) : documents.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <EmptyState
           icon={GitCompare}
           title="No tailored documents"
-          description="Select a job from the Job Feed and click 'Tailor CV' to generate job-specific versions."
+          description="Select a job from the Job Feed and click 'Tailor CV' or 'Generate Cover Letter' to create job-specific versions."
         />
       ) : (
         <div className="space-y-3">
-          {documents.map(doc => (
+          {filtered.map(doc => (
             <Card key={doc.id} className="hover:border-primary/20 transition-colors">
               <CardContent className="py-4 flex items-center gap-4">
                 <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
-                  <GitCompare className="w-5 h-5 text-muted-foreground" />
+                  {doc.document_type === 'cover_letter'
+                    ? <Mail className="w-5 h-5 text-muted-foreground" />
+                    : <FileText className="w-5 h-5 text-muted-foreground" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <h3 className="font-medium text-foreground">
@@ -109,7 +132,9 @@ const TailoringReview = () => {
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <GitCompare className="w-5 h-5" />
+              {selected?.document_type === 'cover_letter'
+                ? <Mail className="w-5 h-5" />
+                : <FileText className="w-5 h-5" />}
               {selected?.document_type === 'cv' ? 'Tailored CV' : 'Cover Letter'} — {selected?.jobs?.title}
             </DialogTitle>
           </DialogHeader>
@@ -175,30 +200,100 @@ const TailoringReview = () => {
                 </Card>
               )}
 
-              {/* Side-by-side Content */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <Card>
-                  <CardHeader><CardTitle className="text-sm text-muted-foreground">Original</CardTitle></CardHeader>
-                  <CardContent>
-                    <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono bg-muted p-3 rounded-md max-h-96 overflow-y-auto">
-                      {JSON.stringify(selected.original_content, null, 2)}
-                    </pre>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader><CardTitle className="text-sm text-primary">Tailored</CardTitle></CardHeader>
-                  <CardContent>
-                    <pre className="text-xs text-foreground whitespace-pre-wrap font-mono bg-muted p-3 rounded-md max-h-96 overflow-y-auto">
-                      {JSON.stringify(selected.content, null, 2)}
-                    </pre>
-                  </CardContent>
-                </Card>
-              </div>
+              {/* Content Display */}
+              {selected.document_type === 'cover_letter' ? (
+                <CoverLetterView content={selected.content} />
+              ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <Card>
+                    <CardHeader><CardTitle className="text-sm text-muted-foreground">Original</CardTitle></CardHeader>
+                    <CardContent>
+                      <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono bg-muted p-3 rounded-md max-h-96 overflow-y-auto">
+                        {JSON.stringify(selected.original_content, null, 2)}
+                      </pre>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader><CardTitle className="text-sm text-primary">Tailored</CardTitle></CardHeader>
+                    <CardContent>
+                      <TailoredCVView content={selected.content} />
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
       </Dialog>
     </div>
+  );
+};
+
+const CoverLetterView = ({ content }: { content: any }) => {
+  if (!content) return null;
+  const text = typeof content === 'string' ? content : content.content || JSON.stringify(content, null, 2);
+  return (
+    <Card>
+      <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Mail className="w-4 h-4" />Cover Letter</CardTitle></CardHeader>
+      <CardContent>
+        <div className="prose prose-sm max-w-none text-foreground whitespace-pre-wrap leading-relaxed">
+          {text}
+        </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+const TailoredCVView = ({ content }: { content: any }) => {
+  if (!content) return null;
+
+  if (content.summary || content.experience || content.skills) {
+    return (
+      <div className="space-y-4 max-h-96 overflow-y-auto">
+        {content.summary && (
+          <div>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Summary</h4>
+            <p className="text-sm text-foreground">{content.summary}</p>
+          </div>
+        )}
+        {content.experience?.length > 0 && (
+          <div>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-2">Experience</h4>
+            <div className="space-y-3">
+              {content.experience.map((exp: any, i: number) => (
+                <div key={i} className="border-l-2 border-primary/20 pl-3">
+                  <p className="text-sm font-medium text-foreground">{exp.title} at {exp.company}</p>
+                  <p className="text-xs text-muted-foreground">{exp.start_date} — {exp.is_current ? 'Present' : exp.end_date || 'N/A'}</p>
+                  {exp.highlights?.length > 0 && (
+                    <ul className="mt-1 space-y-0.5">
+                      {exp.highlights.map((h: string, j: number) => (
+                        <li key={j} className="text-xs text-foreground">• {h}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {content.skills?.length > 0 && (
+          <div>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase mb-1">Skills</h4>
+            <div className="flex flex-wrap gap-1">
+              {content.skills.map((skill: string, i: number) => (
+                <Badge key={i} variant="outline" className="text-xs">{skill}</Badge>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <pre className="text-xs text-foreground whitespace-pre-wrap font-mono bg-muted p-3 rounded-md max-h-96 overflow-y-auto">
+      {JSON.stringify(content, null, 2)}
+    </pre>
   );
 };
 
