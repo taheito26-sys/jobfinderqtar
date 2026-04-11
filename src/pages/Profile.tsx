@@ -74,16 +74,17 @@ const Profile = () => {
   // LinkedIn import state
   const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
   const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [linkedinText, setLinkedinText] = useState('');
   const [importingLinkedin, setImportingLinkedin] = useState(false);
 
   const importFromLinkedin = async () => {
-    if (!user || !linkedinUrl.trim()) return;
+    if (!user || !linkedinText.trim()) return;
     setImportingLinkedin(true);
     setLinkedinDialogOpen(false);
-    toast({ title: 'Importing from LinkedIn...', description: 'Scraping and parsing your LinkedIn profile. This may take a moment.' });
+    toast({ title: 'Importing from LinkedIn...', description: 'AI is parsing your LinkedIn profile text. This may take a moment.' });
 
     try {
-      const { data, error } = await supabase.functions.invoke('scrape-linkedin', { body: { linkedin_url: linkedinUrl.trim() } });
+      const { data, error } = await supabase.functions.invoke('scrape-linkedin', { body: { linkedin_text: linkedinText.trim(), linkedin_url: linkedinUrl.trim() || undefined } });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       if (!data?.parsed) throw new Error('No data extracted');
