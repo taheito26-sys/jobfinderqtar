@@ -652,6 +652,25 @@ const JobFeed = () => {
         </div>
       )}
 
+      {/* Stealth Apply & Auto-Apply Queue */}
+      {!loading && user && jobs.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <StealthApplyPanel
+            jobs={jobs}
+            matches={matches}
+            userId={user.id}
+            onDraftsCreated={() => toast.success('Stealth drafts ready — check Applications')}
+          />
+          <AutoApplyQueue
+            jobs={jobs}
+            matches={matches}
+            userId={user.id}
+            selectedJobs={selectedJobs}
+            onComplete={() => { setSelectedJobs(new Set()); }}
+          />
+        </div>
+      )}
+
       {loading ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
