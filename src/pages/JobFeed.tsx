@@ -124,6 +124,9 @@ const JobFeed = () => {
                 {batchScoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Scoring...</> : <><Zap className="w-4 h-4 mr-2" />Score All ({unscoredCount})</>}
               </Button>
             )}
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Globe className="w-4 h-4 mr-2" />Import URL
+            </Button>
             <Dialog open={addOpen} onOpenChange={setAddOpen}>
               <DialogTrigger asChild>
                 <Button><Plus className="w-4 h-4 mr-2" />Add Job</Button>
