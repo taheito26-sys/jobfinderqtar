@@ -68,6 +68,7 @@ const JobFeed = () => {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [hasSalary, setHasSalary] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
+  const [employmentTypeFilter, setEmploymentTypeFilter] = useState('all');
 
   useEffect(() => {
     if (!user) return;
@@ -85,15 +86,29 @@ const JobFeed = () => {
   }, [user]);
 
   // Extract unique values for filter dropdowns
+  const GCC_LOCATION_PRESETS = [
+    '🇶🇦 Qatar', '🇸🇦 Saudi Arabia', '🇦🇪 UAE', '🇦🇪 Dubai', '🇦🇪 Abu Dhabi',
+    '🇸🇦 Riyadh', '🇸🇦 Jeddah', '🇶🇦 Doha', '🇰🇼 Kuwait', '🇧🇭 Bahrain', '🇴🇲 Oman',
+  ];
+
   const filterOptions = useMemo(() => {
     const companies = [...new Set(jobs.map(j => j.company).filter(Boolean))].sort();
-    const locations = [...new Set(jobs.map(j => j.location).filter(Boolean))].sort();
+    const rawLocations = [...new Set(jobs.map(j => j.location).filter(Boolean))].sort();
+    // Merge GCC presets with actual job locations, deduplicate by plain name
+    const gccPlain = GCC_LOCATION_PRESETS.map(l => l.replace(/^.\s/, ''));
+    const allLocations = [...GCC_LOCATION_PRESETS];
+    rawLocations.forEach(l => {
+      if (!gccPlain.some(g => l.toLowerCase().includes(g.toLowerCase()))) {
+        allLocations.push(l);
+      }
+    });
     const seniorities = [...new Set(jobs.map(j => j.seniority_level).filter(Boolean))].sort();
     const industries = [...new Set(jobs.map(j => j.industry).filter(Boolean))].sort();
+    const employmentTypes = [...new Set(jobs.map(j => j.employment_type).filter(Boolean))].sort();
     const recommendations = [...new Set(
       Object.values(matches).map((m: any) => m.recommendation).filter(Boolean)
     )].sort();
-    return { companies, locations, seniorities, industries, recommendations };
+    return { companies, locations: allLocations, rawLocations, seniorities, industries, employmentTypes, recommendations };
   }, [jobs, matches]);
 
   const activeFilterCount = useMemo(() => {
@@ -108,8 +123,9 @@ const JobFeed = () => {
     if (sourceFilter !== 'all') count++;
     if (hasSalary !== 'all') count++;
     if (dateFilter !== 'all') count++;
+    if (employmentTypeFilter !== 'all') count++;
     return count;
-  }, [companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter]);
+  }, [companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, employmentTypeFilter]);
 
   const clearAllFilters = () => {
     setCompanyFilter('all');
@@ -122,6 +138,7 @@ const JobFeed = () => {
     setSourceFilter('all');
     setHasSalary('all');
     setDateFilter('all');
+    setEmploymentTypeFilter('all');
     setStatusFilter('all');
     setSearch('');
   };
@@ -294,7 +311,8 @@ const JobFeed = () => {
       const matchesStatus = statusFilter === 'all' || j.status === statusFilter;
       const matchesCompany = companyFilter === 'all' || j.company === companyFilter;
       const matchesRemote = remoteFilter === 'all' || j.remote_type === remoteFilter;
-      const matchesLocation = locationFilter === 'all' || j.location === locationFilter;
+      const locPlain = locationFilter.replace(/^.\s/, '');
+      const matchesLocation = locationFilter === 'all' || (j.location || '').toLowerCase().includes(locPlain.toLowerCase());
       const matchesSeniority = seniorityFilter === 'all' || j.seniority_level === seniorityFilter;
       const matchesIndustry = industryFilter === 'all' || j.industry === industryFilter;
       const matchesDate = isWithinDateRange(j.created_at, dateFilter);
@@ -314,9 +332,11 @@ const JobFeed = () => {
         (hasSalary === 'yes' && (j.salary_min || j.salary_max)) ||
         (hasSalary === 'no' && !j.salary_min && !j.salary_max);
 
+      const matchesEmploymentType = employmentTypeFilter === 'all' || j.employment_type === employmentTypeFilter;
+
       return matchesSearch && matchesStatus && matchesCompany && matchesRemote &&
         matchesLocation && matchesScore && matchesRec && matchesSeniority &&
-        matchesIndustry && matchesSource && matchesSalary && matchesDate;
+        matchesIndustry && matchesSource && matchesSalary && matchesDate && matchesEmploymentType;
     })
     .sort((a, b) => {
       if (sortBy === 'score') return (matches[b.id]?.overall_score ?? -1) - (matches[a.id]?.overall_score ?? -1);
@@ -324,7 +344,7 @@ const JobFeed = () => {
       if (sortBy === 'title') return a.title.localeCompare(b.title);
       if (sortBy === 'salary') return (b.salary_max || b.salary_min || 0) - (a.salary_max || a.salary_min || 0);
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    }), [jobs, search, statusFilter, companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, sortBy, matches]);
+    }), [jobs, search, statusFilter, companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, employmentTypeFilter, sortBy, matches]);
 
   // Stats
   const stats = useMemo(() => {
@@ -548,6 +568,7 @@ const JobFeed = () => {
           {sourceFilter !== 'all' && <FilterChip label={`Source: ${sourceFilter}`} onClear={() => setSourceFilter('all')} />}
           {hasSalary !== 'all' && <FilterChip label={`Salary: ${hasSalary}`} onClear={() => setHasSalary('all')} />}
           {dateFilter !== 'all' && <FilterChip label={`Date: ${dateFilter}`} onClear={() => setDateFilter('all')} />}
+          {employmentTypeFilter !== 'all' && <FilterChip label={`Employment: ${employmentTypeFilter}`} onClear={() => setEmploymentTypeFilter('all')} />}
           {(scoreRange[0] > 0 || scoreRange[1] < 100) && <FilterChip label={`Score: ${scoreRange[0]}–${scoreRange[1]}`} onClear={() => setScoreRange([0, 100])} />}
           {activeFilterCount > 1 && (
             <button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground underline ml-1">Clear all</button>
@@ -620,6 +641,15 @@ const JobFeed = () => {
                   { value: '24h', label: 'Last 24 Hours' },
                   { value: '7d', label: 'Last 7 Days' },
                   { value: '30d', label: 'Last 30 Days' },
+                ]} />
+                <FilterSelect label="Employment" value={employmentTypeFilter} onChange={setEmploymentTypeFilter} options={[
+                  { value: 'all', label: 'All Types' },
+                  { value: 'full-time', label: 'Full-time' },
+                  { value: 'part-time', label: 'Part-time' },
+                  { value: 'contract', label: 'Contract' },
+                  { value: 'freelance', label: 'Freelance' },
+                  { value: 'internship', label: 'Internship' },
+                  ...filterOptions.employmentTypes.filter(t => !['full-time','part-time','contract','freelance','internship'].includes(t)).map(t => ({ value: t, label: t })),
                 ]} />
               </div>
               <div className="mt-3 space-y-1.5">
