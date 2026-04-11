@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
+import JSZip from "https://esm.sh/jszip@3.10.1";
 import { getPipelineConfig, callProvider } from "../_shared/ai-pipeline.ts";
 
 const corsHeaders = {
@@ -75,6 +76,28 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 
 function isPdf(mimeType: string, fileName: string): boolean {
   return mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf");
+}
+
+function isDocx(mimeType: string, fileName: string): boolean {
+  return mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    fileName.toLowerCase().endsWith(".docx");
+}
+
+async function extractDocxText(data: Blob): Promise<string> {
+  const zip = await JSZip.loadAsync(await data.arrayBuffer());
+  const docXml = await zip.file("word/document.xml")?.async("string");
+  if (!docXml) return "";
+  // Strip XML tags, collapse whitespace, and clean up
+  return docXml
+    .replace(/<w:br[^>]*\/?\s*>/gi, "\n")
+    .replace(/<\/w:p>/gi, "\n")
+    .replace(/<\/w:tr>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 Deno.serve(async (req) => {
@@ -164,6 +187,15 @@ ABSOLUTE RULES — VIOLATION = FAILURE:
           { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64}` } }
         ];
       }
+    } else if (isDocx(doc.mime_type || "", doc.file_name)) {
+      const docxText = await extractDocxText(fileData);
+      console.log(`[parse-cv] Extracted ${docxText.length} chars from DOCX`);
+      if (docxText.length < 50) {
+        return new Response(JSON.stringify({ error: "Could not extract text from DOCX file" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      userContent = `Parse this CV/resume and extract all professional data:\n\n${docxText.substring(0, 20000)}`;
     } else {
       const fileText = await fileData.text();
       userContent = `Parse this CV/resume and extract all professional data:\n\n${fileText.substring(0, 20000)}`;
