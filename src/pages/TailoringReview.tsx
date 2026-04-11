@@ -52,6 +52,32 @@ const TailoringReview = () => {
     }
   };
 
+  const downloadDocument = async (docId: string, format: 'pdf' | 'docx') => {
+    setDownloading(`${docId}-${format}`);
+    try {
+      const { data, error } = await supabase.functions.invoke('generate-document', {
+        body: { document_id: docId, format },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      // The response is a blob
+      const blob = data instanceof Blob ? data : new Blob([data]);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `document.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast({ title: `${format.toUpperCase()} downloaded` });
+    } catch (err: any) {
+      toast({ title: 'Download failed', description: err.message, variant: 'destructive' });
+    }
+    setDownloading(null);
+  };
+
   const statusVariant = (s: string) => {
     switch (s) {
       case 'approved': return 'default' as const;
