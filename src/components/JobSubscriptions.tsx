@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,11 +8,14 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { Plus, Trash2, RefreshCw, Building2, Globe, Linkedin, Search, Loader2, Clock, Rss } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { Plus, Trash2, RefreshCw, Building2, Globe, Linkedin, Search, Loader2, Clock, Rss, ChevronDown, ChevronRight, ExternalLink, Briefcase, Archive, X } from 'lucide-react';
+import { formatDistanceToNow, format } from 'date-fns';
+import { Link } from 'react-router-dom';
 
 type SubscriptionType = 'company' | 'careers_url' | 'linkedin_company' | 'linkedin_profile' | 'keyword_alert';
 
@@ -30,6 +33,18 @@ interface Subscription {
   created_at: string;
 }
 
+interface SubJob {
+  id: string;
+  title: string;
+  company: string;
+  location: string;
+  remote_type: string;
+  employment_type: string;
+  status: string;
+  apply_url: string;
+  created_at: string;
+}
+
 const TYPE_CONFIG: Record<SubscriptionType, { label: string; icon: React.ReactNode; description: string; needsUrl: boolean; needsQuery: boolean }> = {
   company: { label: 'Company', icon: <Building2 className="w-4 h-4" />, description: 'Search for jobs by company name', needsUrl: false, needsQuery: false },
   careers_url: { label: 'Careers Page', icon: <Globe className="w-4 h-4" />, description: 'Monitor a website/careers page for new listings', needsUrl: true, needsQuery: false },
@@ -44,6 +59,169 @@ const COUNTRIES = [
   'France', 'Netherlands', 'Singapore', 'India', 'Remote',
 ];
 
+const SubscriptionJobs = ({ subscriptionId, userId }: { subscriptionId: string; userId: string }) => {
+  const { toast } = useToast();
+  const [jobs, setJobs] = useState<SubJob[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchFilter, setSearchFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  useEffect(() => {
+    const fetchJobs = async () => {
+      setLoading(true);
+      const { data } = await supabase
+        .from('jobs')
+        .select('id, title, company, location, remote_type, employment_type, status, apply_url, created_at')
+        .eq('user_id', userId)
+        .contains('raw_data', { subscription_id: subscriptionId } as any)
+        .order('created_at', { ascending: false });
+      setJobs((data as SubJob[]) || []);
+      setLoading(false);
+    };
+    fetchJobs();
+  }, [subscriptionId, userId]);
+
+  const handleArchive = async (jobId: string) => {
+    await supabase.from('jobs').update({ status: 'archived' } as any).eq('id', jobId);
+    setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'archived' } : j));
+    toast({ title: 'Job archived' });
+  };
+
+  const filteredJobs = jobs.filter(j => {
+    if (statusFilter !== 'all' && j.status !== statusFilter) return false;
+    if (searchFilter) {
+      const q = searchFilter.toLowerCase();
+      return j.title.toLowerCase().includes(q) || j.company.toLowerCase().includes(q) || (j.location || '').toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const activeCount = jobs.filter(j => j.status === 'active').length;
+  const archivedCount = jobs.filter(j => j.status === 'archived').length;
+
+  if (loading) {
+    return (
+      <div className="py-4 text-center text-muted-foreground text-sm">
+        <Loader2 className="w-4 h-4 animate-spin mx-auto mb-1" />
+        Loading jobs...
+      </div>
+    );
+  }
+
+  if (jobs.length === 0) {
+    return (
+      <div className="py-4 text-center text-muted-foreground text-sm">
+        No jobs imported yet from this subscription.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 pt-3 border-t border-border mt-3">
+      {/* Filters */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[180px] max-w-[300px]">
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={searchFilter}
+            onChange={e => setSearchFilter(e.target.value)}
+            placeholder="Filter by title, company, location..."
+            className="h-8 text-xs pl-8"
+          />
+          {searchFilter && (
+            <button onClick={() => setSearchFilter('')} className="absolute right-2 top-1/2 -translate-y-1/2">
+              <X className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+            </button>
+          )}
+        </div>
+        <div className="flex gap-1">
+          <Button
+            variant={statusFilter === 'all' ? 'default' : 'outline'}
+            size="sm"
+            className="h-7 text-xs px-2"
+            onClick={() => setStatusFilter('all')}
+          >
+            All ({jobs.length})
+          </Button>
+          <Button
+            variant={statusFilter === 'active' ? 'default' : 'outline'}
+            size="sm"
+            className="h-7 text-xs px-2"
+            onClick={() => setStatusFilter('active')}
+          >
+            Active ({activeCount})
+          </Button>
+          <Button
+            variant={statusFilter === 'archived' ? 'default' : 'outline'}
+            size="sm"
+            className="h-7 text-xs px-2"
+            onClick={() => setStatusFilter('archived')}
+          >
+            Archived ({archivedCount})
+          </Button>
+        </div>
+      </div>
+
+      {/* Jobs list */}
+      <ScrollArea className="h-[300px]">
+        <div className="space-y-1 pr-3">
+          {filteredJobs.length === 0 ? (
+            <div className="py-4 text-center text-muted-foreground text-xs">
+              No jobs match your filter.
+            </div>
+          ) : (
+            filteredJobs.map(job => (
+              <div
+                key={job.id}
+                className={`flex items-center gap-3 p-2.5 rounded-lg border transition-colors hover:bg-muted/50 ${
+                  job.status === 'archived' ? 'opacity-50' : ''
+                }`}
+              >
+                <Briefcase className="w-4 h-4 text-muted-foreground shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <Link to={`/jobs/${job.id}`} className="text-sm font-medium hover:underline truncate block">
+                    {job.title}
+                  </Link>
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                    <span>{job.company}</span>
+                    {job.location && <span>• {job.location}</span>}
+                    {job.remote_type && job.remote_type !== 'unknown' && (
+                      <Badge variant="outline" className="text-[9px] h-4 px-1">{job.remote_type}</Badge>
+                    )}
+                    <span>• {format(new Date(job.created_at), 'MMM d, yyyy')}</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  {job.status === 'archived' ? (
+                    <Badge variant="secondary" className="text-[9px] h-5">Archived</Badge>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="Archive job"
+                      onClick={() => handleArchive(job.id)}
+                    >
+                      <Archive className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                  {job.apply_url && (
+                    <a href={job.apply_url} target="_blank" rel="noopener noreferrer">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="Open job link">
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </Button>
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+};
+
 const JobSubscriptions = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -52,6 +230,7 @@ const JobSubscriptions = () => {
   const [showAdd, setShowAdd] = useState(false);
   const [checking, setChecking] = useState<string | null>(null);
   const [checkingAll, setCheckingAll] = useState(false);
+  const [expandedSub, setExpandedSub] = useState<string | null>(null);
 
   // Form state
   const [formType, setFormType] = useState<SubscriptionType>('company');
@@ -177,12 +356,18 @@ const JobSubscriptions = () => {
           {subscriptions.map(sub => {
             const config = TYPE_CONFIG[sub.subscription_type];
             const isChecking = checking === sub.id;
+            const isExpanded = expandedSub === sub.id;
             return (
               <Card key={sub.id} className={`transition-opacity ${!sub.enabled ? 'opacity-50' : ''}`}>
                 <CardContent className="py-3 px-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                      <div className="p-2 rounded-lg bg-muted">{config.icon}</div>
+                      <button
+                        onClick={() => setExpandedSub(isExpanded ? null : sub.id)}
+                        className="p-2 rounded-lg bg-muted hover:bg-muted/80 transition-colors"
+                      >
+                        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                      </button>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <h4 className="font-medium text-sm truncate">{sub.name}</h4>
@@ -198,7 +383,12 @@ const JobSubscriptions = () => {
                               ? formatDistanceToNow(new Date(sub.last_checked_at), { addSuffix: true })
                               : 'Never checked'}
                           </span>
-                          <span>{sub.jobs_found_total} jobs found</span>
+                          <button
+                            onClick={() => setExpandedSub(isExpanded ? null : sub.id)}
+                            className="font-medium text-primary hover:underline"
+                          >
+                            {sub.jobs_found_total} jobs found
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -226,6 +416,10 @@ const JobSubscriptions = () => {
                       </AlertDialog>
                     </div>
                   </div>
+
+                  {isExpanded && user && (
+                    <SubscriptionJobs subscriptionId={sub.id} userId={user.id} />
+                  )}
                 </CardContent>
               </Card>
             );
