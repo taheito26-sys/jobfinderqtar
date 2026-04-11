@@ -42,7 +42,7 @@ const QUICK_SEARCHES = [
 ];
 
 const COUNTRIES = [
-  '', 'Qatar', 'UAE', 'Saudi Arabia', 'Bahrain', 'Kuwait', 'Oman',
+  '', 'Qatar', 'UAE', 'Saudi Arabia', 'Bahrain', 'Kuwait', 'Oman', 'Egypt',
   'United States', 'United Kingdom', 'Canada', 'Australia', 'Germany',
   'France', 'Netherlands', 'Singapore', 'India', 'Remote',
 ];

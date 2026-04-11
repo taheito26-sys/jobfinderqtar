@@ -960,6 +960,57 @@ export type Database = {
         }
         Relationships: []
       }
+      job_subscriptions: {
+        Row: {
+          check_interval_hours: number | null
+          config: Json | null
+          country: string | null
+          created_at: string
+          enabled: boolean | null
+          id: string
+          jobs_found_total: number | null
+          last_checked_at: string | null
+          name: string
+          search_query: string | null
+          subscription_type: string
+          updated_at: string
+          url: string | null
+          user_id: string
+        }
+        Insert: {
+          check_interval_hours?: number | null
+          config?: Json | null
+          country?: string | null
+          created_at?: string
+          enabled?: boolean | null
+          id?: string
+          jobs_found_total?: number | null
+          last_checked_at?: string | null
+          name: string
+          search_query?: string | null
+          subscription_type?: string
+          updated_at?: string
+          url?: string | null
+          user_id: string
+        }
+        Update: {
+          check_interval_hours?: number | null
+          config?: Json | null
+          country?: string | null
+          created_at?: string
+          enabled?: boolean | null
+          id?: string
+          jobs_found_total?: number | null
+          last_checked_at?: string | null
+          name?: string
+          search_query?: string | null
+          subscription_type?: string
+          updated_at?: string
+          url?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       jobs: {
         Row: {
           apply_url: string | null

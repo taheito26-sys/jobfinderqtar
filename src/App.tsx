@@ -15,6 +15,7 @@ import TailoringReview from "@/pages/TailoringReview";
 import Applications from "@/pages/Applications";
 import Activity from "@/pages/Activity";
 import SettingsPage from "@/pages/Settings";
+import SubscriptionsPage from "@/pages/Subscriptions";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -51,6 +52,7 @@ const App = () => (
             <Route path="/applications" element={<ProtectedRoute><Applications /></ProtectedRoute>} />
             <Route path="/activity" element={<ProtectedRoute><Activity /></ProtectedRoute>} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
+            <Route path="/subscriptions" element={<ProtectedRoute><SubscriptionsPage /></ProtectedRoute>} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
