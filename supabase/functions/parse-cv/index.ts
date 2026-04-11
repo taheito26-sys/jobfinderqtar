@@ -44,28 +44,120 @@ async function getAIConfig(userId: string): Promise<AIConfig> {
   }
 }
 
-async function callAIText(config: AIConfig, messages: any[]): Promise<string> {
+const extractProfileTool = {
+  type: "function",
+  function: {
+    name: "extract_profile",
+    description: "Extract structured professional profile data from CV/resume text. Only extract facts explicitly present in the text — never invent or hallucinate data.",
+    parameters: {
+      type: "object",
+      properties: {
+        full_name: { type: "string", description: "Full name as written in the CV" },
+        headline: { type: "string", description: "Current job title or professional headline" },
+        summary: { type: "string", description: "Professional summary/objective if present" },
+        email: { type: "string", description: "Email address" },
+        phone: { type: "string", description: "Phone number" },
+        location: { type: "string", description: "City or location" },
+        country: { type: "string", description: "Country" },
+        linkedin_url: { type: "string", description: "LinkedIn profile URL if present" },
+        skills: {
+          type: "array", items: { type: "string" },
+          description: "Technical and professional skills explicitly listed"
+        },
+        desired_titles: {
+          type: "array", items: { type: "string" },
+          description: "3-5 job titles inferred from experience and current role"
+        },
+        employment: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string" },
+              company: { type: "string" },
+              location: { type: "string" },
+              start_date: { type: "string", description: "YYYY-MM-DD format" },
+              end_date: { type: "string", description: "YYYY-MM-DD or null if current" },
+              is_current: { type: "boolean" },
+              description: { type: "string" },
+              achievements: { type: "array", items: { type: "string" } }
+            },
+            required: ["title", "company"]
+          }
+        },
+        education: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              degree: { type: "string" },
+              institution: { type: "string" },
+              field_of_study: { type: "string" },
+              start_date: { type: "string" },
+              end_date: { type: "string" }
+            },
+            required: ["degree", "institution"]
+          }
+        },
+        certifications: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              name: { type: "string" },
+              issuing_organization: { type: "string" },
+              issue_date: { type: "string" }
+            },
+            required: ["name", "issuing_organization"]
+          }
+        }
+      },
+      required: ["full_name", "skills", "desired_titles", "employment", "education"],
+      additionalProperties: false
+    }
+  }
+};
+
+async function callAIWithTools(config: AIConfig, messages: any[], tools: any[], tool_choice: any): Promise<string> {
   if (config.provider === "anthropic") {
     const systemMsg = messages.find((m: any) => m.role === "system")?.content || "";
     const userMsgs = messages.filter((m: any) => m.role !== "system");
+    const body: any = {
+      model: config.model, max_tokens: 8192, system: systemMsg, messages: userMsgs,
+      tools: tools.map((t: any) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })),
+      tool_choice: { type: "tool", name: tool_choice.function.name },
+    };
     const response = await fetch(config.url, {
       method: "POST",
       headers: { "x-api-key": config.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-      body: JSON.stringify({ model: config.model, max_tokens: 8192, system: systemMsg, messages: userMsgs }),
+      body: JSON.stringify(body),
     });
-    if (!response.ok) throw new Error(`AI error: ${response.status}`);
+    if (!response.ok) { const err = await response.text(); console.error("Anthropic error:", err); throw new Error(`AI error: ${response.status}`); }
     const data = await response.json();
-    return data.content?.find((c: any) => c.type === "text")?.text || "{}";
+    const toolUse = data.content?.find((c: any) => c.type === "tool_use");
+    if (toolUse) return JSON.stringify(toolUse.input);
+    throw new Error("No tool call returned from Anthropic");
   }
 
+  const body: any = { model: config.model, messages, tools, tool_choice };
   const response = await fetch(config.url, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: config.model, messages, temperature: 0.1 }),
+    body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`AI error: ${response.status}`);
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error("AI error:", response.status, errText);
+    if (response.status === 429) throw Object.assign(new Error("Rate limited — please try again in a moment"), { status: 429 });
+    if (response.status === 402) throw Object.assign(new Error("AI credits exhausted — add funds in Settings → Workspace → Usage"), { status: 402 });
+    throw new Error(`AI error: ${response.status}`);
+  }
   const data = await response.json();
-  return data.choices?.[0]?.message?.content || "{}";
+  const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+  if (toolCall) return toolCall.function.arguments;
+  // Fallback: try to parse content as JSON
+  const content = data.choices?.[0]?.message?.content || "{}";
+  return content;
 }
 
 Deno.serve(async (req) => {
@@ -118,66 +210,45 @@ Deno.serve(async (req) => {
     }
 
     const fileText = await fileData.text();
+    const truncatedText = fileText.substring(0, 20000);
 
-    const prompt = `Extract structured professional data from this CV/resume text. Return ONLY valid JSON with this structure:
-{
-  "full_name": "string",
-  "headline": "string (professional headline/title)",
-  "summary": "string (professional summary)",
-  "email": "string",
-  "phone": "string",
-  "location": "string (city)",
-  "country": "string (country)",
-  "skills": ["skill1", "skill2"],
-  "desired_titles": ["Job Title 1", "Job Title 2", "Job Title 3"],
-  "employment": [
-    {
-      "title": "string",
-      "company": "string",
-      "location": "string",
-      "start_date": "YYYY-MM-DD",
-      "end_date": "YYYY-MM-DD or null if current",
-      "is_current": boolean,
-      "description": "string",
-      "achievements": ["string"]
-    }
-  ],
-  "education": [
-    {
-      "degree": "string",
-      "institution": "string",
-      "field_of_study": "string",
-      "start_date": "YYYY-MM-DD",
-      "end_date": "YYYY-MM-DD"
-    }
-  ],
-  "certifications": [
-    {
-      "name": "string",
-      "issuing_organization": "string",
-      "issue_date": "YYYY-MM-DD"
-    }
-  ]
-}
+    const systemPrompt = `You are a precise CV/resume parser. Extract ONLY facts explicitly present in the text.
 
-IMPORTANT for desired_titles: Infer 3-5 job titles this person would likely be searching for based on their experience, current role, skills, and seniority level.
+CRITICAL RULES:
+- NEVER invent, fabricate, or hallucinate any data
+- If a field is not present in the CV, leave it empty or null
+- For dates, use YYYY-MM-DD format. If only a year is given, use YYYY-01-01
+- For "desired_titles": infer 3-5 realistic job titles based on the person's most recent role, seniority, and domain
+- Extract ALL employment entries, education entries, and certifications found
+- Skills should only include those explicitly listed or clearly demonstrated`;
 
-CV Text:
-${fileText.substring(0, 15000)}`;
+    const userPrompt = `Parse this CV/resume and extract all professional data:\n\n${truncatedText}`;
 
-    const rawContent = await callAIText(aiConfig, [
-      { role: "system", content: "You are a CV parser. Extract structured data from resume text. Return ONLY valid JSON, no markdown." },
-      { role: "user", content: prompt },
-    ]);
+    const rawResult = await callAIWithTools(
+      aiConfig,
+      [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+      [extractProfileTool],
+      { type: "function", function: { name: "extract_profile" } }
+    );
 
-    const cleaned = rawContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
     let parsed;
     try {
-      parsed = JSON.parse(cleaned);
+      parsed = JSON.parse(rawResult);
     } catch {
-      return new Response(JSON.stringify({ error: "Failed to parse AI response", raw: cleaned }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      // Try to clean markdown fences
+      const cleaned = rawResult.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      parsed = JSON.parse(cleaned);
+    }
+
+    // Validation: check that full_name appears in source text
+    if (parsed.full_name) {
+      const nameNorm = parsed.full_name.toLowerCase().replace(/\s+/g, " ");
+      const textNorm = truncatedText.toLowerCase().replace(/\s+/g, " ");
+      if (!textNorm.includes(nameNorm)) {
+        console.warn(`Validation warning: extracted name "${parsed.full_name}" not found in CV text`);
+        parsed._validation_warnings = parsed._validation_warnings || [];
+        parsed._validation_warnings.push(`Name "${parsed.full_name}" may be inaccurate — not found verbatim in CV`);
+      }
     }
 
     await supabase.from("master_documents").update({ parsed_content: parsed }).eq("id", document_id);
@@ -187,8 +258,9 @@ ${fileText.substring(0, 15000)}`;
     });
   } catch (err: any) {
     console.error("parse-cv error:", err);
+    const status = err.status || 500;
     return new Response(JSON.stringify({ error: err.message }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
