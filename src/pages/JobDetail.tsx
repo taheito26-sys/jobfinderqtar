@@ -70,11 +70,33 @@ const JobDetail = () => {
         body: { job_id: id, document_type: docType },
       });
       if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      if (data?.error) {
+        if (data.error.includes('Profile not found') || data.error.includes('profile')) {
+          toast({
+            title: 'Profile is empty',
+            description: 'Please complete your profile first. Go to Profile → "Extract from CV" to auto-fill from your uploaded CV.',
+            variant: 'destructive',
+            duration: 8000,
+          });
+          setter(false);
+          return;
+        }
+        throw new Error(data.error);
+      }
       toast({ title: docType === 'cv' ? 'CV tailored!' : 'Cover letter generated!', description: 'View it in Tailoring Review.' });
       navigate('/tailoring');
     } catch (err: any) {
-      toast({ title: 'Tailoring failed', description: err.message, variant: 'destructive' });
+      const msg = err.message || '';
+      if (msg.includes('Profile not found') || msg.includes('profile')) {
+        toast({
+          title: 'Profile is empty',
+          description: 'Please complete your profile first. Go to Profile → "Extract from CV" to auto-fill from your uploaded CV.',
+          variant: 'destructive',
+          duration: 8000,
+        });
+      } else {
+        toast({ title: 'Tailoring failed', description: msg, variant: 'destructive' });
+      }
     }
     setter(false);
   };
