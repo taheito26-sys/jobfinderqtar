@@ -45,10 +45,18 @@ const CVLibrary = () => {
       file_path: filePath, file_name: file.name, file_size: file.size, mime_type: file.type,
       is_primary: documents.length === 0,
     }).select().single();
-    if (data) { setDocuments([data, ...documents]); toast({ title: 'Document uploaded' }); }
-    if (error) toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    setUploading(false);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (data) {
+      setDocuments([data, ...documents]);
+      toast({ title: 'Document uploaded — now extracting profile...', description: 'AI is parsing your CV to auto-fill your profile.' });
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      // Auto-parse and import
+      await autoParseAndImport(data);
+    } else {
+      if (error) toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const parseCV = async (docId: string) => {
