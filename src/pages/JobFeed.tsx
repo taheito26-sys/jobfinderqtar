@@ -828,7 +828,7 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, u
   );
 };
 
-const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary }: any) => {
+const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary, userId }: any) => {
   const isLI = getJobSource(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
