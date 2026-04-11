@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe } from 'lucide-react';
+import { Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe, Linkedin } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
 import BulkSearchDialog from '@/components/BulkSearchDialog';
@@ -203,18 +203,29 @@ const JobFeed = () => {
         <div className="space-y-3">
           {filtered.map(job => {
             const match = matches[job.id];
+            const rawData = job.raw_data as any;
+            const isLI = rawData?.source === 'linkedin' ||
+              (job.source_url || job.apply_url || '').includes('linkedin.com');
             return (
               <Link key={job.id} to={`/jobs/${job.id}`}>
                 <Card className="hover:border-primary/30 transition-colors cursor-pointer group">
                   <CardContent className="py-4 flex items-center gap-4">
                     <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
-                      <Building2 className="w-5 h-5 text-muted-foreground" />
+                      {isLI ? <Linkedin className="w-5 h-5 text-[#0A66C2]" /> : <Building2 className="w-5 h-5 text-muted-foreground" />}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-medium text-foreground truncate">{job.title}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-medium text-foreground truncate">{job.title}</h3>
+                        {isLI && (
+                          <Badge variant="outline" className="text-[10px] shrink-0 border-sky-200 text-sky-700 dark:border-sky-800 dark:text-sky-300">
+                            LinkedIn
+                          </Badge>
+                        )}
+                      </div>
                       <p className="text-sm text-muted-foreground flex items-center gap-2">
                         {job.company}
                         {job.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3" />{job.location}</span>}
+                        {isLI && <span className="text-xs text-sky-600 dark:text-sky-400">Manual submit</span>}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">

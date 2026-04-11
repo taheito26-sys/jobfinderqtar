@@ -9,7 +9,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
-import { Loader2, Globe, Check, AlertCircle } from 'lucide-react';
+import { Loader2, Globe, Check, Linkedin } from 'lucide-react';
 
 interface ImportJobDialogProps {
   open: boolean;
@@ -26,6 +26,31 @@ const QATAR_JOB_BOARDS = [
   { name: 'Tanqeeb', url: 'https://www.tanqeeb.com', color: 'bg-purple-100 text-purple-800' },
 ];
 
+function isLinkedInUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.hostname.includes('linkedin.com');
+  } catch {
+    return false;
+  }
+}
+
+function normalizeLinkedInJobUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    // Extract job ID from various LinkedIn URL formats
+    const jobIdMatch = u.pathname.match(/\/jobs\/view\/(\d+)/) ||
+                       u.pathname.match(/\/jobs\/(\d+)/) ||
+                       url.match(/currentJobId=(\d+)/);
+    if (jobIdMatch) {
+      return `https://www.linkedin.com/jobs/view/${jobIdMatch[1]}/`;
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+
 const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProps) => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -35,12 +60,15 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
   const [editMode, setEditMode] = useState(false);
   const [editedJob, setEditedJob] = useState<ScrapedJob | null>(null);
 
+  const isLinkedin = isLinkedInUrl(url);
+
   const handleScrape = async () => {
     if (!url.trim()) return;
     setScraping(true);
     setScraped(null);
 
-    const result = await scrapeJobUrl(url);
+    const normalizedUrl = isLinkedin ? normalizeLinkedInJobUrl(url) : url;
+    const result = await scrapeJobUrl(normalizedUrl);
 
     if (result.success && result.job) {
       setScraped(result.job);
@@ -56,6 +84,9 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
   const handleSave = async () => {
     if (!user || !editedJob) return;
 
+    const sourceUrl = url.trim();
+    const isLI = isLinkedInUrl(sourceUrl);
+
     const { data, error } = await supabase.from('jobs').insert({
       user_id: user.id,
       title: editedJob.title,
@@ -69,14 +100,24 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       employment_type: editedJob.employment_type,
       seniority_level: editedJob.seniority_level,
       requirements: editedJob.requirements as any,
-      apply_url: editedJob.apply_url,
+      apply_url: editedJob.apply_url || sourceUrl,
+      source_url: sourceUrl,
+      raw_data: { source: isLI ? 'linkedin' : 'web', imported_from: sourceUrl } as any,
     }).select().single();
 
     if (data) {
+      // Log the import event
+      await supabase.from('application_events').insert({
+        user_id: user.id,
+        job_id: data.id,
+        event_type: 'job_imported',
+        metadata: { source: isLI ? 'linkedin' : 'web', source_url: sourceUrl } as any,
+      });
+
       onJobAdded(data);
       onOpenChange(false);
       resetState();
-      toast({ title: 'Job imported!' });
+      toast({ title: isLI ? 'LinkedIn job imported!' : 'Job imported!' });
     }
     if (error) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -114,10 +155,21 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
             </div>
           </div>
 
+          {/* LinkedIn notice */}
+          {isLinkedin && (
+            <div className="flex items-start gap-2 p-3 rounded-lg border border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
+              <Linkedin className="w-4 h-4 text-[#0A66C2] mt-0.5 flex-shrink-0" />
+              <div className="text-xs text-muted-foreground">
+                <p className="font-medium text-foreground">LinkedIn job detected</p>
+                <p>This job will be tagged as "Imported from LinkedIn". You'll apply manually through the original listing — this app does not submit applications on your behalf.</p>
+              </div>
+            </div>
+          )}
+
           {/* URL input */}
           <div className="flex gap-2">
             <Input
-              placeholder="https://qa.indeed.com/viewjob?jk=..."
+              placeholder="https://linkedin.com/jobs/view/... or any job URL"
               value={url}
               onChange={e => setUrl(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleScrape()}
@@ -135,6 +187,11 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
                 <div className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-score-excellent" />
                   <span className="text-sm font-medium">Job Extracted</span>
+                  {isLinkedin && (
+                    <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800">
+                      <Linkedin className="w-3 h-3 mr-1" /> LinkedIn
+                    </Badge>
+                  )}
                 </div>
                 <Button variant="ghost" size="sm" onClick={() => setEditMode(!editMode)}>
                   {editMode ? 'Preview' : 'Edit'}

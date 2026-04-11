@@ -201,6 +201,36 @@ export type Database = {
           },
         ]
       }
+      application_events: {
+        Row: {
+          created_at: string
+          draft_id: string | null
+          event_type: string
+          id: string
+          job_id: string
+          metadata: Json | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          draft_id?: string | null
+          event_type: string
+          id?: string
+          job_id: string
+          metadata?: Json | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          draft_id?: string | null
+          event_type?: string
+          id?: string
+          job_id?: string
+          metadata?: Json | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       application_submissions: {
         Row: {
           created_at: string
@@ -903,6 +933,7 @@ export type Database = {
           salary_min: number | null
           seniority_level: string | null
           source_id: string | null
+          source_url: string | null
           status: string | null
           title: string
           updated_at: string
@@ -930,6 +961,7 @@ export type Database = {
           salary_min?: number | null
           seniority_level?: string | null
           source_id?: string | null
+          source_url?: string | null
           status?: string | null
           title: string
           updated_at?: string
@@ -957,6 +989,7 @@ export type Database = {
           salary_min?: number | null
           seniority_level?: string | null
           source_id?: string | null
+          source_url?: string | null
           status?: string | null
           title?: string
           updated_at?: string
@@ -971,6 +1004,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      linkedin_profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string | null
+          full_name: string | null
+          headline: string | null
+          id: string
+          last_synced_at: string | null
+          linkedin_sub: string | null
+          profile_url: string | null
+          raw_claims: Json | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          headline?: string | null
+          id?: string
+          last_synced_at?: string | null
+          linkedin_sub?: string | null
+          profile_url?: string | null
+          raw_claims?: Json | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          headline?: string | null
+          id?: string
+          last_synced_at?: string | null
+          linkedin_sub?: string | null
+          profile_url?: string | null
+          raw_claims?: Json | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       listing_events: {
         Row: {

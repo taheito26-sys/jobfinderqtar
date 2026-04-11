@@ -16,6 +16,27 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
 });
 
+async function syncLinkedInProfile(session: Session) {
+  const user = session.user;
+  const identity = user.identities?.find(i => i.provider === 'linkedin_oidc');
+  if (!identity) return;
+
+  const claims = identity.identity_data || {};
+  const { error } = await supabase.from('linkedin_profiles').upsert({
+    user_id: user.id,
+    linkedin_sub: identity.id,
+    full_name: claims.full_name || claims.name || null,
+    email: claims.email || user.email || null,
+    avatar_url: claims.avatar_url || claims.picture || null,
+    headline: claims.headline || null,
+    profile_url: claims.profile_url || null,
+    raw_claims: claims,
+    last_synced_at: new Date().toISOString(),
+  }, { onConflict: 'user_id' });
+
+  if (error) console.error('LinkedIn profile sync error:', error.message);
+}
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
@@ -24,6 +45,11 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setLoading(false);
+
+      // Sync LinkedIn profile data on sign-in (non-blocking)
+      if (session && _event === 'SIGNED_IN') {
+        syncLinkedInProfile(session);
+      }
     });
 
     supabase.auth.getSession().then(({ data: { session } }) => {
