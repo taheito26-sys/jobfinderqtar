@@ -18,8 +18,10 @@ interface CVVersionHistoryProps {
 interface Version {
   id: string;
   version_number: number;
+  file_path: string;
   file_name: string;
   file_size: number;
+  mime_type: string;
   parsed_content: any;
   change_notes: string;
   created_at: string;
@@ -250,9 +252,9 @@ const CVVersionHistory = ({ open, onOpenChange, document, userId, onVersionResto
               <div className="space-y-2">
                 {getDiff(getContentForVersion(compareA), getContentForVersion(compareB)).map((d, i) => (
                   <div key={i} className="flex items-center gap-2 text-sm">
-                    {d.type === 'added' && <Plus className="w-3 h-3 text-green-500" />}
+                    {d.type === 'added' && <Plus className="w-3 h-3 text-score-excellent" />}
                     {d.type === 'removed' && <Minus className="w-3 h-3 text-destructive" />}
-                    {d.type === 'changed' && <ArrowLeftRight className="w-3 h-3 text-yellow-500" />}
+                    {d.type === 'changed' && <ArrowLeftRight className="w-3 h-3 text-primary" />}
                     {d.type === 'same' && <Equal className="w-3 h-3 text-muted-foreground" />}
                     <span className="font-medium capitalize">{d.field}:</span>
                     {d.type === 'same' ? (
