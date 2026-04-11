@@ -151,7 +151,8 @@ const JobDetail = () => {
       if (data?.error) throw new Error(data.error);
       setMatch(data);
       await logEvent('job_scored', { overall_score: data.overall_score });
-      toast({ title: 'Job scored!', description: `Match score: ${data.overall_score}/100` });
+      const scoreAi = data?.ai_chain?.length ? ` • ${data.ai_chain.join(' → ')}` : '';
+      toast({ title: 'Job scored!', description: `Match score: ${data.overall_score}/100${scoreAi}` });
     } catch (err: any) {
       toast({ title: 'Scoring failed', description: err.message, variant: 'destructive' });
     }
@@ -207,9 +208,12 @@ const JobDetail = () => {
         job_id: id,
         ai_chain: data?.ai_chain,
       });
+      const aiInfo = data?.ai_chain?.length
+        ? `Powered by ${data.ai_chain.join(' → ')}`
+        : 'View it in Tailoring Review.';
       toast({
-        title: docType === 'cv' ? 'CV tailored!' : 'Cover letter generated!',
-        description: data?.ai_chain ? `AI chain: ${data.ai_chain.join(' → ')}` : 'View it in Tailoring Review.',
+        title: `${docType === 'cv' ? 'CV tailored' : 'Cover letter generated'} ✓`,
+        description: aiInfo,
       });
       navigate('/tailoring');
     } catch (err: any) {
