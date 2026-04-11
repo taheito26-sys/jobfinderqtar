@@ -78,6 +78,28 @@ function isPdf(mimeType: string, fileName: string): boolean {
   return mimeType === "application/pdf" || fileName.toLowerCase().endsWith(".pdf");
 }
 
+function isDocx(mimeType: string, fileName: string): boolean {
+  return mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    fileName.toLowerCase().endsWith(".docx");
+}
+
+async function extractDocxText(data: Blob): Promise<string> {
+  const zip = await JSZip.loadAsync(await data.arrayBuffer());
+  const docXml = await zip.file("word/document.xml")?.async("string");
+  if (!docXml) return "";
+  // Strip XML tags, collapse whitespace, and clean up
+  return docXml
+    .replace(/<w:br[^>]*\/?\s*>/gi, "\n")
+    .replace(/<\/w:p>/gi, "\n")
+    .replace(/<\/w:tr>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
