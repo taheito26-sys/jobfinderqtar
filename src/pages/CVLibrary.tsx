@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2 } from 'lucide-react';
+import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette } from 'lucide-react';
 
 const CVLibrary = () => {
   const { user } = useAuth();
@@ -21,6 +21,9 @@ const CVLibrary = () => {
   const [parsing, setParsing] = useState<string | null>(null);
   const [importDoc, setImportDoc] = useState<any>(null);
   const [importing, setImporting] = useState(false);
+  const [previewDoc, setPreviewDoc] = useState<any>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState('classic');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -284,7 +287,14 @@ const CVLibrary = () => {
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-4">
+                <div className="flex gap-2 mt-4 flex-wrap">
+                  <Button variant="ghost" size="sm" onClick={async () => {
+                    setPreviewDoc(doc);
+                    const { data } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 300);
+                    setPreviewUrl(data?.signedUrl || null);
+                  }} title="Preview">
+                    <Eye className="w-4 h-4" />
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => togglePrimary(doc.id)} title={doc.is_primary ? 'Unset primary' : 'Set as primary'}>
                     {doc.is_primary ? <StarOff className="w-4 h-4" /> : <Star className="w-4 h-4" />}
                   </Button>
@@ -299,6 +309,10 @@ const CVLibrary = () => {
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteDoc(doc.id, doc.file_path)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2 text-[10px] text-muted-foreground">
+                  <History className="w-3 h-3" />v{doc.version || 1}
+                  {doc.file_size && <span>• {Math.round(doc.file_size / 1024)}KB</span>}
                 </div>
               </CardContent>
             </Card>

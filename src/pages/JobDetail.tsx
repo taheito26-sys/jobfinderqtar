@@ -16,6 +16,8 @@ import {
   Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare, RefreshCw, Settings, Bot
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import ATSScoreChecker from '@/components/ATSScoreChecker';
+import QuickApplyButton from '@/components/QuickApplyButton';
 
 function isLinkedInSource(job: any): boolean {
   if (!job) return false;
@@ -538,6 +540,16 @@ const JobDetail = () => {
               </Button>
             </CardContent>
           </Card>
+
+          {/* ATS Score Checker */}
+          {user && job && (
+            <ATSScoreChecker
+              jobId={job.id}
+              jobTitle={job.title}
+              jobRequirements={Array.isArray(job.requirements) ? job.requirements : []}
+              userId={user.id}
+            />
+          )}
 
           {match ? (
             <>

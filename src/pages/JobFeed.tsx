@@ -28,6 +28,9 @@ import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
 import BulkSearchDialog from '@/components/BulkSearchDialog';
 import { formatDistanceToNow } from 'date-fns';
+import QuickApplyButton from '@/components/QuickApplyButton';
+import StealthApplyPanel from '@/components/StealthApplyPanel';
+import AutoApplyQueue from '@/components/AutoApplyQueue';
 
 type ViewMode = 'list' | 'grid';
 
@@ -649,6 +652,25 @@ const JobFeed = () => {
         </div>
       )}
 
+      {/* Stealth Apply & Auto-Apply Queue */}
+      {!loading && user && jobs.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <StealthApplyPanel
+            jobs={jobs}
+            matches={matches}
+            userId={user.id}
+            onDraftsCreated={() => toast.success('Stealth drafts ready — check Applications')}
+          />
+          <AutoApplyQueue
+            jobs={jobs}
+            matches={matches}
+            userId={user.id}
+            selectedJobs={selectedJobs}
+            onComplete={() => { setSelectedJobs(new Set()); }}
+          />
+        </div>
+      )}
+
       {loading ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
@@ -673,6 +695,7 @@ const JobFeed = () => {
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
               formatSalary={formatSalary}
+              userId={user?.id}
             />
           ))}
         </div>
@@ -687,6 +710,7 @@ const JobFeed = () => {
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
               formatSalary={formatSalary}
+              userId={user?.id}
             />
           ))}
         </div>
@@ -742,7 +766,7 @@ function getJobSource(job: any) {
   return rawData?.source === 'linkedin' || (job.source_url || job.apply_url || '').includes('linkedin.com');
 }
 
-const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary }: any) => {
+const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, userId }: any) => {
   const isLI = getJobSource(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
@@ -791,6 +815,9 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary }:
                 {match.recommendation}
               </Badge>
             )}
+            {userId && (
+              <QuickApplyButton job={job} userId={userId} size="sm" className="opacity-0 group-hover:opacity-100 h-7 w-7 p-0" />
+            )}
             <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive h-7 w-7 p-0" onClick={(e) => onDelete(e, job.id)}>
               <Trash2 className="w-3 h-3" />
             </Button>
@@ -801,7 +828,7 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary }:
   );
 };
 
-const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary }: any) => {
+const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary, userId }: any) => {
   const isLI = getJobSource(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
@@ -845,6 +872,7 @@ const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary }:
           <div className="flex items-center justify-between pt-1 border-t border-border/50">
             <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
             <div className="flex items-center gap-1.5">
+              {userId && <QuickApplyButton job={job} userId={userId} size="sm" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100" />}
               {match && <ScoreBadge score={match.overall_score} />}
               {match?.recommendation && (
                 <Badge variant={match.recommendation === 'apply' ? 'default' : match.recommendation === 'skip' ? 'destructive' : 'secondary'} className="text-[10px] capitalize h-5">
