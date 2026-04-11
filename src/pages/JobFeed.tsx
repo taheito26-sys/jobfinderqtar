@@ -854,6 +854,9 @@ const JobFeed = () => {
               selected={selectedJobs.has(job.id)}
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
+              onArchive={archiveJob}
+              onUnarchive={unarchiveJob}
+              isArchiveView={statusFilter === 'archived'}
               formatSalary={formatSalary}
               userId={user?.id}
             />
@@ -869,6 +872,9 @@ const JobFeed = () => {
               selected={selectedJobs.has(job.id)}
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
+              onArchive={archiveJob}
+              onUnarchive={unarchiveJob}
+              isArchiveView={statusFilter === 'archived'}
               formatSalary={formatSalary}
               userId={user?.id}
             />
