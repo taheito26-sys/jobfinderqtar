@@ -332,9 +332,11 @@ const JobFeed = () => {
         (hasSalary === 'yes' && (j.salary_min || j.salary_max)) ||
         (hasSalary === 'no' && !j.salary_min && !j.salary_max);
 
+      const matchesEmploymentType = employmentTypeFilter === 'all' || j.employment_type === employmentTypeFilter;
+
       return matchesSearch && matchesStatus && matchesCompany && matchesRemote &&
         matchesLocation && matchesScore && matchesRec && matchesSeniority &&
-        matchesIndustry && matchesSource && matchesSalary && matchesDate;
+        matchesIndustry && matchesSource && matchesSalary && matchesDate && matchesEmploymentType;
     })
     .sort((a, b) => {
       if (sortBy === 'score') return (matches[b.id]?.overall_score ?? -1) - (matches[a.id]?.overall_score ?? -1);
@@ -342,7 +344,7 @@ const JobFeed = () => {
       if (sortBy === 'title') return a.title.localeCompare(b.title);
       if (sortBy === 'salary') return (b.salary_max || b.salary_min || 0) - (a.salary_max || a.salary_min || 0);
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    }), [jobs, search, statusFilter, companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, sortBy, matches]);
+    }), [jobs, search, statusFilter, companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, employmentTypeFilter, sortBy, matches]);
 
   // Stats
   const stats = useMemo(() => {
