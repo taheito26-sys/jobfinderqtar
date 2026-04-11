@@ -312,11 +312,17 @@ const CVLibrary = () => {
                       <Button variant="ghost" size="sm" onClick={() => setImportDoc(doc)} title="Import to Profile">
                         <UserPlus className="w-4 h-4" />
                       </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditorDoc(doc)} title="Edit Content">
+                        <Pencil className="w-4 h-4" />
+                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => setTemplateDoc(doc)} title="Generate Styled CV">
                         <Palette className="w-4 h-4" />
                       </Button>
                     </>
                   )}
+                  <Button variant="ghost" size="sm" onClick={() => setVersionDoc(doc)} title="Version History">
+                    <History className="w-4 h-4" />
+                  </Button>
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteDoc(doc.id, doc.file_path)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
