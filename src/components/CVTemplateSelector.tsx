@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Palette, FileText, Loader2, Download, Columns2, AlignLeft, LayoutTemplate } from 'lucide-react';
+import { Palette, Loader2, Download, Columns2, AlignLeft, LayoutTemplate, FileText, File } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -38,6 +38,8 @@ const TEMPLATES: Template[] = [
   },
 ];
 
+type ExportFormat = 'pdf' | 'docx';
+
 interface CVTemplateSelectorProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -48,6 +50,7 @@ interface CVTemplateSelectorProps {
 const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplateSelectorProps) => {
   const { toast } = useToast();
   const [selected, setSelected] = useState('classic');
+  const [format, setFormat] = useState<ExportFormat>('pdf');
   const [generating, setGenerating] = useState(false);
 
   const handleGenerate = async () => {
@@ -63,18 +66,39 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
           template: selected,
           parsed_content: document.parsed_content,
           document_type: 'cv',
+          format,
         },
       });
-      if (error) throw error;
+
+      if (error) {
+        // Edge function returned binary (file download) — check if it's a blob
+        throw error;
+      }
+
+      // If response is an object with error, throw
       if (data?.error) throw new Error(data.error);
 
-      toast({ title: 'CV generated!', description: `Your ${selected} styled CV is ready.` });
-      onOpenChange(false);
-
-      // If a download URL was returned, open it
-      if (data?.download_url) {
+      // The edge function returns the file as a binary response
+      // supabase.functions.invoke returns it as a Blob when content-type isn't JSON
+      if (data instanceof Blob) {
+        const url = URL.createObjectURL(data);
+        const a = window.document.createElement('a');
+        a.href = url;
+        const ext = format === 'docx' ? 'docx' : 'pdf';
+        a.download = `CV_${selected}.${ext}`;
+        window.document.body.appendChild(a);
+        a.click();
+        window.document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast({ title: 'CV downloaded!', description: `Your ${selected} styled CV (${format.toUpperCase()}) has been downloaded.` });
+      } else if (data?.download_url) {
         window.open(data.download_url, '_blank');
+        toast({ title: 'CV generated!', description: `Your ${selected} styled CV is ready.` });
+      } else {
+        toast({ title: 'CV generated!', description: `Your ${selected} styled CV is ready.` });
       }
+
+      onOpenChange(false);
     } catch (err: any) {
       toast({ title: 'Generation failed', description: err.message, variant: 'destructive' });
     }
@@ -124,6 +148,38 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
           ))}
         </div>
 
+        {/* Format Toggle */}
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-foreground">Export format:</span>
+          <div className="flex gap-1 bg-muted rounded-lg p-1">
+            <button
+              onClick={() => setFormat('pdf')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                format === 'pdf'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              PDF
+            </button>
+            <button
+              onClick={() => setFormat('docx')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                format === 'docx'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <File className="w-3.5 h-3.5" />
+              DOCX
+            </button>
+          </div>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {format === 'pdf' ? 'Best for sharing & printing' : 'Editable in Word & Google Docs'}
+          </span>
+        </div>
+
         {/* Content Preview */}
         {hasContent && (
           <div className="bg-muted/50 rounded-lg p-3 space-y-1.5">
@@ -154,9 +210,9 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
           size="lg"
         >
           {generating ? (
-            <><Loader2 className="w-4 h-4 animate-spin" />Generating {selected} CV...</>
+            <><Loader2 className="w-4 h-4 animate-spin" />Generating {selected} {format.toUpperCase()}...</>
           ) : (
-            <><Download className="w-4 h-4" />Generate {TEMPLATES.find(t => t.id === selected)?.label} Resume</>
+            <><Download className="w-4 h-4" />Download {TEMPLATES.find(t => t.id === selected)?.label} Resume ({format.toUpperCase()})</>
           )}
         </Button>
       </DialogContent>
