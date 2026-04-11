@@ -231,6 +231,12 @@ const JobFeed = () => {
           })}
         </div>
       )}
+
+      <ImportJobDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onJobAdded={(job) => setJobs([job, ...jobs])}
+      />
     </div>
   );
 };
