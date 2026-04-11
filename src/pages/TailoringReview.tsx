@@ -79,20 +79,39 @@ const TailoringReview = () => {
   const downloadDocument = async (docId: string, format: 'pdf' | 'docx') => {
     setDownloading(`${docId}-${format}`);
     try {
-      const { data, error } = await supabase.functions.invoke('generate-document', {
-        body: { document_id: docId, format },
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+      const session = (await supabase.auth.getSession()).data.session;
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/generate-document`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session?.access_token}`,
+          'apikey': supabaseKey,
+        },
+        body: JSON.stringify({ document_id: docId, format }),
       });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      const blob = data instanceof Blob ? data : new Blob([data]);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `document.${format}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const json = await response.json();
+        if (json.error) throw new Error(json.error);
+      } else {
+        const blob = await response.blob();
+        const disposition = response.headers.get('content-disposition') || '';
+        const filenameMatch = disposition.match(/filename="?([^";\n]+)"?/);
+        const fileName = filenameMatch?.[1] || `document.${format}`;
+
+        const url = URL.createObjectURL(blob);
+        const a = window.document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        window.document.body.appendChild(a);
+        a.click();
+        window.document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
       toast({ title: `${format.toUpperCase()} downloaded` });
     } catch (err: any) {
       toast({ title: 'Download failed', description: err.message, variant: 'destructive' });
