@@ -144,6 +144,9 @@ const TailoringReview = () => {
                   <Badge variant={statusVariant(doc.approval_status)} className="capitalize text-xs">
                     {doc.approval_status.replace('_', ' ')}
                   </Badge>
+                  <Button variant="ghost" size="sm" onClick={() => downloadDocument(doc.id, 'pdf')} disabled={downloading === `${doc.id}-pdf`}>
+                    {downloading === `${doc.id}-pdf` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => setSelected(doc)}>
                     <Eye className="w-4 h-4" />
                   </Button>
