@@ -88,19 +88,22 @@ async function extractJobWithAI(text: string, sourceUrl: string, userId: string)
 TEXT:
 ${text}`;
 
-  // Try Lovable AI Gateway first (always available, no API key needed)
-  const providers = [
-    {
+  // Try Lovable AI Gateway first (always available with LOVABLE_API_KEY)
+  const lovableKey = Deno.env.get('LOVABLE_API_KEY');
+  const providers: Array<{name: string; url: string; headers: Record<string,string>; body: any; extractContent: (d:any)=>string}> = [];
+  
+  if (lovableKey) {
+    providers.push({
       name: 'Lovable AI',
       url: 'https://ai.gateway.lovable.dev/v1/chat/completions',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+        'Authorization': `Bearer ${lovableKey}`,
       },
       body: { model: 'google/gemini-3-flash-preview', messages: [{ role: 'user', content: prompt }], temperature: 0.1 },
       extractContent: (data: any) => data.choices?.[0]?.message?.content || '',
-    },
-  ];
+    });
+  }
 
   // Also try user's configured providers as fallback
   try {
@@ -261,10 +264,12 @@ Deno.serve(async (req) => {
 
       if (!extracted) {
         return new Response(JSON.stringify({ 
+          success: false,
           error: 'LINKEDIN_LOGIN_REQUIRED',
           message: 'This LinkedIn job requires login to view. Use the "Paste Description" tab to manually paste the job details.',
+          fallback: true,
         }), {
-          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
     }
@@ -326,8 +331,8 @@ Deno.serve(async (req) => {
       try {
         const pageText = await fetchPageText(formattedUrl);
         if (pageText.length < 100) {
-          return new Response(JSON.stringify({ error: 'Could not fetch enough content from this page.' }), {
-            status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          return new Response(JSON.stringify({ success: false, error: 'Could not fetch enough content from this page.', fallback: true }), {
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
         const data = await extractJobWithAI(pageText, formattedUrl, user.id);
@@ -342,8 +347,8 @@ Deno.serve(async (req) => {
         extracted = true;
       } catch (e) {
         console.error('All extraction methods failed:', e.message);
-        return new Response(JSON.stringify({ error: 'Could not extract job data. Try using the "Paste Description" tab.' }), {
-          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        return new Response(JSON.stringify({ success: false, error: 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
     }
