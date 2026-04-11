@@ -1,89 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { getPipelineConfig, runPipeline } from "../_shared/ai-pipeline.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
-interface AIConfig {
-  provider: string;
-  apiKey: string;
-  url: string;
-  model: string;
-}
-
-async function getAIConfig(userId: string): Promise<AIConfig> {
-  const supabaseAdmin = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
-  const { data: prefs } = await supabaseAdmin
-    .from("user_preferences").select("key, value")
-    .eq("user_id", userId).in("key", ["ai_provider", "ai_api_key"]);
-
-  const prefMap: Record<string, string> = {};
-  (prefs || []).forEach((p: any) => { prefMap[p.key] = p.value; });
-  const provider = prefMap["ai_provider"] || "lovable";
-  const userKey = prefMap["ai_api_key"] || "";
-
-  switch (provider) {
-    case "anthropic":
-      if (!userKey) throw new Error("Anthropic API key not configured. Go to Settings.");
-      return { provider, apiKey: userKey, url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" };
-    case "openai":
-      if (!userKey) throw new Error("OpenAI API key not configured. Go to Settings.");
-      return { provider, apiKey: userKey, url: "https://api.openai.com/v1/chat/completions", model: "gpt-4o" };
-    case "gemini":
-      if (!userKey) throw new Error("Google API key not configured. Go to Settings.");
-      return { provider, apiKey: userKey, url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", model: "gemini-2.5-flash" };
-    default: {
-      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-      if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
-      return { provider: "lovable", apiKey: lovableKey, url: "https://ai.gateway.lovable.dev/v1/chat/completions", model: "google/gemini-3-flash-preview" };
-    }
-  }
-}
-
-async function callAI(config: AIConfig, messages: any[], tools?: any[], tool_choice?: any) {
-  if (config.provider === "anthropic") {
-    const systemMsg = messages.find((m: any) => m.role === "system")?.content || "";
-    const userMsgs = messages.filter((m: any) => m.role !== "system");
-    const body: any = { model: config.model, max_tokens: 8192, system: systemMsg, messages: userMsgs };
-    if (tools) {
-      body.tools = tools.map((t: any) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters }));
-      if (tool_choice) body.tool_choice = { type: "tool", name: tool_choice.function.name };
-    }
-    const response = await fetch(config.url, {
-      method: "POST",
-      headers: { "x-api-key": config.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) { const err = await response.text(); console.error("Anthropic error:", err); throw new Error(`AI error: ${response.status}`); }
-    const data = await response.json();
-    const toolUse = data.content?.find((c: any) => c.type === "tool_use");
-    if (toolUse) return { tool_arguments: JSON.stringify(toolUse.input) };
-    return { tool_arguments: data.content?.find((c: any) => c.type === "text")?.text || "{}" };
-  }
-
-  const body: any = { model: config.model, messages };
-  if (tools) body.tools = tools;
-  if (tool_choice) body.tool_choice = tool_choice;
-  const response = await fetch(config.url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    if (response.status === 429) throw Object.assign(new Error("Rate limited"), { status: 429 });
-    if (response.status === 402) throw Object.assign(new Error("Credits exhausted"), { status: 402 });
-    throw new Error(`AI error: ${response.status}`);
-  }
-  const aiResult = await response.json();
-  const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-  if (toolCall) return { tool_arguments: toolCall.function.arguments };
-  return { tool_arguments: aiResult.choices?.[0]?.message?.content || "{}" };
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -101,8 +23,8 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) throw new Error("Unauthorized");
 
-    const aiConfig = await getAIConfig(user.id);
-    console.log(`Using AI provider: ${aiConfig.provider}`);
+    const pipelineConfig = await getPipelineConfig(user.id);
+    console.log(`[tailor-cv] Pipeline: ${pipelineConfig.enabled ? "ON" : "OFF"}, providers: ${pipelineConfig.providers.map(p => p.name).join(" → ")}`);
 
     const { job_id, document_type = "cv" } = await req.json();
     if (!job_id) throw new Error("job_id is required");
@@ -231,12 +153,20 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
       },
     }];
 
-    const result = await callAI(
-      aiConfig,
-      [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+    const reviewInstruction = document_type === "cv"
+      ? "Verify every experience entry, skill, and achievement matches the candidate's actual profile data. Remove any hallucinated content. Improve formatting and relevance to the target job. Ensure the summary is compelling and job-aligned."
+      : "Verify all claims in the cover letter against the candidate's actual profile. Remove fabrications. Improve tone, flow, and relevance. Ensure it addresses key job requirements with real examples.";
+
+    const { result, providerChain } = await runPipeline({
+      config: pipelineConfig,
+      systemPrompt,
+      userPrompt,
       tools,
-      { type: "function", function: { name: "generate_tailored_document" } }
-    );
+      toolChoice: { type: "function", function: { name: "generate_tailored_document" } },
+      reviewInstruction,
+    });
+
+    console.log(`[tailor-cv] Pipeline chain: ${providerChain.join(" → ")}`);
 
     const parsed = JSON.parse(result.tool_arguments);
     const hasUnsupportedClaims = (parsed.unsupported_claims || []).length > 0;
@@ -261,10 +191,16 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
       action: "tailored_document",
       entity_type: "tailored_document",
       entity_id: tailoredDoc.id,
-      details: { job_title: job.title, document_type, approval_status: approvalStatus, ai_provider: aiConfig.provider },
+      details: {
+        job_title: job.title,
+        document_type,
+        approval_status: approvalStatus,
+        ai_pipeline: pipelineConfig.enabled,
+        ai_chain: providerChain,
+      },
     });
 
-    return new Response(JSON.stringify(tailoredDoc), {
+    return new Response(JSON.stringify({ ...tailoredDoc, ai_chain: providerChain }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: any) {

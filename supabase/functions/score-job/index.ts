@@ -1,135 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { getPipelineConfig, runPipeline } from "../_shared/ai-pipeline.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
-
-interface AIConfig {
-  provider: string;
-  apiKey: string;
-  url: string;
-  model: string;
-}
-
-async function getAIConfig(userId: string): Promise<AIConfig> {
-  const supabaseAdmin = createClient(
-    Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-  );
-
-  const { data: prefs } = await supabaseAdmin
-    .from("user_preferences")
-    .select("key, value")
-    .eq("user_id", userId)
-    .in("key", ["ai_provider", "ai_api_key"]);
-
-  const prefMap: Record<string, string> = {};
-  (prefs || []).forEach((p: any) => { prefMap[p.key] = p.value; });
-
-  const provider = prefMap["ai_provider"] || "lovable";
-  const userKey = prefMap["ai_api_key"] || "";
-
-  switch (provider) {
-    case "anthropic":
-      if (!userKey) throw new Error("Anthropic API key not configured. Go to Settings to add it.");
-      return { provider, apiKey: userKey, url: "https://api.anthropic.com/v1/messages", model: "claude-sonnet-4-20250514" };
-    case "openai":
-      if (!userKey) throw new Error("OpenAI API key not configured. Go to Settings to add it.");
-      return { provider, apiKey: userKey, url: "https://api.openai.com/v1/chat/completions", model: "gpt-4o" };
-    case "gemini":
-      if (!userKey) throw new Error("Google API key not configured. Go to Settings to add it.");
-      return { provider, apiKey: userKey, url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", model: "gemini-2.5-flash" };
-    default: {
-      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-      if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
-      return { provider: "lovable", apiKey: lovableKey, url: "https://ai.gateway.lovable.dev/v1/chat/completions", model: "google/gemini-3-flash-preview" };
-    }
-  }
-}
-
-async function callAI(config: AIConfig, messages: any[], tools?: any[], tool_choice?: any) {
-  if (config.provider === "anthropic") {
-    // Anthropic uses a different API format
-    const systemMsg = messages.find((m: any) => m.role === "system")?.content || "";
-    const userMsgs = messages.filter((m: any) => m.role !== "system");
-    
-    const body: any = {
-      model: config.model,
-      max_tokens: 4096,
-      system: systemMsg,
-      messages: userMsgs,
-    };
-    if (tools) {
-      body.tools = tools.map((t: any) => ({
-        name: t.function.name,
-        description: t.function.description,
-        input_schema: t.function.parameters,
-      }));
-      if (tool_choice) {
-        body.tool_choice = { type: "tool", name: tool_choice.function.name };
-      }
-    }
-
-    const response = await fetch(config.url, {
-      method: "POST",
-      headers: {
-        "x-api-key": config.apiKey,
-        "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-      const err = await response.text();
-      console.error("Anthropic error:", response.status, err);
-      throw new Error(`AI error: ${response.status}`);
-    }
-
-    const data = await response.json();
-    // Extract tool use result
-    const toolUse = data.content?.find((c: any) => c.type === "tool_use");
-    if (toolUse) {
-      return { tool_arguments: JSON.stringify(toolUse.input) };
-    }
-    // Fallback to text
-    const text = data.content?.find((c: any) => c.type === "text")?.text || "{}";
-    return { tool_arguments: text };
-  }
-
-  // OpenAI-compatible (OpenAI, Gemini, Lovable)
-  const body: any = { model: config.model, messages };
-  if (tools) body.tools = tools;
-  if (tool_choice) body.tool_choice = tool_choice;
-
-  const response = await fetch(config.url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error("AI error:", response.status, errText);
-    if (response.status === 429) throw Object.assign(new Error("Rate limited"), { status: 429 });
-    if (response.status === 402) throw Object.assign(new Error("Credits exhausted"), { status: 402 });
-    throw new Error(`AI error: ${response.status}`);
-  }
-
-  const aiResult = await response.json();
-  const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-  if (toolCall) {
-    return { tool_arguments: toolCall.function.arguments };
-  }
-  // Fallback: try to extract from content
-  const content = aiResult.choices?.[0]?.message?.content || "{}";
-  return { tool_arguments: content };
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
@@ -147,18 +23,16 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) throw new Error("Unauthorized");
 
-    const aiConfig = await getAIConfig(user.id);
-    console.log(`Using AI provider: ${aiConfig.provider}`);
+    const pipelineConfig = await getPipelineConfig(user.id);
+    console.log(`[score-job] Pipeline: ${pipelineConfig.enabled ? "ON" : "OFF"}, providers: ${pipelineConfig.providers.map(p => p.name).join(" → ")}`);
 
     const { job_id } = await req.json();
     if (!job_id) throw new Error("job_id is required");
 
-    // Fetch job
     const { data: job, error: jobError } = await supabase
       .from("jobs").select("*").eq("id", job_id).eq("user_id", user.id).single();
     if (jobError || !job) throw new Error("Job not found");
 
-    // Fetch profile, skills, employment
     const [profileRes, skillsRes, empRes] = await Promise.all([
       supabase.from("profiles_v2").select("*").eq("user_id", user.id).single(),
       supabase.from("profile_skills").select("*").eq("user_id", user.id),
@@ -247,63 +121,37 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
       },
     }];
 
-    const result = await callAI(
-      aiConfig,
-      [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `CANDIDATE PROFILE:\n${profileSummary}\n\nJOB LISTING:\n${jobSummary}` },
-      ],
+    const { result, providerChain } = await runPipeline({
+      config: pipelineConfig,
+      systemPrompt,
+      userPrompt: `CANDIDATE PROFILE:\n${profileSummary}\n\nJOB LISTING:\n${jobSummary}`,
       tools,
-      { type: "function", function: { name: "score_job_match" } }
-    );
+      toolChoice: { type: "function", function: { name: "score_job_match" } },
+      reviewInstruction: "Verify scoring accuracy. Check that overall_score matches the weighted average. Ensure match_reasons are factual. Verify blockers are real dealbreakers. Adjust any inflated or deflated scores.",
+    });
 
+    console.log(`[score-job] Pipeline chain: ${providerChain.join(" → ")}`);
     const scores = JSON.parse(result.tool_arguments);
 
-    // Generate embeddings and compute semantic similarity
+    // Semantic similarity (unchanged)
     let semanticSimilarity = 0;
     try {
       const lovableKey = Deno.env.get("LOVABLE_API_KEY");
       if (lovableKey) {
-        const supabaseAdmin = createClient(
-          Deno.env.get("SUPABASE_URL")!,
-          Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-        );
-
-        // Check if profile embedding exists
-        const { data: profileEmb } = await supabaseAdmin
-          .from("profile_embeddings")
-          .select("embedding")
-          .eq("user_id", user.id)
-          .eq("section", "full")
-          .maybeSingle();
-
-        // Check if job embedding exists
-        const { data: jobEmb } = await supabaseAdmin
-          .from("job_embeddings")
-          .select("embedding")
-          .eq("job_id", job_id)
-          .maybeSingle();
-
+        const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+        const { data: profileEmb } = await supabaseAdmin.from("profile_embeddings").select("embedding").eq("user_id", user.id).eq("section", "full").maybeSingle();
+        const { data: jobEmb } = await supabaseAdmin.from("job_embeddings").select("embedding").eq("job_id", job_id).maybeSingle();
         if (profileEmb?.embedding && jobEmb?.embedding) {
-          // Compute cosine similarity using pgvector
-          const { data: simResult } = await supabaseAdmin.rpc("compute_similarity", {
-            _user_id: user.id,
-            _job_id: job_id,
-          });
-          if (simResult !== null && simResult !== undefined) {
-            semanticSimilarity = Math.round(simResult * 100) / 100;
-          }
+          const { data: simResult } = await supabaseAdmin.rpc("compute_similarity", { _user_id: user.id, _job_id: job_id });
+          if (simResult !== null && simResult !== undefined) semanticSimilarity = Math.round(simResult * 100) / 100;
         }
       }
     } catch (embErr: any) {
-      console.warn("Semantic similarity computation skipped:", embErr.message);
+      console.warn("Semantic similarity skipped:", embErr.message);
     }
 
-    // Upsert match
     const { data: match, error: matchError } = await supabase.from("job_matches").upsert({
-      user_id: user.id,
-      job_id,
-      ...scores,
+      user_id: user.id, job_id, ...scores,
       semantic_similarity: semanticSimilarity,
       scored_at: new Date().toISOString(),
     }, { onConflict: "user_id,job_id" }).select().single();
@@ -315,10 +163,10 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
       action: "scored_job",
       entity_type: "job_match",
       entity_id: match.id,
-      details: { job_title: job.title, company: job.company, score: scores.overall_score, ai_provider: aiConfig.provider },
+      details: { job_title: job.title, company: job.company, score: scores.overall_score, ai_pipeline: pipelineConfig.enabled, ai_chain: providerChain },
     });
 
-    return new Response(JSON.stringify(match), {
+    return new Response(JSON.stringify({ ...match, ai_chain: providerChain }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: any) {
