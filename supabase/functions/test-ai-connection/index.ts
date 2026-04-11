@@ -101,10 +101,29 @@ serve(async (req) => {
         throw new Error("Invalid API key. Please check your key and try again.");
       }
       if (response.status === 429) {
-        throw new Error("Rate limited. Your API key is valid but you've hit the rate limit. Try again shortly.");
+        // Return 200 with error info so client doesn't crash
+        return new Response(JSON.stringify({
+          success: false,
+          provider,
+          model,
+          error: "RATE_LIMITED",
+          message: "Rate limited. Your API key is valid but you've hit the rate limit. Try again shortly.",
+          fallback: true,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
       if (response.status === 402) {
-        throw new Error("Payment required. Your API key is valid but your account needs credits/billing.");
+        return new Response(JSON.stringify({
+          success: false,
+          provider,
+          model,
+          error: "PAYMENT_REQUIRED",
+          message: "Payment required. Your API key is valid but your account needs credits/billing.",
+          fallback: true,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
       }
       throw new Error(`API returned ${response.status}. Check your key and account status.`);
     }
