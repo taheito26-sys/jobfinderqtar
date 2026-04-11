@@ -22,7 +22,7 @@ import {
   Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe, Linkedin,
   Filter, X, ChevronDown, Clock, DollarSign, Briefcase, Star, LayoutGrid, List,
   ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3,
-  Plane
+  Plane, Archive, RotateCcw
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
@@ -195,6 +195,22 @@ const JobFeed = () => {
     toast.success('Job deleted');
   };
 
+  const archiveJob = async (e: React.MouseEvent, jobId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await supabase.from('jobs').update({ status: 'archived' }).eq('id', jobId);
+    setJobs(jobs.map(j => j.id === jobId ? { ...j, status: 'archived' } : j));
+    toast.success('Job archived');
+  };
+
+  const unarchiveJob = async (e: React.MouseEvent, jobId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await supabase.from('jobs').update({ status: 'active' }).eq('id', jobId);
+    setJobs(jobs.map(j => j.id === jobId ? { ...j, status: 'active' } : j));
+    toast.success('Job restored');
+  };
+
   const bulkDelete = async () => {
     if (selectedJobs.size === 0) return;
     for (const jobId of selectedJobs) {
@@ -309,8 +325,11 @@ const JobFeed = () => {
 
   const filtered = useMemo(() => jobs
     .filter(j => {
+      // Hide archived jobs unless explicitly viewing them
+      if (statusFilter !== 'archived' && j.status === 'archived') return false;
+      if (statusFilter === 'archived' && j.status !== 'archived') return false;
       const matchesSearch = !search || j.title.toLowerCase().includes(search.toLowerCase()) || j.company.toLowerCase().includes(search.toLowerCase()) || (j.location || '').toLowerCase().includes(search.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || j.status === statusFilter;
+      const matchesStatus = statusFilter === 'all' || statusFilter === 'archived' || j.status === statusFilter;
       const matchesCompany = companyFilter === 'all' || j.company === companyFilter;
       const matchesRemote = remoteFilter === 'all' || j.remote_type === remoteFilter;
       const locPlain = locationFilter.replace(/^.\s/, '');
@@ -350,11 +369,13 @@ const JobFeed = () => {
 
   // Stats
   const stats = useMemo(() => {
+    const activeJobs = jobs.filter(j => j.status !== 'archived');
+    const archivedCount = jobs.length - activeJobs.length;
     const scored = Object.keys(matches).length;
     const avgScore = scored > 0 ? Math.round(Object.values(matches).reduce((s: number, m: any) => s + (m.overall_score || 0), 0) / scored) : 0;
-    const withSalary = jobs.filter(j => j.salary_min || j.salary_max).length;
+    const withSalary = activeJobs.filter(j => j.salary_min || j.salary_max).length;
     const applyRec = Object.values(matches).filter((m: any) => m.recommendation === 'apply').length;
-    return { total: jobs.length, scored, avgScore, withSalary, applyRec, unscored: jobs.length - scored };
+    return { total: activeJobs.length, scored, avgScore, withSalary, applyRec, unscored: activeJobs.length - scored, archived: archivedCount };
   }, [jobs, matches]);
 
   // Sub-tab: extract countries from job locations
@@ -416,7 +437,7 @@ const JobFeed = () => {
     <div className="animate-fade-in">
       <PageHeader
         title="Job Feed"
-        description={`${stats.total} jobs tracked • ${stats.scored} scored • ${stats.applyRec} recommended`}
+        description={statusFilter === 'archived' ? `${stats.archived} archived jobs` : `${stats.total} jobs tracked • ${stats.scored} scored • ${stats.applyRec} recommended`}
         actions={
           <div className="flex gap-2 flex-wrap">
             {stats.unscored > 0 && (
@@ -430,6 +451,15 @@ const JobFeed = () => {
             <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
               <Globe className="w-4 h-4 mr-1.5" />Import
             </Button>
+            {stats.archived > 0 && (
+              <Button
+                variant={statusFilter === 'archived' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStatusFilter(statusFilter === 'archived' ? 'all' : 'archived')}
+              >
+                <Archive className="w-4 h-4 mr-1.5" />Archive ({stats.archived})
+              </Button>
+            )}
             <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setMultiJobs([{ ...emptyJob }]); }}>
               <DialogTrigger asChild>
                 <Button size="sm"><Plus className="w-4 h-4 mr-1.5" />Add Job</Button>
@@ -824,6 +854,9 @@ const JobFeed = () => {
               selected={selectedJobs.has(job.id)}
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
+              onArchive={archiveJob}
+              onUnarchive={unarchiveJob}
+              isArchiveView={statusFilter === 'archived'}
               formatSalary={formatSalary}
               userId={user?.id}
             />
@@ -839,6 +872,9 @@ const JobFeed = () => {
               selected={selectedJobs.has(job.id)}
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
+              onArchive={archiveJob}
+              onUnarchive={unarchiveJob}
+              isArchiveView={statusFilter === 'archived'}
               formatSalary={formatSalary}
               userId={user?.id}
             />
@@ -896,7 +932,7 @@ function getJobSource(job: any) {
   return rawData?.source === 'linkedin' || (job.source_url || job.apply_url || '').includes('linkedin.com');
 }
 
-const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, userId }: any) => {
+const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
   const isLI = getJobSource(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
@@ -945,8 +981,17 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, u
                 {match.recommendation}
               </Badge>
             )}
-            {userId && (
+            {userId && !isArchiveView && (
               <QuickApplyButton job={job} userId={userId} size="sm" className="opacity-0 group-hover:opacity-100 h-7 w-7 p-0" />
+            )}
+            {isArchiveView ? (
+              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 h-7 w-7 p-0" onClick={(e) => onUnarchive(e, job.id)} title="Restore">
+                <RotateCcw className="w-3 h-3" />
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-muted-foreground h-7 w-7 p-0" onClick={(e) => onArchive(e, job.id)} title="Archive">
+                <Archive className="w-3 h-3" />
+              </Button>
             )}
             <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive h-7 w-7 p-0" onClick={(e) => onDelete(e, job.id)}>
               <Trash2 className="w-3 h-3" />
@@ -958,7 +1003,7 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, u
   );
 };
 
-const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary, userId }: any) => {
+const JobCardGrid = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
   const isLI = getJobSource(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
@@ -979,6 +1024,15 @@ const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary, u
             </div>
             <div className="flex items-center gap-1">
               <div onClick={e => onSelect(e, job.id)}><Checkbox checked={selected} className="pointer-events-none" /></div>
+              {isArchiveView ? (
+                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0" onClick={(e) => onUnarchive(e, job.id)} title="Restore">
+                  <RotateCcw className="w-3 h-3" />
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-muted-foreground h-6 w-6 p-0" onClick={(e) => onArchive(e, job.id)} title="Archive">
+                  <Archive className="w-3 h-3" />
+                </Button>
+              )}
               <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive h-6 w-6 p-0" onClick={(e) => onDelete(e, job.id)}>
                 <Trash2 className="w-3 h-3" />
               </Button>

@@ -13,9 +13,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, ExternalLink, MapPin, Building2, AlertTriangle, CheckCircle2, XCircle,
-  Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare, RefreshCw, Settings, Bot
+  Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare, RefreshCw, Settings, Bot, Archive
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import ATSScoreChecker from '@/components/ATSScoreChecker';
 import QuickApplyButton from '@/components/QuickApplyButton';
 
@@ -255,6 +256,14 @@ const JobDetail = () => {
     await logEvent('marked_applied', { method: 'manual', source: isLinkedin ? 'linkedin' : 'web' });
     setMarkedApplied(true);
     toast({ title: 'Marked as applied', description: 'Application status recorded.' });
+  };
+
+  const archiveJob = async () => {
+    if (!user || !id) return;
+    await supabase.from('jobs').update({ status: 'archived' }).eq('id', id);
+    await logEvent('job_archived', { job_title: job?.title, company: job?.company });
+    toast({ title: 'Job archived', description: 'Moved to your archived jobs.' });
+    navigate('/jobs');
   };
 
   const createDraft = async () => {
@@ -538,6 +547,28 @@ const JobDetail = () => {
               <Button variant="outline" className="w-full" onClick={() => setDraftModal(true)}>
                 <Send className="w-4 h-4 mr-2" />Create Draft
               </Button>
+
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" className="w-full text-destructive border-destructive/30 hover:bg-destructive/10">
+                    <Archive className="w-4 h-4 mr-2" />Discard / Archive
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Archive this job?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will move "{job.title}" at {job.company} to your archived jobs. You can still view it in the Archive section.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={archiveJob} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                      Archive
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </CardContent>
           </Card>
 
