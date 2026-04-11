@@ -61,13 +61,29 @@ serve(async (req) => {
     const jobTitle = (doc as any).jobs?.title || "Position";
     const company = (doc as any).jobs?.company || "Company";
 
+    // Format ISO dates to readable format
+    const formatDate = (d: string | null | undefined): string => {
+      if (!d) return "";
+      try {
+        const date = new Date(d);
+        if (isNaN(date.getTime())) return d;
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return `${months[date.getMonth()]} ${date.getFullYear()}`;
+      } catch { return d; }
+    };
+
     // Normalize field names: parsed_content uses "employment", generator expects "experience"
-    // Also map "achievements" to "highlights" per entry
     const experience = (rawContent?.experience || rawContent?.employment || []).map((e: any) => ({
       ...e,
       highlights: e.highlights || e.achievements || [],
+      start_date: formatDate(e.start_date),
+      end_date: formatDate(e.end_date),
     }));
-    const education = rawContent?.education || [];
+    const education = (rawContent?.education || []).map((e: any) => ({
+      ...e,
+      start_date: formatDate(e.start_date),
+      end_date: formatDate(e.end_date),
+    }));
     const certifications = rawContent?.certifications || [];
 
     const content = {
