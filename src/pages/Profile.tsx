@@ -226,9 +226,15 @@ const Profile = () => {
         title="Profile"
         description="Your canonical professional profile — the source of truth for all tailored documents"
         actions={
-          <Button onClick={saveProfile} disabled={saving}>
-            <Save className="w-4 h-4 mr-2" />{saving ? 'Saving...' : 'Save Profile'}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={openCvPicker} disabled={extracting}>
+              {extracting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+              {extracting ? 'Extracting...' : 'Extract from CV'}
+            </Button>
+            <Button onClick={saveProfile} disabled={saving}>
+              <Save className="w-4 h-4 mr-2" />{saving ? 'Saving...' : 'Save Profile'}
+            </Button>
+          </div>
         }
       />
 
