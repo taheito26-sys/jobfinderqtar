@@ -709,11 +709,63 @@ const JobFeed = () => {
         </CollapsibleContent>
       </Collapsible>
 
+      {/* Sub-tabs: All / Remote / On-site / Countries */}
+      {!loading && jobs.length > 0 && (
+        <div className="flex items-center gap-1 mb-3 overflow-x-auto pb-1 scrollbar-none">
+          <button
+            onClick={() => setSubTab('all')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+              subTab === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            All ({filtered.length})
+          </button>
+          {countryTabs.remoteCount > 0 && (
+            <button
+              onClick={() => setSubTab('remote')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1 ${
+                subTab === 'remote' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Globe className="w-3 h-3" /> Remote ({countryTabs.remoteCount})
+            </button>
+          )}
+          {countryTabs.onsiteCount > 0 && (
+            <button
+              onClick={() => setSubTab('onsite')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1 ${
+                subTab === 'onsite' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Building2 className="w-3 h-3" /> On-site ({countryTabs.onsiteCount})
+            </button>
+          )}
+          {countryTabs.countries.length > 0 && (
+            <Separator orientation="vertical" className="h-5 mx-1" />
+          )}
+          {countryTabs.countries.map(([country, count]) => {
+            const flags: Record<string, string> = { 'Qatar': '🇶🇦', 'Saudi Arabia': '🇸🇦', 'UAE': '🇦🇪', 'Kuwait': '🇰🇼', 'Bahrain': '🇧🇭', 'Oman': '🇴🇲', 'United States': '🇺🇸', 'United Kingdom': '🇬🇧', 'India': '🇮🇳', 'Canada': '🇨🇦', 'Germany': '🇩🇪', 'Australia': '🇦🇺', 'Egypt': '🇪🇬', 'Jordan': '🇯🇴', 'Lebanon': '🇱🇧', 'Pakistan': '🇵🇰', 'Turkey': '🇹🇷', 'Singapore': '🇸🇬', 'Netherlands': '🇳🇱', 'France': '🇫🇷', 'Ireland': '🇮🇪' };
+            return (
+              <button
+                key={country}
+                onClick={() => setSubTab(subTab === country ? 'all' : country)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1 ${
+                  subTab === country ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span>{flags[country] || '🌍'}</span> {country} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Results bar */}
       {!loading && (
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs text-muted-foreground">
-            {filtered.length} of {jobs.length} jobs
+            {subTabFiltered.length} of {jobs.length} jobs
+            {subTab !== 'all' && ` • ${subTab === 'remote' ? 'Remote' : subTab === 'onsite' ? 'On-site/Hybrid' : subTab}`}
             {activeFilterCount > 0 && ` • ${activeFilterCount} filter${activeFilterCount > 1 ? 's' : ''} active`}
           </p>
           {selectedJobs.size > 0 && (
@@ -754,17 +806,17 @@ const JobFeed = () => {
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           <p className="text-muted-foreground">Loading jobs...</p>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : subTabFiltered.length === 0 ? (
         <EmptyState
           icon={Rss}
-          title={search || activeFilterCount > 0 ? 'No matching jobs' : 'No jobs tracked yet'}
-          description={search || activeFilterCount > 0 ? 'Try different filters or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
-          actionLabel={search || activeFilterCount > 0 ? 'Clear Filters' : 'Add Job'}
-          onAction={search || activeFilterCount > 0 ? clearAllFilters : () => setAddOpen(true)}
+          title={search || activeFilterCount > 0 || subTab !== 'all' ? 'No matching jobs' : 'No jobs tracked yet'}
+          description={search || activeFilterCount > 0 || subTab !== 'all' ? 'Try different filters, tabs, or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
+          actionLabel={search || activeFilterCount > 0 || subTab !== 'all' ? 'Clear Filters' : 'Add Job'}
+          onAction={search || activeFilterCount > 0 ? clearAllFilters : subTab !== 'all' ? () => setSubTab('all') : () => setAddOpen(true)}
         />
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map(job => (
+          {subTabFiltered.map(job => (
             <JobCardGrid
               key={job.id}
               job={job}
