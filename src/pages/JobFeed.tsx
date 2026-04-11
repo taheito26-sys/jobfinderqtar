@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 import {
   Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe, Linkedin,
   Filter, X, ChevronDown, Clock, DollarSign, Briefcase, Star, LayoutGrid, List,
-  ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3
+  ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3,
   Plane
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
