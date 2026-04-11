@@ -28,6 +28,8 @@ const CVLibrary = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState('classic');
   const [templateDoc, setTemplateDoc] = useState<any>(null);
+  const [editorDoc, setEditorDoc] = useState<any>(null);
+  const [versionDoc, setVersionDoc] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
