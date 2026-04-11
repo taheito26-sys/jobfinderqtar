@@ -695,6 +695,7 @@ const JobFeed = () => {
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
               formatSalary={formatSalary}
+              userId={user?.id}
             />
           ))}
         </div>
@@ -709,6 +710,7 @@ const JobFeed = () => {
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
               formatSalary={formatSalary}
+              userId={user?.id}
             />
           ))}
         </div>
