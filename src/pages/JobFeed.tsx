@@ -357,6 +357,52 @@ const JobFeed = () => {
     return { total: jobs.length, scored, avgScore, withSalary, applyRec, unscored: jobs.length - scored };
   }, [jobs, matches]);
 
+  // Sub-tab: extract countries from job locations
+  const countryTabs = useMemo(() => {
+    const countryMap = new Map<string, number>();
+    let remoteCount = 0;
+    let onsiteCount = 0;
+    
+    const knownCountries = ['Qatar', 'Saudi Arabia', 'UAE', 'Kuwait', 'Bahrain', 'Oman', 'United States', 'United Kingdom', 'India', 'Canada', 'Germany', 'Australia', 'Egypt', 'Jordan', 'Lebanon', 'Pakistan', 'Turkey', 'Singapore', 'Netherlands', 'France', 'Ireland'];
+    
+    for (const job of jobs) {
+      if (job.remote_type === 'remote') remoteCount++;
+      if (job.remote_type === 'onsite' || job.remote_type === 'hybrid') onsiteCount++;
+      
+      const loc = (job.location || '').toLowerCase();
+      for (const country of knownCountries) {
+        if (loc.includes(country.toLowerCase())) {
+          countryMap.set(country, (countryMap.get(country) || 0) + 1);
+          break;
+        }
+      }
+      // Also check for common city→country mappings
+      if (loc.includes('dubai') || loc.includes('abu dhabi')) countryMap.set('UAE', (countryMap.get('UAE') || 0) + 1);
+      else if (loc.includes('doha')) countryMap.set('Qatar', (countryMap.get('Qatar') || 0) + 1);
+      else if (loc.includes('riyadh') || loc.includes('jeddah')) countryMap.set('Saudi Arabia', (countryMap.get('Saudi Arabia') || 0) + 1);
+    }
+    
+    const sorted = [...countryMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+    return { countries: sorted, remoteCount, onsiteCount };
+  }, [jobs]);
+
+  // Apply sub-tab filter on top of existing filters
+  const subTabFiltered = useMemo(() => {
+    if (subTab === 'all') return filtered;
+    if (subTab === 'remote') return filtered.filter(j => j.remote_type === 'remote');
+    if (subTab === 'onsite') return filtered.filter(j => j.remote_type === 'onsite' || j.remote_type === 'hybrid');
+    // Country sub-tab
+    return filtered.filter(j => {
+      const loc = (j.location || '').toLowerCase();
+      const country = subTab.toLowerCase();
+      if (loc.includes(country)) return true;
+      if (subTab === 'UAE' && (loc.includes('dubai') || loc.includes('abu dhabi'))) return true;
+      if (subTab === 'Qatar' && loc.includes('doha')) return true;
+      if (subTab === 'Saudi Arabia' && (loc.includes('riyadh') || loc.includes('jeddah'))) return true;
+      return false;
+    });
+  }, [filtered, subTab]);
+
   const formatSalary = (min?: number, max?: number, currency?: string) => {
     const fmt = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}K` : n.toString();
     const curr = currency || '';
