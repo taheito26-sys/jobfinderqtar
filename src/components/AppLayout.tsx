@@ -7,6 +7,7 @@ import {
   LogOut, Menu, X, ChevronLeft, Briefcase, GitCompare
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import NotificationBell from '@/components/NotificationBell';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -98,11 +99,14 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="flex items-center h-14 px-4 border-b border-border bg-card lg:hidden">
-          <button onClick={() => setMobileOpen(true)} className="text-muted-foreground">
+        <header className="flex items-center h-14 px-4 border-b border-border bg-card">
+          <button onClick={() => setMobileOpen(true)} className="text-muted-foreground lg:hidden">
             <Menu className="w-5 h-5" />
           </button>
-          <span className="ml-3 font-semibold text-foreground">JobOps</span>
+          <span className="ml-3 font-semibold text-foreground lg:hidden">JobOps</span>
+          <div className="ml-auto">
+            <NotificationBell />
+          </div>
         </header>
         <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
       </div>
