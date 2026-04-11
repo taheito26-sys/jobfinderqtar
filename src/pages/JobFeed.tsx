@@ -28,6 +28,9 @@ import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
 import BulkSearchDialog from '@/components/BulkSearchDialog';
 import { formatDistanceToNow } from 'date-fns';
+import QuickApplyButton from '@/components/QuickApplyButton';
+import StealthApplyPanel from '@/components/StealthApplyPanel';
+import AutoApplyQueue from '@/components/AutoApplyQueue';
 
 type ViewMode = 'list' | 'grid';
 
