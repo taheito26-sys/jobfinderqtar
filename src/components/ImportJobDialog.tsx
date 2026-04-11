@@ -119,6 +119,25 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
     const sourceUrl = url.trim();
     const isLI = isLinkedInUrl(sourceUrl);
 
+    // Check for duplicates by URL or title+company
+    const { data: existingJobs } = await supabase
+      .from('jobs')
+      .select('id, title, company, apply_url')
+      .eq('user_id', user.id);
+
+    const isDuplicate = (existingJobs || []).some(j => {
+      if (sourceUrl && j.apply_url && j.apply_url === sourceUrl) return true;
+      if (editedJob.apply_url && j.apply_url === editedJob.apply_url) return true;
+      if (j.title?.toLowerCase() === editedJob.title.toLowerCase() &&
+          j.company?.toLowerCase() === editedJob.company.toLowerCase()) return true;
+      return false;
+    });
+
+    if (isDuplicate) {
+      toast({ title: 'Duplicate job', description: 'This job already exists in your feed.', variant: 'destructive' });
+      return;
+    }
+
     const { data, error } = await supabase.from('jobs').insert({
       user_id: user.id,
       title: editedJob.title,
