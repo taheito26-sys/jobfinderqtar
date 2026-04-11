@@ -308,7 +308,8 @@ const JobFeed = () => {
       const matchesStatus = statusFilter === 'all' || j.status === statusFilter;
       const matchesCompany = companyFilter === 'all' || j.company === companyFilter;
       const matchesRemote = remoteFilter === 'all' || j.remote_type === remoteFilter;
-      const matchesLocation = locationFilter === 'all' || j.location === locationFilter;
+      const locPlain = locationFilter.replace(/^.\s/, '');
+      const matchesLocation = locationFilter === 'all' || (j.location || '').toLowerCase().includes(locPlain.toLowerCase());
       const matchesSeniority = seniorityFilter === 'all' || j.seniority_level === seniorityFilter;
       const matchesIndustry = industryFilter === 'all' || j.industry === industryFilter;
       const matchesDate = isWithinDateRange(j.created_at, dateFilter);
