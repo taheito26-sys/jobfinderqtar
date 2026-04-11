@@ -264,10 +264,12 @@ Deno.serve(async (req) => {
 
       if (!extracted) {
         return new Response(JSON.stringify({ 
+          success: false,
           error: 'LINKEDIN_LOGIN_REQUIRED',
           message: 'This LinkedIn job requires login to view. Use the "Paste Description" tab to manually paste the job details.',
+          fallback: true,
         }), {
-          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
     }
@@ -329,8 +331,8 @@ Deno.serve(async (req) => {
       try {
         const pageText = await fetchPageText(formattedUrl);
         if (pageText.length < 100) {
-          return new Response(JSON.stringify({ error: 'Could not fetch enough content from this page.' }), {
-            status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          return new Response(JSON.stringify({ success: false, error: 'Could not fetch enough content from this page.', fallback: true }), {
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
         const data = await extractJobWithAI(pageText, formattedUrl, user.id);
@@ -345,8 +347,8 @@ Deno.serve(async (req) => {
         extracted = true;
       } catch (e) {
         console.error('All extraction methods failed:', e.message);
-        return new Response(JSON.stringify({ error: 'Could not extract job data. Try using the "Paste Description" tab.' }), {
-          status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        return new Response(JSON.stringify({ success: false, error: 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
     }
