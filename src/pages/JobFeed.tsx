@@ -642,6 +642,15 @@ const JobFeed = () => {
                   { value: '7d', label: 'Last 7 Days' },
                   { value: '30d', label: 'Last 30 Days' },
                 ]} />
+                <FilterSelect label="Employment" value={employmentTypeFilter} onChange={setEmploymentTypeFilter} options={[
+                  { value: 'all', label: 'All Types' },
+                  { value: 'full-time', label: 'Full-time' },
+                  { value: 'part-time', label: 'Part-time' },
+                  { value: 'contract', label: 'Contract' },
+                  { value: 'freelance', label: 'Freelance' },
+                  { value: 'internship', label: 'Internship' },
+                  ...filterOptions.employmentTypes.filter(t => !['full-time','part-time','contract','freelance','internship'].includes(t)).map(t => ({ value: t, label: t })),
+                ]} />
               </div>
               <div className="mt-3 space-y-1.5">
                 <Label className="text-xs text-muted-foreground">Match Score Range: {scoreRange[0]} – {scoreRange[1]}</Label>
