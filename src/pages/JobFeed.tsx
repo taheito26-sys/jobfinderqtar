@@ -208,6 +208,58 @@ const JobFeed = () => {
     setBatchScoring(false);
   };
 
+  const GCC_COUNTRIES = [
+    { code: 'Qatar', flag: '🇶🇦' },
+    { code: 'Saudi Arabia', flag: '🇸🇦' },
+    { code: 'UAE', flag: '🇦🇪' },
+    { code: 'Kuwait', flag: '🇰🇼' },
+    { code: 'Bahrain', flag: '🇧🇭' },
+    { code: 'Oman', flag: '🇴🇲' },
+  ];
+
+  const searchGccJobs = async () => {
+    if (!user || !gccSearchQuery.trim()) return;
+    setGccSearching(true);
+    try {
+      const searchQuery = gccSearchRemoteOnly
+        ? `${gccSearchQuery.trim()} remote`
+        : gccSearchQuery.trim();
+      const country = gccSearchCountry || undefined;
+      const { data, error } = await supabase.functions.invoke('search-jobs', {
+        body: { query: searchQuery, limit: 15, country },
+      });
+      if (error) {
+        toast.error('Search failed: ' + error.message);
+      } else if (data?.jobs?.length > 0) {
+        const insertData = data.jobs.map((job: any) => ({
+          user_id: user.id,
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          remote_type: gccSearchRemoteOnly ? 'remote' : (job.remote_type || 'unknown'),
+          description: job.description,
+          salary_min: job.salary_min,
+          salary_max: job.salary_max,
+          salary_currency: job.salary_currency,
+          employment_type: job.employment_type,
+          seniority_level: job.seniority_level,
+          requirements: job.requirements as any,
+          apply_url: job.apply_url,
+        }));
+        const { data: inserted } = await supabase.from('jobs').insert(insertData).select();
+        if (inserted) {
+          setJobs(prev => [...inserted, ...prev]);
+          toast.success(`Found & imported ${inserted.length} ${gccSearchRemoteOnly ? 'remote ' : ''}jobs${gccSearchCountry ? ` in ${gccSearchCountry}` : ' in GCC'}`);
+        }
+      } else {
+        toast('No jobs found. Try a different query or country.');
+      }
+    } catch {
+      toast.error('Search failed');
+    }
+    setGccSearching(false);
+  };
+
   const toggleJobSelect = useCallback((e: React.MouseEvent, jobId: string) => {
     e.preventDefault();
     e.stopPropagation();
