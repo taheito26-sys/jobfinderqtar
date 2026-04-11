@@ -118,22 +118,43 @@ const JobFeed = () => {
     setSearch('');
   };
 
-  const addJob = async () => {
-    if (!user || !newJob.title.trim() || !newJob.company.trim()) return;
-    const { data, error } = await supabase.from('jobs').insert({
-      user_id: user.id,
-      title: newJob.title, company: newJob.company, location: newJob.location,
-      remote_type: newJob.remote_type, description: newJob.description, apply_url: newJob.apply_url,
-      salary_min: newJob.salary_min ? Number(newJob.salary_min) : null,
-      salary_max: newJob.salary_max ? Number(newJob.salary_max) : null,
-    }).select().single();
-    if (data) {
-      setJobs([data, ...jobs]);
-      setAddOpen(false);
-      setNewJob({ title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' });
-      toast.success('Job added');
+  const updateMultiJob = (index: number, field: string, value: string) => {
+    setMultiJobs(prev => prev.map((j, i) => i === index ? { ...j, [field]: value } : j));
+  };
+
+  const addJobRow = () => {
+    setMultiJobs(prev => [...prev, { ...emptyJob }]);
+  };
+
+  const removeJobRow = (index: number) => {
+    if (multiJobs.length <= 1) return;
+    setMultiJobs(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const addJobs = async () => {
+    if (!user) return;
+    const valid = multiJobs.filter(j => j.title.trim() && j.company.trim());
+    if (valid.length === 0) return;
+    setAddingJobs(true);
+    const inserted: any[] = [];
+    for (const newJob of valid) {
+      const { data, error } = await supabase.from('jobs').insert({
+        user_id: user.id,
+        title: newJob.title, company: newJob.company, location: newJob.location,
+        remote_type: newJob.remote_type, description: newJob.description, apply_url: newJob.apply_url,
+        salary_min: newJob.salary_min ? Number(newJob.salary_min) : null,
+        salary_max: newJob.salary_max ? Number(newJob.salary_max) : null,
+      }).select().single();
+      if (data) inserted.push(data);
+      if (error) toast.error(error.message);
     }
-    if (error) toast.error(error.message);
+    if (inserted.length > 0) {
+      setJobs([...inserted, ...jobs]);
+      setAddOpen(false);
+      setMultiJobs([{ ...emptyJob }]);
+      toast.success(`${inserted.length} job${inserted.length > 1 ? 's' : ''} added`);
+    }
+    setAddingJobs(false);
   };
 
   const deleteJob = async (e: React.MouseEvent, jobId: string) => {
