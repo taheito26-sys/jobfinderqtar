@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Palette, Loader2, Download, Columns2, AlignLeft, LayoutTemplate, FileText, File } from 'lucide-react';
+import { Palette, Loader2, Download, Columns2, AlignLeft, LayoutTemplate, FileText, File, Crown } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 
@@ -25,16 +25,23 @@ const TEMPLATES: Template[] = [
   {
     id: 'modern',
     label: 'Modern',
-    desc: 'Contemporary two-column design with sidebar for skills and contact.',
+    desc: 'Contemporary design with blue accents and double-line separators.',
     icon: <Columns2 className="w-6 h-6" />,
-    features: ['Two columns', 'Skill bars', 'Color accents'],
+    features: ['Color accents', 'Bullet separators', 'Centered header'],
+  },
+  {
+    id: 'executive',
+    label: 'Executive',
+    desc: 'Sophisticated serif layout for senior roles and leadership positions.',
+    icon: <Crown className="w-6 h-6" />,
+    features: ['Serif fonts', 'Title case', 'Wider margins'],
   },
   {
     id: 'minimal',
     label: 'Minimal',
     desc: 'Ultra-clean layout focused on content. Maximum ATS compatibility.',
     icon: <LayoutTemplate className="w-6 h-6" />,
-    features: ['Max ATS score', 'No graphics', 'Clean typography'],
+    features: ['Max ATS score', 'No graphics', 'Clean spacing'],
   },
 ];
 
@@ -125,7 +132,7 @@ const CVTemplateSelector = ({ open, onOpenChange, document, userId }: CVTemplate
         </DialogHeader>
 
         {/* Template Grid */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {TEMPLATES.map(t => (
             <button
               key={t.id}

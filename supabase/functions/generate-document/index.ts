@@ -23,7 +23,7 @@ serve(async (req) => {
     if (authError || !user) throw new Error("Unauthorized");
 
     const body = await req.json();
-    const { document_id, format = "pdf", parsed_content, template, document_type } = body;
+    const { document_id, format = "pdf", parsed_content, template = "classic", document_type } = body;
 
     if (!document_id && !parsed_content) throw new Error("document_id or parsed_content is required");
     if (!["pdf", "docx"].includes(format)) throw new Error("format must be 'pdf' or 'docx'");
@@ -31,21 +31,14 @@ serve(async (req) => {
     let doc: any = null;
 
     if (parsed_content) {
-      // Direct content mode (from CVTemplateSelector / master_documents)
-      doc = {
-        content: parsed_content,
-        document_type: document_type || "cv",
-        jobs: null,
-      };
+      doc = { content: parsed_content, document_type: document_type || "cv", jobs: null };
     } else {
-      // Lookup from tailored_documents
       const { data: tailoredDoc, error: docError } = await supabase
         .from("tailored_documents")
         .select("*, jobs(title, company)")
         .eq("id", document_id)
         .eq("user_id", user.id)
         .single();
-
       if (docError || !tailoredDoc) throw new Error("Document not found");
       doc = tailoredDoc;
     }
@@ -61,18 +54,30 @@ serve(async (req) => {
     const jobTitle = (doc as any).jobs?.title || "Position";
     const company = (doc as any).jobs?.company || "Company";
 
-    // Format ISO dates to readable format
     const formatDate = (d: string | null | undefined): string => {
       if (!d) return "";
-      try {
-        const date = new Date(d);
-        if (isNaN(date.getTime())) return d;
+      // DD/MM/YYYY or DD-MM-YYYY
+      const dmy = d.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+      if (dmy) {
+        let [, day, m, y] = dmy;
+        let yearNum = parseInt(y);
+        if (yearNum < 100) yearNum += 2000;
+        const monthNum = parseInt(m);
+        if (monthNum < 1 || monthNum > 12) return d;
+        const date = new Date(Date.UTC(yearNum, monthNum - 1, parseInt(day)));
         const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        return `${months[date.getMonth()]} ${date.getFullYear()}`;
-      } catch { return d; }
+        return `${months[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+      }
+      // ISO YYYY-MM-DD
+      const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (iso) {
+        const date = new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3]));
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return `${months[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
+      }
+      return d;
     };
 
-    // Normalize field names: parsed_content uses "employment", generator expects "experience"
     const experience = (rawContent?.experience || rawContent?.employment || []).map((e: any) => ({
       ...e,
       highlights: e.highlights || e.achievements || [],
@@ -86,14 +91,8 @@ serve(async (req) => {
     }));
     const certifications = rawContent?.certifications || [];
 
-    const content = {
-      ...rawContent,
-      experience,
-      education,
-      certifications,
-    };
+    const content = { ...rawContent, experience, education, certifications };
 
-    // For direct parsed_content mode, use embedded contact info; fall back to profile
     const profile = {
       full_name: rawContent?.full_name || dbProfile?.full_name || "Candidate",
       email: rawContent?.email || dbProfile?.email,
@@ -108,13 +107,13 @@ serve(async (req) => {
     let fileName: string;
 
     if (format === "pdf") {
-      fileBuffer = generatePDF(content, isCoverLetter, candidateName, profile, jobTitle, company);
+      fileBuffer = generatePDF(content, isCoverLetter, candidateName, profile, jobTitle, company, template);
       mimeType = "application/pdf";
-      fileName = `${isCoverLetter ? "Cover_Letter" : "CV"}_${company.replace(/\s+/g, "_")}.pdf`;
+      fileName = `${isCoverLetter ? "Cover_Letter" : "CV"}_${template}_${company.replace(/\s+/g, "_")}.pdf`;
     } else {
-      fileBuffer = generateDOCX(content, isCoverLetter, candidateName, profile, jobTitle, company);
+      fileBuffer = generateDOCX(content, isCoverLetter, candidateName, profile, jobTitle, company, template);
       mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-      fileName = `${isCoverLetter ? "Cover_Letter" : "CV"}_${company.replace(/\s+/g, "_")}.docx`;
+      fileName = `${isCoverLetter ? "Cover_Letter" : "CV"}_${template}_${company.replace(/\s+/g, "_")}.docx`;
     }
 
     return new Response(fileBuffer, {
@@ -133,7 +132,71 @@ serve(async (req) => {
   }
 });
 
-// ── PDF Generation (manual PDF construction) ──
+// ── Template color configs ──
+interface TemplateStyle {
+  headingColor: string;    // RGB 0-1 for PDF
+  accentColor: string;     // hex for DOCX
+  bodyFont: string;
+  headingFont: string;
+  nameSize: number;
+  headingSize: number;
+  bodySize: number;
+  sectionSep: "line" | "space" | "double-line";
+  headingCase: "upper" | "title";
+}
+
+const TEMPLATE_STYLES: Record<string, TemplateStyle> = {
+  classic: {
+    headingColor: "0.15 0.15 0.15",
+    accentColor: "333333",
+    bodyFont: "Helvetica",
+    headingFont: "Helvetica-Bold",
+    nameSize: 28,
+    headingSize: 13,
+    bodySize: 10,
+    sectionSep: "line",
+    headingCase: "upper",
+  },
+  modern: {
+    headingColor: "0.11 0.38 0.65",
+    accentColor: "1C60A6",
+    bodyFont: "Helvetica",
+    headingFont: "Helvetica-Bold",
+    nameSize: 30,
+    headingSize: 14,
+    bodySize: 10,
+    sectionSep: "double-line",
+    headingCase: "upper",
+  },
+  executive: {
+    headingColor: "0.25 0.14 0.08",
+    accentColor: "3F2412",
+    bodyFont: "Times-Roman",
+    headingFont: "Times-Bold",
+    nameSize: 32,
+    headingSize: 13,
+    bodySize: 11,
+    sectionSep: "line",
+    headingCase: "title",
+  },
+  minimal: {
+    headingColor: "0.2 0.2 0.2",
+    accentColor: "444444",
+    bodyFont: "Helvetica",
+    headingFont: "Helvetica-Bold",
+    nameSize: 24,
+    headingSize: 11,
+    bodySize: 10,
+    sectionSep: "space",
+    headingCase: "upper",
+  },
+};
+
+function getStyle(template: string): TemplateStyle {
+  return TEMPLATE_STYLES[template] || TEMPLATE_STYLES.classic;
+}
+
+// ── PDF Generation ──
 
 function generatePDF(
   content: any,
@@ -141,101 +204,120 @@ function generatePDF(
   name: string,
   profile: any,
   jobTitle: string,
-  company: string
+  company: string,
+  template: string
 ): Uint8Array {
-  const lines: string[] = [];
-  const pageWidth = 595.28; // A4
+  const style = getStyle(template);
+  const lines: { text: string; bold?: boolean; size?: number; color?: string; isSep?: string; indent?: number }[] = [];
+  const pageWidth = 595.28;
   const pageHeight = 841.89;
-  const margin = 50;
-  const lineHeight = 14;
-  const maxLineWidth = pageWidth - 2 * margin;
+  const margin = template === "executive" ? 60 : template === "modern" ? 45 : 50;
+
+  const addLine = (text: string, bold = false, size?: number, indent = 0) => {
+    lines.push({ text, bold, size: size || style.bodySize, indent });
+  };
+  const addSep = () => {
+    lines.push({ text: "", isSep: style.sectionSep, size: 0 });
+  };
+  const addBlank = () => {
+    lines.push({ text: "", size: style.bodySize * 0.5 });
+  };
+
+  const formatHeading = (text: string): string => {
+    return style.headingCase === "upper" ? text.toUpperCase() : text;
+  };
 
   if (isCoverLetter) {
+    addLine(name, true, style.nameSize);
+    if (profile?.email) addLine(profile.email);
+    if (profile?.phone) addLine(profile.phone);
+    if (profile?.location) addLine(profile.location);
+    addBlank();
+    addLine(`Re: ${jobTitle} at ${company}`, true, style.headingSize);
+    addBlank();
     const text = typeof content === "string" ? content : content?.content || JSON.stringify(content);
-    lines.push(`__BOLD__${name}__ENDBOLD__`);
-    if (profile?.email) lines.push(profile.email);
-    if (profile?.phone) lines.push(profile.phone);
-    if (profile?.location) lines.push(profile.location);
-    lines.push("");
-    lines.push(`Re: ${jobTitle} at ${company}`);
-    lines.push("");
-    const paragraphs = text.split(/\n\n|\n/);
-    for (const p of paragraphs) {
-      const wrapped = wrapText(p.trim(), 90);
-      lines.push(...wrapped);
-      lines.push("");
+    for (const para of text.split(/\n\n|\n/)) {
+      if (para.trim()) {
+        for (const wl of wrapText(para.trim(), 90)) addLine(wl);
+      }
+      addBlank();
     }
   } else {
-    // CV
-    lines.push(`__BOLD__${name}__ENDBOLD__`);
-    if (content?.headline) lines.push(content.headline);
+    // Name
+    addLine(name, true, style.nameSize);
+    // Headline
+    if (content?.headline) addLine(content.headline, false, style.bodySize + 2);
+    // Contact
     const contactParts: string[] = [];
     if (profile?.email) contactParts.push(profile.email);
     if (profile?.phone) contactParts.push(profile.phone);
     if (profile?.location) contactParts.push(profile.location);
     if (profile?.linkedin_url) contactParts.push(profile.linkedin_url);
-    if (contactParts.length) lines.push(contactParts.join(" | "));
-    lines.push("__LINE__");
+    if (contactParts.length) addLine(contactParts.join(template === "modern" ? "  •  " : "  |  "), false, 9);
+    addSep();
 
+    // Summary
     if (content?.summary) {
-      lines.push("");
-      lines.push("__BOLD__PROFESSIONAL SUMMARY__ENDBOLD__");
-      lines.push("__LINE__");
-      const wrapped = wrapText(content.summary, 90);
-      lines.push(...wrapped);
+      addBlank();
+      addLine(formatHeading("Professional Summary"), true, style.headingSize);
+      addSep();
+      for (const wl of wrapText(content.summary, 90)) addLine(wl);
     }
 
+    // Experience
     if (content?.experience?.length) {
-      lines.push("");
-      lines.push("__BOLD__EXPERIENCE__ENDBOLD__");
-      lines.push("__LINE__");
+      addBlank();
+      addLine(formatHeading("Experience"), true, style.headingSize);
+      addSep();
       for (const exp of content.experience) {
-        lines.push("");
-        lines.push(`__BOLD__${exp.title}__ENDBOLD__ — ${exp.company}`);
-        if (exp.location) lines.push(exp.location);
-        lines.push(`${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || "N/A"}`);
+        addBlank();
+        addLine(`${exp.title} — ${exp.company}`, true, style.bodySize + 1);
+        const dateLine = `${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || ""}`;
+        if (exp.location) addLine(`${exp.location}  |  ${dateLine}`, false, 9);
+        else addLine(dateLine, false, 9);
         if (exp.highlights?.length) {
           for (const h of exp.highlights) {
-            const wrapped = wrapText(`• ${h}`, 85);
-            lines.push(...wrapped);
+            for (const wl of wrapText(`• ${h}`, 85)) addLine(wl, false, style.bodySize, 10);
           }
         }
       }
     }
 
+    // Education
     if (content?.education?.length) {
-      lines.push("");
-      lines.push("__BOLD__EDUCATION__ENDBOLD__");
-      lines.push("__LINE__");
+      addBlank();
+      addLine(formatHeading("Education"), true, style.headingSize);
+      addSep();
       for (const edu of content.education) {
-        lines.push("");
-        lines.push(`__BOLD__${edu.degree}__ENDBOLD__${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`);
-        lines.push(edu.institution || "");
+        addBlank();
+        addLine(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, style.bodySize + 1);
+        addLine(edu.institution || "", false, 9);
         const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
-        if (dateParts.length) lines.push(dateParts.join(" – "));
-        if (edu.gpa) lines.push(`GPA: ${edu.gpa}`);
+        if (dateParts.length) addLine(dateParts.join(" – "), false, 9);
+        if (edu.gpa) addLine(`GPA: ${edu.gpa}`, false, 9);
       }
     }
 
+    // Skills
     if (content?.skills?.length) {
-      lines.push("");
-      lines.push("__BOLD__SKILLS__ENDBOLD__");
-      lines.push("__LINE__");
-      const wrapped = wrapText(content.skills.join(", "), 90);
-      lines.push(...wrapped);
+      addBlank();
+      addLine(formatHeading("Skills"), true, style.headingSize);
+      addSep();
+      for (const wl of wrapText(content.skills.join(template === "modern" ? "  •  " : ",  "), 90)) addLine(wl);
     }
 
+    // Certifications
     if (content?.certifications?.length) {
-      lines.push("");
-      lines.push("__BOLD__CERTIFICATIONS__ENDBOLD__");
-      lines.push("__LINE__");
+      addBlank();
+      addLine(formatHeading("Certifications"), true, style.headingSize);
+      addSep();
       for (const cert of content.certifications) {
-        lines.push(`• ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`);
+        addLine(`• ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`);
       }
     }
   }
 
-  return buildPDFBytes(lines, pageWidth, pageHeight, margin, lineHeight);
+  return buildPDFBytes(lines, pageWidth, pageHeight, margin, style);
 }
 
 function wrapText(text: string, maxChars: number): string[] {
@@ -256,48 +338,44 @@ function wrapText(text: string, maxChars: number): string[] {
 }
 
 function buildPDFBytes(
-  lines: string[],
+  lines: { text: string; bold?: boolean; size?: number; color?: string; isSep?: string; indent?: number }[],
   pageWidth: number,
   pageHeight: number,
   margin: number,
-  lineHeight: number
+  style: TemplateStyle
 ): Uint8Array {
-  // Simple PDF 1.4 construction
-  const pages: string[][] = [];
-  let currentPage: string[] = [];
+  const pages: typeof lines[] = [];
+  let currentPage: typeof lines = [];
   let y = pageHeight - margin;
 
   for (const line of lines) {
-    if (y < margin + lineHeight) {
+    const lh = (line.size || style.bodySize) * 1.4;
+    if (y < margin + lh) {
       pages.push(currentPage);
       currentPage = [];
       y = pageHeight - margin;
     }
     currentPage.push(line);
-    y -= lineHeight;
+    y -= lh;
   }
   if (currentPage.length) pages.push(currentPage);
 
   const objects: string[] = [];
   let objCount = 0;
-
   const addObj = (content: string): number => {
     objCount++;
     objects.push(`${objCount} 0 obj\n${content}\nendobj`);
     return objCount;
   };
 
-  // 1: Catalog
   addObj("<< /Type /Catalog /Pages 2 0 R >>");
-
-  // 2: Pages (placeholder, update later)
   const pagesObjIndex = objects.length;
-  addObj(""); // placeholder
+  addObj("");
 
-  // 3: Font
-  addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
-  // 4: Bold Font
-  addObj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>");
+  // Fonts: F1=body, F2=heading bold, F3=body italic (Times)
+  const isTimesBody = style.bodyFont === "Times-Roman";
+  addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /${style.bodyFont} /Encoding /WinAnsiEncoding >>`);
+  addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /${style.headingFont} /Encoding /WinAnsiEncoding >>`);
 
   const pageObjIds: number[] = [];
 
@@ -306,32 +384,39 @@ function buildPDFBytes(
     let cy = pageHeight - margin;
 
     for (const line of pageLines) {
-      if (line === "__LINE__") {
-        streamContent += `${margin} ${cy - 2} m ${pageWidth - margin} ${cy - 2} l S\n`;
-        cy -= lineHeight * 0.5;
+      const lh = (line.size || style.bodySize) * 1.4;
+
+      if (line.isSep) {
+        if (line.isSep === "line") {
+          streamContent += `${style.headingColor} RG\n0.5 w\n${margin} ${cy - 2} m ${pageWidth - margin} ${cy - 2} l S\n`;
+          cy -= 6;
+        } else if (line.isSep === "double-line") {
+          streamContent += `${style.headingColor} RG\n0.8 w\n${margin} ${cy - 1} m ${pageWidth - margin} ${cy - 1} l S\n`;
+          streamContent += `0.3 w\n${margin} ${cy - 5} m ${pageWidth - margin} ${cy - 5} l S\n`;
+          cy -= 10;
+        } else {
+          cy -= 8;
+        }
         continue;
       }
 
-      if (line === "") {
-        cy -= lineHeight * 0.5;
+      if (!line.text) {
+        cy -= lh * 0.4;
         continue;
       }
 
-      const isBold = line.includes("__BOLD__");
-      const cleanLine = line.replace(/__BOLD__/g, "").replace(/__ENDBOLD__/g, "");
-      const escaped = escapePDF(cleanLine);
+      const fontSize = line.size || style.bodySize;
+      const indent = line.indent || 0;
+      const escaped = escapePDF(line.text);
+      const fontRef = line.bold ? "/F2" : "/F1";
+      const color = line.bold ? `${style.headingColor} rg\n` : "0.2 0.2 0.2 rg\n";
 
-      if (isBold) {
-        streamContent += `BT /F2 ${cleanLine === cleanLine.toUpperCase() && cleanLine.length < 40 ? 12 : 14} Tf ${margin} ${cy} Td (${escaped}) Tj ET\n`;
-      } else {
-        streamContent += `BT /F1 10 Tf ${margin} ${cy} Td (${escaped}) Tj ET\n`;
-      }
-      cy -= lineHeight;
+      streamContent += `${color}BT ${fontRef} ${fontSize} Tf ${margin + indent} ${cy} Td (${escaped}) Tj ET\n`;
+      cy -= lh;
     }
 
-    const stream = `q\n0.2 0.2 0.2 rg\n${streamContent}Q`;
+    const stream = `q\n${streamContent}Q`;
     const streamObjId = addObj(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
-
     const pageObjId = addObj(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] ` +
       `/Contents ${streamObjId} 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> >>`
@@ -339,37 +424,30 @@ function buildPDFBytes(
     pageObjIds.push(pageObjId);
   }
 
-  // Update pages object
   const kids = pageObjIds.map(id => `${id} 0 R`).join(" ");
   objects[pagesObjIndex] = `2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pageObjIds.length} >>\nendobj`;
 
-  // Build final PDF
   const header = "%PDF-1.4\n";
   let body = "";
   const offsets: number[] = [];
-
   for (const obj of objects) {
     offsets.push(header.length + body.length);
     body += obj + "\n";
   }
-
   const xrefOffset = header.length + body.length;
   let xref = `xref\n0 ${objCount + 1}\n0000000000 65535 f \n`;
   for (const offset of offsets) {
     xref += `${offset.toString().padStart(10, "0")} 00000 n \n`;
   }
-
   const trailer = `trailer\n<< /Size ${objCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  const pdfString = header + body + xref + trailer;
-
-  return new TextEncoder().encode(pdfString);
+  return new TextEncoder().encode(header + body + xref + trailer);
 }
 
 function escapePDF(text: string): string {
   return text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
 
-// ── DOCX Generation (minimal OOXML) ──
+// ── DOCX Generation ──
 
 function generateDOCX(
   content: any,
@@ -377,61 +455,85 @@ function generateDOCX(
   name: string,
   profile: any,
   jobTitle: string,
-  company: string
+  company: string,
+  template: string
 ): Uint8Array {
+  const style = getStyle(template);
   const paragraphs: string[] = [];
 
-  const p = (text: string, bold = false, size = 22) => {
-    const rPr = `<w:rPr>${bold ? "<w:b/>" : ""}<w:sz w:val="${size}"/><w:szCs w:val="${size}"/><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/></w:rPr>`;
+  const docxFont = template === "executive" ? "Times New Roman" : "Calibri";
+  const accentHex = style.accentColor;
+
+  const p = (text: string, bold = false, size = 22, color?: string, align?: string) => {
+    const colorTag = color ? `<w:color w:val="${color}"/>` : "";
+    const rPr = `<w:rPr>${bold ? "<w:b/>" : ""}<w:sz w:val="${size}"/><w:szCs w:val="${size}"/><w:rFonts w:ascii="${docxFont}" w:hAnsi="${docxFont}"/>${colorTag}</w:rPr>`;
+    const pPr = align ? `<w:pPr><w:jc w:val="${align}"/></w:pPr>` : "";
     const escaped = escapeXML(text);
-    paragraphs.push(`<w:p><w:r>${rPr}<w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>`);
+    paragraphs.push(`<w:p>${pPr}<w:r>${rPr}<w:t xml:space="preserve">${escaped}</w:t></w:r></w:p>`);
   };
 
   const hr = () => {
-    paragraphs.push(`<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="999999"/></w:pBdr></w:pPr></w:p>`);
+    const borderColor = accentHex;
+    const sz = style.sectionSep === "double-line" ? "6" : "4";
+    paragraphs.push(`<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="${sz}" w:space="1" w:color="${borderColor}"/></w:pBdr></w:pPr></w:p>`);
   };
 
+  const formatHeading = (text: string): string => {
+    return style.headingCase === "upper" ? text.toUpperCase() : text;
+  };
+
+  const headingSize = style.headingSize * 2; // DOCX uses half-points
+  const bodySize = style.bodySize * 2;
+  const nameSize = style.nameSize * 2;
+
   if (isCoverLetter) {
-    p(name, true, 28);
-    if (profile?.email) p(profile.email, false, 20);
-    if (profile?.phone) p(profile.phone, false, 20);
-    if (profile?.location) p(profile.location, false, 20);
+    p(name, true, nameSize);
+    if (profile?.email) p(profile.email, false, bodySize - 2);
+    if (profile?.phone) p(profile.phone, false, bodySize - 2);
+    if (profile?.location) p(profile.location, false, bodySize - 2);
     paragraphs.push("<w:p/>");
-    p(`Re: ${jobTitle} at ${company}`, true, 22);
+    p(`Re: ${jobTitle} at ${company}`, true, bodySize);
     paragraphs.push("<w:p/>");
     const text = typeof content === "string" ? content : content?.content || JSON.stringify(content);
     for (const para of text.split(/\n\n|\n/)) {
-      if (para.trim()) p(para.trim());
+      if (para.trim()) p(para.trim(), false, bodySize);
       else paragraphs.push("<w:p/>");
     }
   } else {
-    p(name, true, 32);
-    if (content?.headline) p(content.headline, false, 22);
+    // Name - centered for modern/executive
+    const nameAlign = template === "modern" || template === "executive" ? "center" : undefined;
+    p(name, true, nameSize, accentHex, nameAlign);
+
+    if (content?.headline) p(content.headline, false, bodySize + 2, undefined, nameAlign);
+
     const contactParts: string[] = [];
     if (profile?.email) contactParts.push(profile.email);
     if (profile?.phone) contactParts.push(profile.phone);
     if (profile?.location) contactParts.push(profile.location);
     if (profile?.linkedin_url) contactParts.push(profile.linkedin_url);
-    if (contactParts.length) p(contactParts.join(" | "), false, 20);
+    const sep = template === "modern" ? "  •  " : "  |  ";
+    if (contactParts.length) p(contactParts.join(sep), false, bodySize - 2, undefined, nameAlign);
     hr();
 
     if (content?.summary) {
-      p("PROFESSIONAL SUMMARY", true, 24);
-      hr();
-      p(content.summary);
+      paragraphs.push("<w:p/>");
+      p(formatHeading("Professional Summary"), true, headingSize, accentHex);
+      if (style.sectionSep !== "space") hr();
+      p(content.summary, false, bodySize);
       paragraphs.push("<w:p/>");
     }
 
     if (content?.experience?.length) {
-      p("EXPERIENCE", true, 24);
-      hr();
+      p(formatHeading("Experience"), true, headingSize, accentHex);
+      if (style.sectionSep !== "space") hr();
       for (const exp of content.experience) {
-        p(`${exp.title} — ${exp.company}`, true, 22);
-        if (exp.location) p(exp.location, false, 18);
-        p(`${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || "N/A"}`, false, 20);
+        p(`${exp.title} — ${exp.company}`, true, bodySize);
+        const dateLine = `${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || ""}`;
+        if (exp.location) p(`${exp.location}  |  ${dateLine}`, false, bodySize - 4);
+        else p(dateLine, false, bodySize - 4);
         if (exp.highlights?.length) {
           for (const h of exp.highlights) {
-            p(`• ${h}`, false, 20);
+            p(`• ${h}`, false, bodySize - 2);
           }
         }
         paragraphs.push("<w:p/>");
@@ -439,29 +541,31 @@ function generateDOCX(
     }
 
     if (content?.education?.length) {
-      p("EDUCATION", true, 24);
-      hr();
+      p(formatHeading("Education"), true, headingSize, accentHex);
+      if (style.sectionSep !== "space") hr();
       for (const edu of content.education) {
-        p(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, 22);
-        p(edu.institution || "", false, 20);
+        p(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, bodySize);
+        p(edu.institution || "", false, bodySize - 2);
         const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
-        if (dateParts.length) p(dateParts.join(" – "), false, 18);
-        if (edu.gpa) p(`GPA: ${edu.gpa}`, false, 18);
+        if (dateParts.length) p(dateParts.join(" – "), false, bodySize - 4);
+        if (edu.gpa) p(`GPA: ${edu.gpa}`, false, bodySize - 4);
         paragraphs.push("<w:p/>");
       }
     }
 
     if (content?.skills?.length) {
-      p("SKILLS", true, 24);
-      hr();
-      p(content.skills.join(", "));
+      p(formatHeading("Skills"), true, headingSize, accentHex);
+      if (style.sectionSep !== "space") hr();
+      const skillSep = template === "modern" ? "  •  " : ",  ";
+      p(content.skills.join(skillSep), false, bodySize);
+      paragraphs.push("<w:p/>");
     }
 
     if (content?.certifications?.length) {
-      p("CERTIFICATIONS", true, 24);
-      hr();
+      p(formatHeading("Certifications"), true, headingSize, accentHex);
+      if (style.sectionSep !== "space") hr();
       for (const cert of content.certifications) {
-        p(`• ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`, false, 20);
+        p(`• ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`, false, bodySize - 2);
       }
     }
   }
@@ -470,7 +574,6 @@ function generateDOCX(
 }
 
 function buildDOCXBytes(paragraphs: string[]): Uint8Array {
-  // Build minimal OOXML docx as a ZIP
   const contentTypesXML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
 <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
@@ -509,7 +612,6 @@ ${paragraphs.join("\n")}
 </w:body>
 </w:document>`;
 
-  // Build ZIP manually (minimal ZIP format)
   const files: { name: string; data: Uint8Array }[] = [
     { name: "[Content_Types].xml", data: new TextEncoder().encode(contentTypesXML) },
     { name: "_rels/.rels", data: new TextEncoder().encode(relsXML) },
@@ -528,62 +630,57 @@ function buildZIP(files: { name: string; data: Uint8Array }[]): Uint8Array {
   for (const file of files) {
     const nameBytes = new TextEncoder().encode(file.name);
     const crc = crc32(file.data);
-
-    // Local file header
     const header = new Uint8Array(30 + nameBytes.length);
     const hv = new DataView(header.buffer);
-    hv.setUint32(0, 0x04034b50, true); // signature
-    hv.setUint16(4, 20, true); // version needed
-    hv.setUint16(6, 0, true); // flags
-    hv.setUint16(8, 0, true); // compression: stored
-    hv.setUint16(10, 0, true); // mod time
-    hv.setUint16(12, 0, true); // mod date
+    hv.setUint32(0, 0x04034b50, true);
+    hv.setUint16(4, 20, true);
+    hv.setUint16(6, 0, true);
+    hv.setUint16(8, 0, true);
+    hv.setUint16(10, 0, true);
+    hv.setUint16(12, 0, true);
     hv.setUint32(14, crc, true);
-    hv.setUint32(18, file.data.length, true); // compressed size
-    hv.setUint32(22, file.data.length, true); // uncompressed size
+    hv.setUint32(18, file.data.length, true);
+    hv.setUint32(22, file.data.length, true);
     hv.setUint16(26, nameBytes.length, true);
-    hv.setUint16(28, 0, true); // extra field length
+    hv.setUint16(28, 0, true);
     header.set(nameBytes, 30);
-
     entries.push({ name: nameBytes, data: file.data, offset });
     chunks.push(header, file.data);
     offset += header.length + file.data.length;
   }
 
-  // Central directory
   const centralStart = offset;
   for (const entry of entries) {
     const cd = new Uint8Array(46 + entry.name.length);
     const cv = new DataView(cd.buffer);
     cv.setUint32(0, 0x02014b50, true);
-    cv.setUint16(4, 20, true); // version made by
-    cv.setUint16(6, 20, true); // version needed
-    cv.setUint16(8, 0, true); // flags
-    cv.setUint16(10, 0, true); // compression
-    cv.setUint16(12, 0, true); // mod time
-    cv.setUint16(14, 0, true); // mod date
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, 0, true);
+    cv.setUint16(14, 0, true);
     const crc = crc32(entry.data);
     cv.setUint32(16, crc, true);
     cv.setUint32(20, entry.data.length, true);
     cv.setUint32(24, entry.data.length, true);
     cv.setUint16(28, entry.name.length, true);
-    cv.setUint16(30, 0, true); // extra field
-    cv.setUint16(32, 0, true); // comment
-    cv.setUint16(34, 0, true); // disk start
-    cv.setUint16(36, 0, true); // internal attrs
-    cv.setUint32(38, 0, true); // external attrs
+    cv.setUint16(30, 0, true);
+    cv.setUint16(32, 0, true);
+    cv.setUint16(34, 0, true);
+    cv.setUint16(36, 0, true);
+    cv.setUint32(38, 0, true);
     cv.setUint32(42, entry.offset, true);
     cd.set(entry.name, 46);
     chunks.push(cd);
     offset += cd.length;
   }
 
-  // End of central directory
   const eocd = new Uint8Array(22);
   const ev = new DataView(eocd.buffer);
   ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(4, 0, true); // disk number
-  ev.setUint16(6, 0, true); // central dir disk
+  ev.setUint16(4, 0, true);
+  ev.setUint16(6, 0, true);
   ev.setUint16(8, entries.length, true);
   ev.setUint16(10, entries.length, true);
   ev.setUint32(12, offset - centralStart, true);
@@ -591,7 +688,6 @@ function buildZIP(files: { name: string; data: Uint8Array }[]): Uint8Array {
   ev.setUint16(20, 0, true);
   chunks.push(eocd);
 
-  // Concatenate
   const totalLen = chunks.reduce((s, c) => s + c.length, 0);
   const result = new Uint8Array(totalLen);
   let pos = 0;
