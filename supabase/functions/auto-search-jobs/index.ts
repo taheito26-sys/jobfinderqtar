@@ -75,29 +75,7 @@ Deno.serve(async (req) => {
               query: searchQuery,
               limit: 5,
               scrapeOptions: {
-                formats: [
-                  'markdown',
-                  {
-                    type: 'json',
-                    schema: {
-                      type: 'object',
-                      properties: {
-                        title: { type: 'string', description: 'Job title' },
-                        company: { type: 'string', description: 'Company name' },
-                        location: { type: 'string', description: 'Job location' },
-                        remote_type: { type: 'string', enum: ['remote', 'hybrid', 'onsite', 'unknown'] },
-                        description: { type: 'string', description: 'Brief job description (first 500 chars)' },
-                        salary_min: { type: 'number' },
-                        salary_max: { type: 'number' },
-                        salary_currency: { type: 'string' },
-                        employment_type: { type: 'string', enum: ['full-time', 'part-time', 'contract', 'internship'] },
-                        seniority_level: { type: 'string' },
-                        requirements: { type: 'array', items: { type: 'string' } },
-                      },
-                      required: ['title', 'company'],
-                    },
-                  },
-                ],
+                formats: ['markdown'],
               },
             }),
           });
@@ -111,9 +89,11 @@ Deno.serve(async (req) => {
           const results = searchData.data || [];
 
           for (const result of results) {
-            const extracted = result.json || {};
-            const jobTitle = extracted.title || result.title || '';
-            const company = extracted.company || '';
+            const markdown = result.markdown || '';
+            const rawTitle = result.metadata?.title || result.title || '';
+            const titleParts = rawTitle.split(/\s[-–|@]\s/);
+            const jobTitle = titleParts[0]?.trim() || '';
+            const company = titleParts[1]?.trim() || '';
             const applyUrl = result.url || '';
 
             // Skip if no meaningful data
@@ -131,15 +111,15 @@ Deno.serve(async (req) => {
               user_id: profile.user_id,
               title: jobTitle,
               company,
-              location: extracted.location || '',
-              remote_type: extracted.remote_type || 'unknown',
-              description: extracted.description || (result.markdown || '').substring(0, 2000),
-              salary_min: extracted.salary_min || null,
-              salary_max: extracted.salary_max || null,
-              salary_currency: extracted.salary_currency || null,
-              employment_type: extracted.employment_type || 'full-time',
-              seniority_level: extracted.seniority_level || '',
-              requirements: (extracted.requirements || []) as any,
+              location: '',
+              remote_type: 'unknown',
+              description: (result.metadata?.description || markdown).substring(0, 2000),
+              salary_min: null,
+              salary_max: null,
+              salary_currency: null,
+              employment_type: 'full-time',
+              seniority_level: '',
+              requirements: [],
               apply_url: applyUrl,
             }).select('id, title, company').single();
 

@@ -57,29 +57,7 @@ Deno.serve(async (req) => {
         query: `${query} job listing`,
         limit: Math.min(limit, 20),
         scrapeOptions: {
-          formats: [
-            'markdown',
-            {
-              type: 'json',
-              schema: {
-                type: 'object',
-                properties: {
-                  title: { type: 'string', description: 'Job title' },
-                  company: { type: 'string', description: 'Company name' },
-                  location: { type: 'string', description: 'Job location (city, country)' },
-                  remote_type: { type: 'string', enum: ['remote', 'hybrid', 'onsite', 'unknown'], description: 'Remote work type' },
-                  description: { type: 'string', description: 'Brief job description (first 500 chars)' },
-                  salary_min: { type: 'number', description: 'Minimum salary if mentioned' },
-                  salary_max: { type: 'number', description: 'Maximum salary if mentioned' },
-                  salary_currency: { type: 'string', description: 'Salary currency code' },
-                  employment_type: { type: 'string', enum: ['full-time', 'part-time', 'contract', 'internship'], description: 'Employment type' },
-                  seniority_level: { type: 'string', description: 'Seniority level' },
-                  requirements: { type: 'array', items: { type: 'string' }, description: 'Key requirements (max 5)' },
-                },
-                required: ['title', 'company'],
-              },
-            },
-          ],
+          formats: ['markdown'],
         },
       }),
     });
@@ -95,21 +73,27 @@ Deno.serve(async (req) => {
 
     // Process results into structured job objects
     const results = (searchData.data || []).map((result: any) => {
-      const extracted = result.json || {};
       const markdown = result.markdown || '';
+      const title = result.metadata?.title || result.title || '';
+      const description = result.metadata?.description || markdown.substring(0, 1000);
+
+      // Try to extract company from title (common pattern: "Job Title - Company")
+      const titleParts = title.split(/\s[-–|@]\s/);
+      const jobTitle = titleParts[0]?.trim() || 'Untitled Job';
+      const company = titleParts[1]?.trim() || 'Unknown Company';
 
       return {
-        title: extracted.title || result.title || 'Untitled Job',
-        company: extracted.company || 'Unknown Company',
-        location: extracted.location || '',
-        remote_type: extracted.remote_type || 'unknown',
-        description: extracted.description || markdown.substring(0, 1000),
-        salary_min: extracted.salary_min || null,
-        salary_max: extracted.salary_max || null,
-        salary_currency: extracted.salary_currency || null,
-        employment_type: extracted.employment_type || 'full-time',
-        seniority_level: extracted.seniority_level || '',
-        requirements: extracted.requirements || [],
+        title: jobTitle,
+        company,
+        location: '',
+        remote_type: 'unknown',
+        description,
+        salary_min: null,
+        salary_max: null,
+        salary_currency: null,
+        employment_type: 'full-time',
+        seniority_level: '',
+        requirements: [],
         apply_url: result.url || '',
         source_url: result.url || '',
       };
