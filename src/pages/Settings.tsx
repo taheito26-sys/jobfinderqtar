@@ -2,62 +2,28 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import PageHeader from '@/components/PageHeader';
+import JobSourcesConfig from '@/components/JobSourcesConfig';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Trash2, Plug, Shield, Bell, Database, Pencil } from 'lucide-react';
+import { Plug, Shield, Bell } from 'lucide-react';
 
 const SettingsPage = () => {
   const { user, signOut } = useAuth();
   const { toast } = useToast();
-  const [sources, setSources] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [addModal, setAddModal] = useState(false);
-  const [newSource, setNewSource] = useState({ source_name: '', source_type: 'manual' });
   const [prefs, setPrefs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!user) return;
-    const load = async () => {
-      const [srcRes, prefRes] = await Promise.all([
-        supabase.from('job_sources').select('*').eq('user_id', user.id).order('created_at'),
-        supabase.from('user_preferences').select('*').eq('user_id', user.id),
-      ]);
-      setSources(srcRes.data ?? []);
+    supabase.from('user_preferences').select('*').eq('user_id', user.id).then(({ data }) => {
       const prefMap: Record<string, string> = {};
-      (prefRes.data ?? []).forEach((p: any) => { prefMap[p.key] = p.value; });
+      (data ?? []).forEach((p: any) => { prefMap[p.key] = p.value; });
       setPrefs(prefMap);
-      setLoading(false);
-    };
-    load();
+    });
   }, [user]);
-
-  const addSource = async () => {
-    if (!user || !newSource.source_name.trim()) return;
-    const { data, error } = await supabase.from('job_sources').insert({
-      user_id: user.id,
-      source_name: newSource.source_name,
-      source_type: newSource.source_type,
-    }).select().single();
-
-    if (data) { setSources([...sources, data]); setAddModal(false); setNewSource({ source_name: '', source_type: 'manual' }); }
-    if (error) toast({ title: 'Error', description: error.message, variant: 'destructive' });
-  };
-
-  const deleteSource = async (id: string) => {
-    await supabase.from('job_sources').delete().eq('id', id);
-    setSources(sources.filter(s => s.id !== id));
-  };
-
-  const toggleSource = async (id: string, enabled: boolean) => {
-    await supabase.from('job_sources').update({ enabled }).eq('id', id);
-    setSources(sources.map(s => s.id === id ? { ...s, enabled } : s));
-  };
 
   const setPref = async (key: string, value: string) => {
     if (!user) return;
@@ -73,39 +39,8 @@ const SettingsPage = () => {
       <PageHeader title="Settings" description="Configure job sources, integrations, and preferences" />
 
       <div className="space-y-6 max-w-2xl">
-        {/* Job Sources */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle className="text-base flex items-center gap-2"><Database className="w-4 h-4" />Job Sources</CardTitle>
-              <CardDescription>Configure where jobs are ingested from</CardDescription>
-            </div>
-            <Button size="sm" onClick={() => setAddModal(true)}><Plus className="w-4 h-4 mr-2" />Add Source</Button>
-          </CardHeader>
-          <CardContent>
-            {sources.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">No job sources configured yet.</p>
-            ) : (
-              <div className="space-y-3">
-                {sources.map(source => (
-                  <div key={source.id} className="flex items-center gap-3 p-3 rounded-lg border border-border">
-                    <div className="w-8 h-8 rounded bg-muted flex items-center justify-center">
-                      <Plug className="w-4 h-4 text-muted-foreground" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground">{source.source_name}</p>
-                      <Badge variant="outline" className="text-xs">{source.source_type}</Badge>
-                    </div>
-                    <Switch checked={source.enabled} onCheckedChange={(v) => toggleSource(source.id, v)} />
-                    <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteSource(source.id)}>
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* Job Sources — full config */}
+        <JobSourcesConfig />
 
         {/* Notifications */}
         <Card>
@@ -166,11 +101,6 @@ const SettingsPage = () => {
                   value={prefs['ai_api_key'] || ''}
                   onChange={e => setPref('ai_api_key', e.target.value)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  {prefs['ai_provider'] === 'anthropic' && 'Get your key from console.anthropic.com'}
-                  {prefs['ai_provider'] === 'openai' && 'Get your key from platform.openai.com'}
-                  {prefs['ai_provider'] === 'gemini' && 'Get your key from aistudio.google.com'}
-                </p>
               </div>
             )}
 
@@ -203,7 +133,7 @@ const SettingsPage = () => {
             </div>
             <div className="p-3 rounded-lg border border-border border-warning/30">
               <h4 className="text-sm font-medium text-foreground">Mode C: Controlled Auto-Submit</h4>
-              <p className="text-xs text-muted-foreground">Only for explicitly supported sources. Requires approval before each submission. Stops on CAPTCHA/MFA.</p>
+              <p className="text-xs text-muted-foreground">Only for explicitly supported sources. Requires approval before each submission.</p>
             </div>
           </CardContent>
         </Card>
@@ -222,30 +152,6 @@ const SettingsPage = () => {
           </CardContent>
         </Card>
       </div>
-
-      {/* Add Source Modal */}
-      <Dialog open={addModal} onOpenChange={setAddModal}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Add Job Source</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Source Name</Label>
-              <Input value={newSource.source_name} onChange={e => setNewSource({ ...newSource, source_name: e.target.value })} placeholder="e.g. LinkedIn, Indeed, Company RSS" />
-            </div>
-            <div className="space-y-2">
-              <Label>Source Type</Label>
-              <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                value={newSource.source_type} onChange={e => setNewSource({ ...newSource, source_type: e.target.value })}>
-                <option value="manual">Manual</option>
-                <option value="rss">RSS Feed</option>
-                <option value="api">API</option>
-                <option value="scraper">Scraper</option>
-              </select>
-            </div>
-            <Button onClick={addSource} className="w-full">Add Source</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
