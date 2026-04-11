@@ -444,7 +444,6 @@ const JobFeed = () => {
                 <Archive className="w-4 h-4 mr-1.5" />Archive ({stats.archived})
               </Button>
             )}
-            </Button>
             <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setMultiJobs([{ ...emptyJob }]); }}>
               <DialogTrigger asChild>
                 <Button size="sm"><Plus className="w-4 h-4 mr-1.5" />Add Job</Button>
