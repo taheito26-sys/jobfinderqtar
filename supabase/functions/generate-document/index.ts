@@ -56,7 +56,6 @@ serve(async (req) => {
 
     const formatDate = (d: string | null | undefined): string => {
       if (!d) return "";
-      // DD/MM/YYYY or DD-MM-YYYY
       const dmy = d.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
       if (dmy) {
         let [, day, m, y] = dmy;
@@ -68,7 +67,6 @@ serve(async (req) => {
         const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
         return `${months[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
       }
-      // ISO YYYY-MM-DD
       const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if (iso) {
         const date = new Date(Date.UTC(+iso[1], +iso[2] - 1, +iso[3]));
@@ -102,6 +100,10 @@ serve(async (req) => {
     };
     const candidateName = profile.full_name;
 
+    // Build filename as Company_JobTitle.ext
+    const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9\s]/g, "").replace(/\s+/g, "_").substring(0, 50);
+    const filePrefix = `${sanitize(company)}_${sanitize(jobTitle)}`;
+
     let fileBuffer: Uint8Array;
     let mimeType: string;
     let fileName: string;
@@ -109,11 +111,11 @@ serve(async (req) => {
     if (format === "pdf") {
       fileBuffer = generatePDF(content, isCoverLetter, candidateName, profile, jobTitle, company, template);
       mimeType = "application/pdf";
-      fileName = `${isCoverLetter ? "Cover_Letter" : "CV"}_${template}_${company.replace(/\s+/g, "_")}.pdf`;
+      fileName = `${filePrefix}.pdf`;
     } else {
       fileBuffer = generateDOCX(content, isCoverLetter, candidateName, profile, jobTitle, company, template);
       mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-      fileName = `${isCoverLetter ? "Cover_Letter" : "CV"}_${template}_${company.replace(/\s+/g, "_")}.docx`;
+      fileName = `${filePrefix}.docx`;
     }
 
     return new Response(fileBuffer, {
@@ -132,10 +134,68 @@ serve(async (req) => {
   }
 });
 
-// ── Template color configs ──
+// ── Approximate glyph widths for Helvetica (per 1000 units) ──
+const HELVETICA_WIDTHS: Record<string, number> = {
+  " ": 278, "!": 278, '"': 355, "#": 556, "$": 556, "%": 889, "&": 667, "'": 191,
+  "(": 333, ")": 333, "*": 389, "+": 584, ",": 278, "-": 333, ".": 278, "/": 278,
+  "0": 556, "1": 556, "2": 556, "3": 556, "4": 556, "5": 556, "6": 556, "7": 556,
+  "8": 556, "9": 556, ":": 278, ";": 278, "<": 584, "=": 584, ">": 584, "?": 556,
+  "@": 1015, "A": 667, "B": 667, "C": 722, "D": 722, "E": 667, "F": 611, "G": 778,
+  "H": 722, "I": 278, "J": 500, "K": 667, "L": 556, "M": 833, "N": 722, "O": 778,
+  "P": 667, "Q": 778, "R": 722, "S": 667, "T": 611, "U": 722, "V": 667, "W": 944,
+  "X": 667, "Y": 667, "Z": 611, "[": 278, "\\": 278, "]": 278, "^": 469, "_": 556,
+  "`": 333, "a": 556, "b": 556, "c": 500, "d": 556, "e": 556, "f": 278, "g": 556,
+  "h": 556, "i": 222, "j": 222, "k": 500, "l": 222, "m": 833, "n": 556, "o": 556,
+  "p": 556, "q": 556, "r": 333, "s": 500, "t": 278, "u": 556, "v": 500, "w": 722,
+  "x": 500, "y": 500, "z": 500, "{": 334, "|": 260, "}": 334, "~": 584,
+  "•": 350, "–": 556, "—": 1000, "\u2022": 350,
+};
+
+// Bold widths are slightly wider
+const HELVETICA_BOLD_WIDTHS: Record<string, number> = {
+  ...HELVETICA_WIDTHS,
+  "A": 722, "B": 722, "C": 722, "D": 722, "E": 667, "F": 611, "G": 778,
+  "H": 722, "I": 278, "J": 556, "K": 722, "L": 611, "M": 833, "N": 722,
+  "O": 778, "P": 667, "Q": 778, "R": 722, "S": 667, "T": 611, "U": 722,
+  "V": 667, "W": 944, "X": 667, "Y": 667, "Z": 611,
+  "a": 556, "b": 611, "c": 556, "d": 611, "e": 556, "f": 333, "g": 611,
+  "h": 611, "i": 278, "j": 278, "k": 556, "l": 278, "m": 889, "n": 611,
+  "o": 611, "p": 611, "q": 611, "r": 389, "s": 556, "t": 333, "u": 611,
+  "v": 556, "w": 778, "x": 556, "y": 556, "z": 500,
+  " ": 278,
+};
+
+function measureText(text: string, fontSize: number, bold: boolean): number {
+  const widths = bold ? HELVETICA_BOLD_WIDTHS : HELVETICA_WIDTHS;
+  let w = 0;
+  for (const ch of text) {
+    w += (widths[ch] || 556);
+  }
+  return (w * fontSize) / 1000;
+}
+
+function wrapTextByWidth(text: string, fontSize: number, bold: boolean, maxWidth: number): string[] {
+  if (!text) return [""];
+  const words = text.split(" ");
+  const result: string[] = [];
+  let currentLine = "";
+  for (const word of words) {
+    const test = currentLine ? currentLine + " " + word : word;
+    if (measureText(test, fontSize, bold) > maxWidth && currentLine) {
+      result.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = test;
+    }
+  }
+  if (currentLine) result.push(currentLine);
+  return result.length ? result : [""];
+}
+
+// ── Template styles ──
 interface TemplateStyle {
-  headingColor: string;    // RGB 0-1 for PDF
-  accentColor: string;     // hex for DOCX
+  headingColor: string;
+  accentColor: string;
   bodyFont: string;
   headingFont: string;
   nameSize: number;
@@ -147,7 +207,7 @@ interface TemplateStyle {
 
 const TEMPLATE_STYLES: Record<string, TemplateStyle> = {
   classic: {
-    headingColor: "0.15 0.15 0.15",
+    headingColor: "0.2 0.2 0.2",
     accentColor: "333333",
     bodyFont: "Helvetica",
     headingFont: "Helvetica-Bold",
@@ -162,8 +222,8 @@ const TEMPLATE_STYLES: Record<string, TemplateStyle> = {
     accentColor: "1C60A6",
     bodyFont: "Helvetica",
     headingFont: "Helvetica-Bold",
-    nameSize: 30,
-    headingSize: 14,
+    nameSize: 28,
+    headingSize: 13,
     bodySize: 10,
     sectionSep: "double-line",
     headingCase: "upper",
@@ -171,9 +231,9 @@ const TEMPLATE_STYLES: Record<string, TemplateStyle> = {
   executive: {
     headingColor: "0.25 0.14 0.08",
     accentColor: "3F2412",
-    bodyFont: "Times-Roman",
-    headingFont: "Times-Bold",
-    nameSize: 32,
+    bodyFont: "Helvetica",
+    headingFont: "Helvetica-Bold",
+    nameSize: 28,
     headingSize: 13,
     bodySize: 11,
     sectionSep: "line",
@@ -196,7 +256,40 @@ function getStyle(template: string): TemplateStyle {
   return TEMPLATE_STYLES[template] || TEMPLATE_STYLES.classic;
 }
 
+// ── Extract cover letter text ──
+function extractLetterText(content: any): string {
+  let letterText = "";
+  if (typeof content === "string") {
+    letterText = content;
+  } else if (content?.letter_text) {
+    letterText = typeof content.letter_text === "string" ? content.letter_text : "";
+  } else if (content?.content && typeof content.content === "string") {
+    letterText = content.content;
+  } else if (content?.content?.letter_text) {
+    letterText = content.content.letter_text;
+  } else {
+    for (const key of Object.keys(content || {})) {
+      const val = content[key];
+      if (typeof val === "string" && val.length > 100 && val.includes("Dear")) {
+        letterText = val;
+        break;
+      }
+    }
+    if (!letterText) letterText = content?.summary || "";
+  }
+  return letterText.replace(/\\n/g, "\n");
+}
+
 // ── PDF Generation ──
+
+interface PdfLine {
+  text: string;
+  bold?: boolean;
+  size?: number;
+  color?: string;
+  isSep?: string;
+  indent?: number;
+}
 
 function generatePDF(
   content: any,
@@ -208,149 +301,125 @@ function generatePDF(
   template: string
 ): Uint8Array {
   const style = getStyle(template);
-  const lines: { text: string; bold?: boolean; size?: number; color?: string; isSep?: string; indent?: number }[] = [];
   const pageWidth = 595.28;
   const pageHeight = 841.89;
-  const margin = template === "executive" ? 60 : template === "modern" ? 45 : 50;
+  const margin = 50;
+  const contentWidth = pageWidth - margin * 2;
+  const lines: PdfLine[] = [];
 
   const addLine = (text: string, bold = false, size?: number, indent = 0) => {
-    lines.push({ text, bold, size: size || style.bodySize, indent });
+    const fontSize = size || style.bodySize;
+    // Wrap text properly by measuring font width
+    if (text && !bold && fontSize <= style.bodySize + 2) {
+      const wrapped = wrapTextByWidth(text, fontSize, bold, contentWidth - indent);
+      for (const wl of wrapped) {
+        lines.push({ text: wl, bold, size: fontSize, indent });
+      }
+    } else {
+      lines.push({ text, bold, size: fontSize, indent });
+    }
   };
-  const addSep = () => {
-    lines.push({ text: "", isSep: style.sectionSep, size: 0 });
-  };
-  const addBlank = () => {
-    lines.push({ text: "", size: style.bodySize * 0.5 });
-  };
-
-  const formatHeading = (text: string): string => {
-    return style.headingCase === "upper" ? text.toUpperCase() : text;
-  };
+  const addSep = () => lines.push({ text: "", isSep: style.sectionSep, size: 0 });
+  const addBlank = () => lines.push({ text: "", size: style.bodySize * 0.6 });
+  const formatHeading = (text: string): string =>
+    style.headingCase === "upper" ? text.toUpperCase() : text;
 
   if (isCoverLetter) {
-    addLine(name, true, style.nameSize);
-    // Contact line (single line, matching CV style)
-    const clContactParts: string[] = [];
-    if (profile?.location) clContactParts.push(profile.location);
-    if (profile?.phone) clContactParts.push(profile.phone);
-    if (profile?.email) clContactParts.push(profile.email);
-    if (clContactParts.length) addLine(clContactParts.join("  •  "), false, 9);
+    // Name
+    lines.push({ text: name, bold: true, size: style.nameSize });
+    // Contact
+    const parts: string[] = [];
+    if (profile?.location) parts.push(profile.location);
+    if (profile?.phone) parts.push(profile.phone);
+    if (profile?.email) parts.push(profile.email);
+    if (parts.length) lines.push({ text: parts.join("  \u2022  "), size: 9 });
     addSep();
     addBlank();
 
     // Date
     const today = new Date();
-    const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-    addLine(`${months[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`, false, style.bodySize);
+    const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+    addLine(`${monthNames[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`);
     addBlank();
 
-    // Recipient
-    addLine(`Re: ${jobTitle} at ${company}`, true, style.headingSize);
+    // Subject
+    lines.push({ text: `Re: ${jobTitle} at ${company}`, bold: true, size: style.headingSize });
     addBlank();
 
-    // Extract the actual letter text from various possible formats
-    let letterText = "";
-    if (typeof content === "string") {
-      letterText = content;
-    } else if (content?.letter_text) {
-      letterText = content.letter_text;
-    } else if (content?.content && typeof content.content === "string") {
-      letterText = content.content;
-    } else if (content?.content?.letter_text) {
-      letterText = content.content.letter_text;
-    } else {
-      // Last resort: try to find any string field that looks like a letter
-      for (const key of Object.keys(content || {})) {
-        const val = content[key];
-        if (typeof val === "string" && val.length > 100 && val.includes("Dear")) {
-          letterText = val;
-          break;
-        }
-      }
-      if (!letterText) letterText = content?.summary || "";
-    }
-
-    // Clean up escaped newlines and split into proper paragraphs
-    letterText = letterText.replace(/\\n/g, "\n");
+    // Letter body
+    const letterText = extractLetterText(content);
     const paragraphs = letterText.split(/\n\n+/);
     for (const para of paragraphs) {
       const cleaned = para.replace(/\n/g, " ").trim();
       if (cleaned) {
-        for (const wl of wrapText(cleaned, 90)) addLine(wl);
+        addLine(cleaned);
         addBlank();
       }
     }
   } else {
-    // Name
-    addLine(name, true, style.nameSize);
-    // Headline
-    if (content?.headline) addLine(content.headline, false, style.bodySize + 2);
-    // Contact
+    // CV
+    lines.push({ text: name, bold: true, size: style.nameSize });
+    if (content?.headline) lines.push({ text: content.headline, size: style.bodySize + 2 });
     const contactParts: string[] = [];
-    if (profile?.email) contactParts.push(profile.email);
-    if (profile?.phone) contactParts.push(profile.phone);
     if (profile?.location) contactParts.push(profile.location);
+    if (profile?.phone) contactParts.push(profile.phone);
+    if (profile?.email) contactParts.push(profile.email);
     if (profile?.linkedin_url) contactParts.push(profile.linkedin_url);
-    if (contactParts.length) addLine(contactParts.join(template === "modern" ? "  •  " : "  |  "), false, 9);
+    if (contactParts.length) lines.push({ text: contactParts.join("  |  "), size: 9 });
     addSep();
 
-    // Summary
     if (content?.summary) {
       addBlank();
-      addLine(formatHeading("Professional Summary"), true, style.headingSize);
+      lines.push({ text: formatHeading("Professional Summary"), bold: true, size: style.headingSize });
       addSep();
-      for (const wl of wrapText(content.summary, 90)) addLine(wl);
+      addLine(content.summary);
     }
 
-    // Experience
     if (content?.experience?.length) {
       addBlank();
-      addLine(formatHeading("Experience"), true, style.headingSize);
+      lines.push({ text: formatHeading("Experience"), bold: true, size: style.headingSize });
       addSep();
       for (const exp of content.experience) {
         addBlank();
-        addLine(`${exp.title} — ${exp.company}`, true, style.bodySize + 1);
+        lines.push({ text: `${exp.title} — ${exp.company}`, bold: true, size: style.bodySize + 1 });
         const dateLine = `${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || ""}`;
-        if (exp.location) addLine(`${exp.location}  |  ${dateLine}`, false, 9);
-        else addLine(dateLine, false, 9);
+        if (exp.location) lines.push({ text: `${exp.location}  |  ${dateLine}`, size: 9 });
+        else lines.push({ text: dateLine, size: 9 });
+        if (exp.description) addLine(exp.description, false, style.bodySize, 10);
         if (exp.highlights?.length) {
           for (const h of exp.highlights) {
-            for (const wl of wrapText(`• ${h}`, 85)) addLine(wl, false, style.bodySize, 10);
+            addLine(`\u2022 ${h}`, false, style.bodySize, 10);
           }
         }
       }
     }
 
-    // Education
     if (content?.education?.length) {
       addBlank();
-      addLine(formatHeading("Education"), true, style.headingSize);
+      lines.push({ text: formatHeading("Education"), bold: true, size: style.headingSize });
       addSep();
       for (const edu of content.education) {
         addBlank();
-        addLine(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, style.bodySize + 1);
-        addLine(edu.institution || "", false, 9);
-        const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
-        if (dateParts.length) addLine(dateParts.join(" – "), false, 9);
-        if (edu.gpa) addLine(`GPA: ${edu.gpa}`, false, 9);
+        lines.push({ text: `${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, bold: true, size: style.bodySize + 1 });
+        lines.push({ text: edu.institution || "", size: 9 });
+        const dp = [edu.start_date, edu.end_date].filter(Boolean);
+        if (dp.length) lines.push({ text: dp.join(" – "), size: 9 });
       }
     }
 
-    // Skills
     if (content?.skills?.length) {
       addBlank();
-      addLine(formatHeading("Skills"), true, style.headingSize);
+      lines.push({ text: formatHeading("Skills"), bold: true, size: style.headingSize });
       addSep();
-      for (const wl of wrapText(content.skills.join(template === "modern" ? "  •  " : ",  "), 90)) addLine(wl);
+      addLine(content.skills.join(",  "));
     }
 
-    // Certifications
     if (content?.certifications?.length) {
       addBlank();
-      addLine(formatHeading("Certifications"), true, style.headingSize);
+      lines.push({ text: formatHeading("Certifications"), bold: true, size: style.headingSize });
       addSep();
       for (const cert of content.certifications) {
-        addLine(`• ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`);
+        addLine(`\u2022 ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`);
       }
     }
   }
@@ -358,37 +427,36 @@ function generatePDF(
   return buildPDFBytes(lines, pageWidth, pageHeight, margin, style);
 }
 
-function wrapText(text: string, maxChars: number): string[] {
-  if (!text) return [""];
-  const words = text.split(" ");
-  const result: string[] = [];
-  let currentLine = "";
-  for (const word of words) {
-    if ((currentLine + " " + word).trim().length > maxChars) {
-      if (currentLine) result.push(currentLine);
-      currentLine = word;
-    } else {
-      currentLine = currentLine ? currentLine + " " + word : word;
-    }
-  }
-  if (currentLine) result.push(currentLine);
-  return result.length ? result : [""];
-}
-
 function buildPDFBytes(
-  lines: { text: string; bold?: boolean; size?: number; color?: string; isSep?: string; indent?: number }[],
+  lines: PdfLine[],
   pageWidth: number,
   pageHeight: number,
   margin: number,
   style: TemplateStyle
 ): Uint8Array {
-  const pages: typeof lines[] = [];
-  let currentPage: typeof lines = [];
+  // Paginate
+  const pages: PdfLine[][] = [];
+  let currentPage: PdfLine[] = [];
   let y = pageHeight - margin;
 
   for (const line of lines) {
     const lh = (line.size || style.bodySize) * 1.4;
-    if (y < margin + lh) {
+    if (line.isSep) {
+      if (y < margin + 20) {
+        pages.push(currentPage);
+        currentPage = [];
+        y = pageHeight - margin;
+      }
+      currentPage.push(line);
+      y -= (line.isSep === "double-line" ? 10 : 6);
+      continue;
+    }
+    if (!line.text) {
+      y -= lh * 0.5;
+      currentPage.push(line);
+      continue;
+    }
+    if (y - lh < margin) {
       pages.push(currentPage);
       currentPage = [];
       y = pageHeight - margin;
@@ -398,6 +466,7 @@ function buildPDFBytes(
   }
   if (currentPage.length) pages.push(currentPage);
 
+  // Build PDF objects
   const objects: string[] = [];
   let objCount = 0;
   const addObj = (content: string): number => {
@@ -407,11 +476,9 @@ function buildPDFBytes(
   };
 
   addObj("<< /Type /Catalog /Pages 2 0 R >>");
-  const pagesObjIndex = objects.length;
-  addObj("");
+  const pagesObjIndex = 1; // index in objects array
+  addObj(""); // placeholder for Pages obj
 
-  // Fonts: F1=body, F2=heading bold, F3=body italic (Times)
-  const isTimesBody = style.bodyFont === "Times-Roman";
   addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /${style.bodyFont} /Encoding /WinAnsiEncoding >>`);
   addObj(`<< /Type /Font /Subtype /Type1 /BaseFont /${style.headingFont} /Encoding /WinAnsiEncoding >>`);
 
@@ -439,7 +506,7 @@ function buildPDFBytes(
       }
 
       if (!line.text) {
-        cy -= lh * 0.4;
+        cy -= lh * 0.5;
         continue;
       }
 
@@ -466,23 +533,28 @@ function buildPDFBytes(
   objects[pagesObjIndex] = `2 0 obj\n<< /Type /Pages /Kids [${kids}] /Count ${pageObjIds.length} >>\nendobj`;
 
   const header = "%PDF-1.4\n";
-  let body = "";
+  let bodyStr = "";
   const offsets: number[] = [];
   for (const obj of objects) {
-    offsets.push(header.length + body.length);
-    body += obj + "\n";
+    offsets.push(header.length + bodyStr.length);
+    bodyStr += obj + "\n";
   }
-  const xrefOffset = header.length + body.length;
+  const xrefOffset = header.length + bodyStr.length;
   let xref = `xref\n0 ${objCount + 1}\n0000000000 65535 f \n`;
   for (const offset of offsets) {
     xref += `${offset.toString().padStart(10, "0")} 00000 n \n`;
   }
   const trailer = `trailer\n<< /Size ${objCount + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-  return new TextEncoder().encode(header + body + xref + trailer);
+  return new TextEncoder().encode(header + bodyStr + xref + trailer);
 }
 
 function escapePDF(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)")
+    // Convert bullet to a simple dash for PDF Type1 font compatibility
+    .replace(/\u2022/g, "-");
 }
 
 // ── DOCX Generation ──
@@ -498,11 +570,14 @@ function generateDOCX(
 ): Uint8Array {
   const style = getStyle(template);
   const paragraphs: string[] = [];
-
-  const docxFont = template === "executive" ? "Times New Roman" : "Calibri";
+  const docxFont = "Calibri";
   const accentHex = style.accentColor;
 
-  const p = (text: string, bold = false, size = 22, color?: string, align?: string) => {
+  const headingSize = style.headingSize * 2;
+  const bodySize = style.bodySize * 2;
+  const nameSize = style.nameSize * 2;
+
+  const p = (text: string, bold = false, size = bodySize, color?: string, align?: string) => {
     const colorTag = color ? `<w:color w:val="${color}"/>` : "";
     const rPr = `<w:rPr>${bold ? "<w:b/>" : ""}<w:sz w:val="${size}"/><w:szCs w:val="${size}"/><w:rFonts w:ascii="${docxFont}" w:hAnsi="${docxFont}"/>${colorTag}</w:rPr>`;
     const pPr = align ? `<w:pPr><w:jc w:val="${align}"/></w:pPr>` : "";
@@ -511,94 +586,67 @@ function generateDOCX(
   };
 
   const hr = () => {
-    const borderColor = accentHex;
-    const sz = style.sectionSep === "double-line" ? "6" : "4";
-    paragraphs.push(`<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="${sz}" w:space="1" w:color="${borderColor}"/></w:pBdr></w:pPr></w:p>`);
+    paragraphs.push(`<w:p><w:pPr><w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1" w:color="${accentHex}"/></w:pBdr></w:pPr></w:p>`);
   };
 
-  const formatHeading = (text: string): string => {
-    return style.headingCase === "upper" ? text.toUpperCase() : text;
-  };
+  const formatHeading = (text: string): string =>
+    style.headingCase === "upper" ? text.toUpperCase() : text;
 
-  const headingSize = style.headingSize * 2; // DOCX uses half-points
-  const bodySize = style.bodySize * 2;
-  const nameSize = style.nameSize * 2;
+  const blank = () => paragraphs.push("<w:p/>");
 
   if (isCoverLetter) {
-    const nameAlign = template === "modern" || template === "executive" ? "center" : undefined;
-    p(name, true, nameSize, accentHex, nameAlign);
-
-    // Contact line (single line, matching CV style)
-    const clContactParts: string[] = [];
-    if (profile?.location) clContactParts.push(profile.location);
-    if (profile?.phone) clContactParts.push(profile.phone);
-    if (profile?.email) clContactParts.push(profile.email);
-    const clSep = template === "modern" ? "  •  " : "  |  ";
-    if (clContactParts.length) p(clContactParts.join(clSep), false, bodySize - 2, undefined, nameAlign);
+    // Name
+    p(name, true, nameSize, accentHex);
+    // Contact
+    const parts: string[] = [];
+    if (profile?.location) parts.push(profile.location);
+    if (profile?.phone) parts.push(profile.phone);
+    if (profile?.email) parts.push(profile.email);
+    if (parts.length) p(parts.join("  |  "), false, 18);
     hr();
-    paragraphs.push("<w:p/>");
+    blank();
 
     // Date
     const today = new Date();
     const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
     p(`${monthNames[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`, false, bodySize);
-    paragraphs.push("<w:p/>");
+    blank();
 
     // Subject
     p(`Re: ${jobTitle} at ${company}`, true, headingSize, accentHex);
-    paragraphs.push("<w:p/>");
+    blank();
 
-    // Extract the actual letter text
-    let letterText = "";
-    if (typeof content === "string") {
-      letterText = content;
-    } else if (content?.letter_text) {
-      letterText = content.letter_text;
-    } else if (content?.content && typeof content.content === "string") {
-      letterText = content.content;
-    } else if (content?.content?.letter_text) {
-      letterText = content.content.letter_text;
-    } else {
-      for (const key of Object.keys(content || {})) {
-        const val = content[key];
-        if (typeof val === "string" && val.length > 100 && val.includes("Dear")) {
-          letterText = val;
-          break;
-        }
-      }
-      if (!letterText) letterText = content?.summary || "";
-    }
-
-    // Clean up escaped newlines and split into proper paragraphs
-    letterText = letterText.replace(/\\n/g, "\n");
+    // Letter body
+    const letterText = extractLetterText(content);
     const letterParas = letterText.split(/\n\n+/);
     for (const lp of letterParas) {
       const cleaned = lp.replace(/\n/g, " ").trim();
       if (cleaned) p(cleaned, false, bodySize);
-      else paragraphs.push("<w:p/>");
+      else blank();
     }
+
+    // Sign-off: separate "Sincerely," and name
+    blank();
+    p("Sincerely,", false, bodySize);
+    p(name, true, bodySize);
   } else {
-    // Name - centered for modern/executive
-    const nameAlign = template === "modern" || template === "executive" ? "center" : undefined;
-    p(name, true, nameSize, accentHex, nameAlign);
-
-    if (content?.headline) p(content.headline, false, bodySize + 2, undefined, nameAlign);
-
+    // CV
+    p(name, true, nameSize, accentHex);
+    if (content?.headline) p(content.headline, false, bodySize + 2);
     const contactParts: string[] = [];
-    if (profile?.email) contactParts.push(profile.email);
-    if (profile?.phone) contactParts.push(profile.phone);
     if (profile?.location) contactParts.push(profile.location);
+    if (profile?.phone) contactParts.push(profile.phone);
+    if (profile?.email) contactParts.push(profile.email);
     if (profile?.linkedin_url) contactParts.push(profile.linkedin_url);
-    const sep = template === "modern" ? "  •  " : "  |  ";
-    if (contactParts.length) p(contactParts.join(sep), false, bodySize - 2, undefined, nameAlign);
+    if (contactParts.length) p(contactParts.join("  |  "), false, 18);
     hr();
 
     if (content?.summary) {
-      paragraphs.push("<w:p/>");
+      blank();
       p(formatHeading("Professional Summary"), true, headingSize, accentHex);
       if (style.sectionSep !== "space") hr();
       p(content.summary, false, bodySize);
-      paragraphs.push("<w:p/>");
+      blank();
     }
 
     if (content?.experience?.length) {
@@ -609,12 +657,13 @@ function generateDOCX(
         const dateLine = `${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || ""}`;
         if (exp.location) p(`${exp.location}  |  ${dateLine}`, false, bodySize - 4);
         else p(dateLine, false, bodySize - 4);
+        if (exp.description) p(exp.description, false, bodySize - 2);
         if (exp.highlights?.length) {
           for (const h of exp.highlights) {
             p(`• ${h}`, false, bodySize - 2);
           }
         }
-        paragraphs.push("<w:p/>");
+        blank();
       }
     }
 
@@ -624,19 +673,17 @@ function generateDOCX(
       for (const edu of content.education) {
         p(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, bodySize);
         p(edu.institution || "", false, bodySize - 2);
-        const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
-        if (dateParts.length) p(dateParts.join(" – "), false, bodySize - 4);
-        if (edu.gpa) p(`GPA: ${edu.gpa}`, false, bodySize - 4);
-        paragraphs.push("<w:p/>");
+        const dp = [edu.start_date, edu.end_date].filter(Boolean);
+        if (dp.length) p(dp.join(" – "), false, bodySize - 4);
+        blank();
       }
     }
 
     if (content?.skills?.length) {
       p(formatHeading("Skills"), true, headingSize, accentHex);
       if (style.sectionSep !== "space") hr();
-      const skillSep = template === "modern" ? "  •  " : ",  ";
-      p(content.skills.join(skillSep), false, bodySize);
-      paragraphs.push("<w:p/>");
+      p(content.skills.join(",  "), false, bodySize);
+      blank();
     }
 
     if (content?.certifications?.length) {
@@ -712,15 +759,11 @@ function buildZIP(files: { name: string; data: Uint8Array }[]): Uint8Array {
     const hv = new DataView(header.buffer);
     hv.setUint32(0, 0x04034b50, true);
     hv.setUint16(4, 20, true);
-    hv.setUint16(6, 0, true);
     hv.setUint16(8, 0, true);
-    hv.setUint16(10, 0, true);
-    hv.setUint16(12, 0, true);
     hv.setUint32(14, crc, true);
     hv.setUint32(18, file.data.length, true);
     hv.setUint32(22, file.data.length, true);
     hv.setUint16(26, nameBytes.length, true);
-    hv.setUint16(28, 0, true);
     header.set(nameBytes, 30);
     entries.push({ name: nameBytes, data: file.data, offset });
     chunks.push(header, file.data);
@@ -734,20 +777,11 @@ function buildZIP(files: { name: string; data: Uint8Array }[]): Uint8Array {
     cv.setUint32(0, 0x02014b50, true);
     cv.setUint16(4, 20, true);
     cv.setUint16(6, 20, true);
-    cv.setUint16(8, 0, true);
-    cv.setUint16(10, 0, true);
-    cv.setUint16(12, 0, true);
-    cv.setUint16(14, 0, true);
     const crc = crc32(entry.data);
     cv.setUint32(16, crc, true);
     cv.setUint32(20, entry.data.length, true);
     cv.setUint32(24, entry.data.length, true);
     cv.setUint16(28, entry.name.length, true);
-    cv.setUint16(30, 0, true);
-    cv.setUint16(32, 0, true);
-    cv.setUint16(34, 0, true);
-    cv.setUint16(36, 0, true);
-    cv.setUint32(38, 0, true);
     cv.setUint32(42, entry.offset, true);
     cd.set(entry.name, 46);
     chunks.push(cd);
@@ -757,13 +791,10 @@ function buildZIP(files: { name: string; data: Uint8Array }[]): Uint8Array {
   const eocd = new Uint8Array(22);
   const ev = new DataView(eocd.buffer);
   ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(4, 0, true);
-  ev.setUint16(6, 0, true);
   ev.setUint16(8, entries.length, true);
   ev.setUint16(10, entries.length, true);
   ev.setUint32(12, offset - centralStart, true);
   ev.setUint32(16, centralStart, true);
-  ev.setUint16(20, 0, true);
   chunks.push(eocd);
 
   const totalLen = chunks.reduce((s, c) => s + c.length, 0);
