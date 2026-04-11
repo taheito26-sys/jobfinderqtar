@@ -33,6 +33,7 @@ import StealthApplyPanel from '@/components/StealthApplyPanel';
 import AutoApplyQueue from '@/components/AutoApplyQueue';
 
 type ViewMode = 'list' | 'grid';
+type SubTab = 'all' | 'remote' | 'onsite' | string; // string for country names
 
 const JobFeed = () => {
   const { user } = useAuth();
@@ -52,6 +53,7 @@ const JobFeed = () => {
   const [gccSearching, setGccSearching] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+  const [subTab, setSubTab] = useState<SubTab>('all');
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const emptyJob = { title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' };
   const [multiJobs, setMultiJobs] = useState([{ ...emptyJob }]);
@@ -354,6 +356,52 @@ const JobFeed = () => {
     const applyRec = Object.values(matches).filter((m: any) => m.recommendation === 'apply').length;
     return { total: jobs.length, scored, avgScore, withSalary, applyRec, unscored: jobs.length - scored };
   }, [jobs, matches]);
+
+  // Sub-tab: extract countries from job locations
+  const countryTabs = useMemo(() => {
+    const countryMap = new Map<string, number>();
+    let remoteCount = 0;
+    let onsiteCount = 0;
+    
+    const knownCountries = ['Qatar', 'Saudi Arabia', 'UAE', 'Kuwait', 'Bahrain', 'Oman', 'United States', 'United Kingdom', 'India', 'Canada', 'Germany', 'Australia', 'Egypt', 'Jordan', 'Lebanon', 'Pakistan', 'Turkey', 'Singapore', 'Netherlands', 'France', 'Ireland'];
+    
+    for (const job of jobs) {
+      if (job.remote_type === 'remote') remoteCount++;
+      if (job.remote_type === 'onsite' || job.remote_type === 'hybrid') onsiteCount++;
+      
+      const loc = (job.location || '').toLowerCase();
+      for (const country of knownCountries) {
+        if (loc.includes(country.toLowerCase())) {
+          countryMap.set(country, (countryMap.get(country) || 0) + 1);
+          break;
+        }
+      }
+      // Also check for common city→country mappings
+      if (loc.includes('dubai') || loc.includes('abu dhabi')) countryMap.set('UAE', (countryMap.get('UAE') || 0) + 1);
+      else if (loc.includes('doha')) countryMap.set('Qatar', (countryMap.get('Qatar') || 0) + 1);
+      else if (loc.includes('riyadh') || loc.includes('jeddah')) countryMap.set('Saudi Arabia', (countryMap.get('Saudi Arabia') || 0) + 1);
+    }
+    
+    const sorted = [...countryMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+    return { countries: sorted, remoteCount, onsiteCount };
+  }, [jobs]);
+
+  // Apply sub-tab filter on top of existing filters
+  const subTabFiltered = useMemo(() => {
+    if (subTab === 'all') return filtered;
+    if (subTab === 'remote') return filtered.filter(j => j.remote_type === 'remote');
+    if (subTab === 'onsite') return filtered.filter(j => j.remote_type === 'onsite' || j.remote_type === 'hybrid');
+    // Country sub-tab
+    return filtered.filter(j => {
+      const loc = (j.location || '').toLowerCase();
+      const country = subTab.toLowerCase();
+      if (loc.includes(country)) return true;
+      if (subTab === 'UAE' && (loc.includes('dubai') || loc.includes('abu dhabi'))) return true;
+      if (subTab === 'Qatar' && loc.includes('doha')) return true;
+      if (subTab === 'Saudi Arabia' && (loc.includes('riyadh') || loc.includes('jeddah'))) return true;
+      return false;
+    });
+  }, [filtered, subTab]);
 
   const formatSalary = (min?: number, max?: number, currency?: string) => {
     const fmt = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}K` : n.toString();
@@ -661,11 +709,63 @@ const JobFeed = () => {
         </CollapsibleContent>
       </Collapsible>
 
+      {/* Sub-tabs: All / Remote / On-site / Countries */}
+      {!loading && jobs.length > 0 && (
+        <div className="flex items-center gap-1 mb-3 overflow-x-auto pb-1 scrollbar-none">
+          <button
+            onClick={() => setSubTab('all')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+              subTab === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            All ({filtered.length})
+          </button>
+          {countryTabs.remoteCount > 0 && (
+            <button
+              onClick={() => setSubTab('remote')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1 ${
+                subTab === 'remote' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Globe className="w-3 h-3" /> Remote ({countryTabs.remoteCount})
+            </button>
+          )}
+          {countryTabs.onsiteCount > 0 && (
+            <button
+              onClick={() => setSubTab('onsite')}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1 ${
+                subTab === 'onsite' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Building2 className="w-3 h-3" /> On-site ({countryTabs.onsiteCount})
+            </button>
+          )}
+          {countryTabs.countries.length > 0 && (
+            <Separator orientation="vertical" className="h-5 mx-1" />
+          )}
+          {countryTabs.countries.map(([country, count]) => {
+            const flags: Record<string, string> = { 'Qatar': '🇶🇦', 'Saudi Arabia': '🇸🇦', 'UAE': '🇦🇪', 'Kuwait': '🇰🇼', 'Bahrain': '🇧🇭', 'Oman': '🇴🇲', 'United States': '🇺🇸', 'United Kingdom': '🇬🇧', 'India': '🇮🇳', 'Canada': '🇨🇦', 'Germany': '🇩🇪', 'Australia': '🇦🇺', 'Egypt': '🇪🇬', 'Jordan': '🇯🇴', 'Lebanon': '🇱🇧', 'Pakistan': '🇵🇰', 'Turkey': '🇹🇷', 'Singapore': '🇸🇬', 'Netherlands': '🇳🇱', 'France': '🇫🇷', 'Ireland': '🇮🇪' };
+            return (
+              <button
+                key={country}
+                onClick={() => setSubTab(subTab === country ? 'all' : country)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors flex items-center gap-1 ${
+                  subTab === country ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <span>{flags[country] || '🌍'}</span> {country} ({count})
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* Results bar */}
       {!loading && (
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs text-muted-foreground">
-            {filtered.length} of {jobs.length} jobs
+            {subTabFiltered.length} of {jobs.length} jobs
+            {subTab !== 'all' && ` • ${subTab === 'remote' ? 'Remote' : subTab === 'onsite' ? 'On-site/Hybrid' : subTab}`}
             {activeFilterCount > 0 && ` • ${activeFilterCount} filter${activeFilterCount > 1 ? 's' : ''} active`}
           </p>
           {selectedJobs.size > 0 && (
@@ -706,17 +806,17 @@ const JobFeed = () => {
           <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
           <p className="text-muted-foreground">Loading jobs...</p>
         </div>
-      ) : filtered.length === 0 ? (
+      ) : subTabFiltered.length === 0 ? (
         <EmptyState
           icon={Rss}
-          title={search || activeFilterCount > 0 ? 'No matching jobs' : 'No jobs tracked yet'}
-          description={search || activeFilterCount > 0 ? 'Try different filters or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
-          actionLabel={search || activeFilterCount > 0 ? 'Clear Filters' : 'Add Job'}
-          onAction={search || activeFilterCount > 0 ? clearAllFilters : () => setAddOpen(true)}
+          title={search || activeFilterCount > 0 || subTab !== 'all' ? 'No matching jobs' : 'No jobs tracked yet'}
+          description={search || activeFilterCount > 0 || subTab !== 'all' ? 'Try different filters, tabs, or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
+          actionLabel={search || activeFilterCount > 0 || subTab !== 'all' ? 'Clear Filters' : 'Add Job'}
+          onAction={search || activeFilterCount > 0 ? clearAllFilters : subTab !== 'all' ? () => setSubTab('all') : () => setAddOpen(true)}
         />
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map(job => (
+          {subTabFiltered.map(job => (
             <JobCardGrid
               key={job.id}
               job={job}
@@ -731,7 +831,7 @@ const JobFeed = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {filtered.map(job => (
+          {subTabFiltered.map(job => (
             <JobCardList
               key={job.id}
               job={job}
