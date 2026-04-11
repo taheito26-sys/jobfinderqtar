@@ -302,39 +302,57 @@ const JobFeed = () => {
             <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
               <Globe className="w-4 h-4 mr-1.5" />Import
             </Button>
-            <Dialog open={addOpen} onOpenChange={setAddOpen}>
+            <Dialog open={addOpen} onOpenChange={(open) => { setAddOpen(open); if (!open) setMultiJobs([{ ...emptyJob }]); }}>
               <DialogTrigger asChild>
                 <Button size="sm"><Plus className="w-4 h-4 mr-1.5" />Add Job</Button>
               </DialogTrigger>
-              <DialogContent>
-                <DialogHeader><DialogTitle>Add Job Manually</DialogTitle></DialogHeader>
+              <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                <DialogHeader><DialogTitle>Add Jobs Manually</DialogTitle></DialogHeader>
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2"><Label>Title *</Label><Input value={newJob.title} onChange={e => setNewJob({ ...newJob, title: e.target.value })} /></div>
-                    <div className="space-y-2"><Label>Company *</Label><Input value={newJob.company} onChange={e => setNewJob({ ...newJob, company: e.target.value })} /></div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2"><Label>Location</Label><Input value={newJob.location} onChange={e => setNewJob({ ...newJob, location: e.target.value })} /></div>
-                    <div className="space-y-2">
-                      <Label>Remote Type</Label>
-                      <Select value={newJob.remote_type} onValueChange={v => setNewJob({ ...newJob, remote_type: v })}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="remote">Remote</SelectItem>
-                          <SelectItem value="hybrid">Hybrid</SelectItem>
-                          <SelectItem value="onsite">On-site</SelectItem>
-                          <SelectItem value="unknown">Unknown</SelectItem>
-                        </SelectContent>
-                      </Select>
+                  {multiJobs.map((job, idx) => (
+                    <div key={idx} className="space-y-3 p-4 border border-border rounded-lg relative">
+                      {multiJobs.length > 1 && (
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs font-medium text-muted-foreground">Job #{idx + 1}</span>
+                          <Button variant="ghost" size="sm" className="h-6 w-6 p-0 text-destructive" onClick={() => removeJobRow(idx)}>
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      )}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label className="text-xs">Title *</Label><Input value={job.title} onChange={e => updateMultiJob(idx, 'title', e.target.value)} placeholder="Software Engineer" /></div>
+                        <div className="space-y-1"><Label className="text-xs">Company *</Label><Input value={job.company} onChange={e => updateMultiJob(idx, 'company', e.target.value)} placeholder="Acme Inc" /></div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label className="text-xs">Location</Label><Input value={job.location} onChange={e => updateMultiJob(idx, 'location', e.target.value)} /></div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Remote Type</Label>
+                          <Select value={job.remote_type} onValueChange={v => updateMultiJob(idx, 'remote_type', v)}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="remote">Remote</SelectItem>
+                              <SelectItem value="hybrid">Hybrid</SelectItem>
+                              <SelectItem value="onsite">On-site</SelectItem>
+                              <SelectItem value="unknown">Unknown</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1"><Label className="text-xs">Min Salary</Label><Input type="number" value={job.salary_min} onChange={e => updateMultiJob(idx, 'salary_min', e.target.value)} placeholder="80000" /></div>
+                        <div className="space-y-1"><Label className="text-xs">Max Salary</Label><Input type="number" value={job.salary_max} onChange={e => updateMultiJob(idx, 'salary_max', e.target.value)} placeholder="120000" /></div>
+                      </div>
+                      <div className="space-y-1"><Label className="text-xs">Apply URL</Label><Input value={job.apply_url} onChange={e => updateMultiJob(idx, 'apply_url', e.target.value)} /></div>
+                      <div className="space-y-1"><Label className="text-xs">Description</Label><Textarea value={job.description} onChange={e => updateMultiJob(idx, 'description', e.target.value)} rows={3} /></div>
                     </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2"><Label>Min Salary</Label><Input type="number" value={newJob.salary_min} onChange={e => setNewJob({ ...newJob, salary_min: e.target.value })} placeholder="e.g. 80000" /></div>
-                    <div className="space-y-2"><Label>Max Salary</Label><Input type="number" value={newJob.salary_max} onChange={e => setNewJob({ ...newJob, salary_max: e.target.value })} placeholder="e.g. 120000" /></div>
-                  </div>
-                  <div className="space-y-2"><Label>Apply URL</Label><Input value={newJob.apply_url} onChange={e => setNewJob({ ...newJob, apply_url: e.target.value })} /></div>
-                  <div className="space-y-2"><Label>Description</Label><Textarea value={newJob.description} onChange={e => setNewJob({ ...newJob, description: e.target.value })} rows={6} /></div>
-                  <Button onClick={addJob} className="w-full">Add Job</Button>
+                  ))}
+                  <Button variant="outline" onClick={addJobRow} className="w-full gap-1.5">
+                    <Plus className="w-4 h-4" />Add Another Job
+                  </Button>
+                  <Separator />
+                  <Button onClick={addJobs} className="w-full" disabled={addingJobs || multiJobs.every(j => !j.title.trim() || !j.company.trim())}>
+                    {addingJobs ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Adding...</> : `Add ${multiJobs.filter(j => j.title.trim() && j.company.trim()).length} Job${multiJobs.filter(j => j.title.trim() && j.company.trim()).length !== 1 ? 's' : ''}`}
+                  </Button>
                 </div>
               </DialogContent>
             </Dialog>
