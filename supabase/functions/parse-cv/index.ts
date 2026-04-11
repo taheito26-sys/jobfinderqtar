@@ -187,6 +187,15 @@ ABSOLUTE RULES — VIOLATION = FAILURE:
           { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64}` } }
         ];
       }
+    } else if (isDocx(doc.mime_type || "", doc.file_name)) {
+      const docxText = await extractDocxText(fileData);
+      console.log(`[parse-cv] Extracted ${docxText.length} chars from DOCX`);
+      if (docxText.length < 50) {
+        return new Response(JSON.stringify({ error: "Could not extract text from DOCX file" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      userContent = `Parse this CV/resume and extract all professional data:\n\n${docxText.substring(0, 20000)}`;
     } else {
       const fileText = await fileData.text();
       userContent = `Parse this CV/resume and extract all professional data:\n\n${fileText.substring(0, 20000)}`;
