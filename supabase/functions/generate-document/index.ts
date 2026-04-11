@@ -23,7 +23,7 @@ serve(async (req) => {
     if (authError || !user) throw new Error("Unauthorized");
 
     const body = await req.json();
-    const { document_id, format = "pdf", parsed_content, template = "classic", document_type } = body;
+    const { document_id, format = "pdf", parsed_content, template = "classic", document_type, job_title: reqJobTitle, company: reqCompany } = body;
 
     if (!document_id && !parsed_content) throw new Error("document_id or parsed_content is required");
     if (!["pdf", "docx"].includes(format)) throw new Error("format must be 'pdf' or 'docx'");
@@ -51,8 +51,8 @@ serve(async (req) => {
 
     const rawContent = doc.content as any;
     const isCoverLetter = doc.document_type === "cover_letter";
-    const jobTitle = (doc as any).jobs?.title || "Position";
-    const company = (doc as any).jobs?.company || "Company";
+    const jobTitle = reqJobTitle || (doc as any).jobs?.title || "Position";
+    const company = reqCompany || (doc as any).jobs?.company || "Company";
 
     const formatDate = (d: string | null | undefined): string => {
       if (!d) return "";
