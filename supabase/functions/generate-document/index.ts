@@ -152,6 +152,7 @@ function generatePDF(
   } else {
     // CV
     lines.push(`__BOLD__${name}__ENDBOLD__`);
+    if (content?.headline) lines.push(content.headline);
     const contactParts: string[] = [];
     if (profile?.email) contactParts.push(profile.email);
     if (profile?.phone) contactParts.push(profile.phone);
@@ -390,6 +391,7 @@ function generateDOCX(
     }
   } else {
     p(name, true, 32);
+    if (content?.headline) p(content.headline, false, 22);
     const contactParts: string[] = [];
     if (profile?.email) contactParts.push(profile.email);
     if (profile?.phone) contactParts.push(profile.phone);
