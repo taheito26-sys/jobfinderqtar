@@ -205,9 +205,28 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
     });
   } catch (error: any) {
     console.error("tailor-cv error:", error);
-    const status = error.status || 400;
+    const is429 = error.status === 429 || error.message?.includes("Rate limited");
+    const is402 = error.status === 402 || error.message?.includes("Credits");
+    
+    if (is429) {
+      return new Response(JSON.stringify({ 
+        error: "AI provider is rate limited. Please wait 30-60 seconds and try again.",
+        retryable: true,
+      }), {
+        status: 429, headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": "30" },
+      });
+    }
+    if (is402) {
+      return new Response(JSON.stringify({ 
+        error: "AI credits exhausted. Add funds in Settings → Workspace → Usage.",
+        retryable: false,
+      }), {
+        status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    
     return new Response(JSON.stringify({ error: error.message || "Unknown error" }), {
-      status, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
 });
