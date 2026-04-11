@@ -444,9 +444,8 @@ function generateDOCX(
       for (const edu of content.education) {
         p(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, 22);
         p(edu.institution || "", false, 20);
-        if (edu.start_date || edu.end_date) {
-          p(`${edu.start_date || ""} – ${edu.end_date || "Present"}`, false, 18);
-        }
+        const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
+        if (dateParts.length) p(dateParts.join(" – "), false, 18);
         if (edu.gpa) p(`GPA: ${edu.gpa}`, false, 18);
         paragraphs.push("<w:p/>");
       }
