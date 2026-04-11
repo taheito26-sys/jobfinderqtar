@@ -9,7 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette } from 'lucide-react';
+import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, CheckCircle2, Eye, History, Palette, Download } from 'lucide-react';
+import CVTemplateSelector from '@/components/CVTemplateSelector';
 
 const CVLibrary = () => {
   const { user } = useAuth();
@@ -24,6 +25,7 @@ const CVLibrary = () => {
   const [previewDoc, setPreviewDoc] = useState<any>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedTemplate, setSelectedTemplate] = useState('classic');
+  const [templateDoc, setTemplateDoc] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -302,9 +304,14 @@ const CVLibrary = () => {
                     {parsing === doc.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
                   </Button>
                   {hasParsedContent(doc) && (
-                    <Button variant="ghost" size="sm" onClick={() => setImportDoc(doc)} title="Import to Profile">
-                      <UserPlus className="w-4 h-4" />
-                    </Button>
+                    <>
+                      <Button variant="ghost" size="sm" onClick={() => setImportDoc(doc)} title="Import to Profile">
+                        <UserPlus className="w-4 h-4" />
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setTemplateDoc(doc)} title="Generate Styled CV">
+                        <Palette className="w-4 h-4" />
+                      </Button>
+                    </>
                   )}
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteDoc(doc.id, doc.file_path)}>
                     <Trash2 className="w-4 h-4" />
@@ -361,31 +368,15 @@ const CVLibrary = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Template Selection */}
-      <Dialog open={false}>
-        <DialogContent>
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><Palette className="w-5 h-5" />Choose CV Template</DialogTitle></DialogHeader>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { id: 'classic', label: 'Classic', desc: 'Clean, traditional layout' },
-              { id: 'modern', label: 'Modern', desc: 'Contemporary two-column' },
-              { id: 'minimal', label: 'Minimal', desc: 'Simple, ATS-friendly' },
-            ].map(t => (
-              <button
-                key={t.id}
-                onClick={() => setSelectedTemplate(t.id)}
-                className={`p-4 rounded-lg border-2 text-left transition-all ${selectedTemplate === t.id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50'}`}
-              >
-                <div className="w-full h-20 bg-muted rounded mb-2 flex items-center justify-center">
-                  <FileText className="w-8 h-8 text-muted-foreground/50" />
-                </div>
-                <p className="text-sm font-medium">{t.label}</p>
-                <p className="text-xs text-muted-foreground">{t.desc}</p>
-              </button>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Template Selector */}
+      {user && (
+        <CVTemplateSelector
+          open={!!templateDoc}
+          onOpenChange={(open) => { if (!open) setTemplateDoc(null); }}
+          document={templateDoc}
+          userId={user.id}
+        />
+      )}
 
       {/* Import Confirmation Dialog */}
       <Dialog open={!!importDoc} onOpenChange={() => setImportDoc(null)}>
