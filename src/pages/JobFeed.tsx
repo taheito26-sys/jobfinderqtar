@@ -309,8 +309,11 @@ const JobFeed = () => {
 
   const filtered = useMemo(() => jobs
     .filter(j => {
+      // Hide archived jobs unless explicitly viewing them
+      if (statusFilter !== 'archived' && j.status === 'archived') return false;
+      if (statusFilter === 'archived' && j.status !== 'archived') return false;
       const matchesSearch = !search || j.title.toLowerCase().includes(search.toLowerCase()) || j.company.toLowerCase().includes(search.toLowerCase()) || (j.location || '').toLowerCase().includes(search.toLowerCase());
-      const matchesStatus = statusFilter === 'all' || j.status === statusFilter;
+      const matchesStatus = statusFilter === 'all' || statusFilter === 'archived' || j.status === statusFilter;
       const matchesCompany = companyFilter === 'all' || j.company === companyFilter;
       const matchesRemote = remoteFilter === 'all' || j.remote_type === remoteFilter;
       const locPlain = locationFilter.replace(/^.\s/, '');
