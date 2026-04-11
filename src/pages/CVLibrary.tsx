@@ -423,6 +423,28 @@ const CVLibrary = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Inline Content Editor */}
+      <CVContentEditor
+        open={!!editorDoc}
+        onOpenChange={(open) => { if (!open) setEditorDoc(null); }}
+        document={editorDoc}
+        onSaved={(updated) => setDocuments(prev => prev.map(d => d.id === updated.id ? updated : d))}
+      />
+
+      {/* Version History */}
+      {user && (
+        <CVVersionHistory
+          open={!!versionDoc}
+          onOpenChange={(open) => { if (!open) setVersionDoc(null); }}
+          document={versionDoc}
+          userId={user.id}
+          onVersionRestored={(updated) => {
+            setDocuments(prev => prev.map(d => d.id === updated.id ? updated : d));
+            setVersionDoc(updated);
+          }}
+        />
+      )}
     </div>
   );
 };
