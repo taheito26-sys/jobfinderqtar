@@ -38,13 +38,13 @@ interface ATSFix {
 const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreCheckerProps) => {
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<ATSResult | null>(null);
+  const [applying, setApplying] = useState<string | null>(null);
 
   const runCheck = async () => {
     setChecking(true);
     setResult(null);
 
     try {
-      // Get user's primary CV
       const { data: docs } = await supabase.from('master_documents')
         .select('*').eq('user_id', userId).eq('is_primary', true).limit(1);
 
@@ -57,16 +57,16 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
       const cv = docs[0];
       const parsedContent = (cv.parsed_content || {}) as Record<string, any>;
 
-      // Get user skills
       const { data: skills } = await supabase.from('profile_skills')
         .select('skill_name').eq('user_id', userId);
       const userSkills = (skills || []).map(s => s.skill_name.toLowerCase());
 
-      // Get employment
       const { data: employment } = await supabase.from('employment_history')
         .select('title, description, achievements').eq('user_id', userId);
 
-      // Build user text corpus
+      const { data: education } = await supabase.from('education_history')
+        .select('id').eq('user_id', userId);
+
       const userText = [
         parsedContent.summary || '',
         parsedContent.headline || '',
@@ -78,11 +78,9 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
         ]),
       ].join(' ').toLowerCase();
 
-      // Extract keywords from requirements
       const requirements = Array.isArray(jobRequirements) ? jobRequirements : [];
       const reqKeywords = requirements.map(r => (typeof r === 'string' ? r : String(r)).toLowerCase().trim()).filter(Boolean);
 
-      // Calculate matches
       const matched: string[] = [];
       const missing: string[] = [];
 
@@ -98,35 +96,64 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
         ? Math.round((matched.length / reqKeywords.length) * 100)
         : 50;
 
-      // Format score — check for key sections
       const hasSummary = !!(parsedContent.summary && parsedContent.summary.length > 20);
       const hasSkills = userSkills.length >= 3;
       const hasExperience = (employment || []).length >= 1;
+      const hasEducation = (education || []).length >= 1;
       const formatChecks = [hasSummary, hasSkills, hasExperience];
       const formatScore = Math.round((formatChecks.filter(Boolean).length / formatChecks.length) * 100);
 
-      // Sections score
       const sections = ['summary', 'skills', 'employment', 'education'];
       const presentSections = sections.filter(s => {
         if (s === 'summary') return hasSummary;
         if (s === 'skills') return hasSkills;
         if (s === 'employment') return hasExperience;
-        if (s === 'education') return true; // assume present
+        if (s === 'education') return hasEducation;
         return false;
       });
       const sectionsScore = Math.round((presentSections.length / sections.length) * 100);
 
       const overallScore = Math.round(keywordMatch * 0.5 + formatScore * 0.25 + sectionsScore * 0.25);
 
-      // Generate suggestions
-      const suggestions: string[] = [];
-      if (missing.length > 0) {
-        suggestions.push(`Add these missing keywords to your CV: ${missing.slice(0, 5).join(', ')}`);
+      // Build actionable fixes
+      const fixes: ATSFix[] = [];
+
+      // Fix: add missing keywords as skills
+      missing.forEach((kw, i) => {
+        fixes.push({
+          id: `skill-${i}`,
+          label: `Add "${kw}" to skills`,
+          description: `This keyword from the job requirements is missing from your profile. Adding it as a skill will improve your keyword match score.`,
+          type: 'add_skill',
+          data: { skill_name: kw },
+        });
+      });
+
+      // Fix: add summary if missing
+      if (!hasSummary) {
+        fixes.push({
+          id: 'summary',
+          label: 'Add a professional summary',
+          description: 'A summary section of 2-3 sentences helps ATS systems understand your profile and improves format score.',
+          type: 'add_summary',
+        });
       }
-      if (!hasSummary) suggestions.push('Add a professional summary of at least 2-3 sentences');
-      if (userSkills.length < 5) suggestions.push('Add more relevant skills to your profile');
-      if (keywordMatch < 60) suggestions.push('Your CV needs more alignment with this job\'s requirements');
-      if (overallScore >= 80) suggestions.push('Great match! Your CV is well-aligned with this position');
+
+      // Fix: add experience if missing
+      if (!hasExperience) {
+        fixes.push({
+          id: 'experience',
+          label: 'Add work experience',
+          description: 'At least one employment entry is needed for a complete CV structure.',
+          type: 'add_experience',
+        });
+      }
+
+      const suggestions: string[] = [];
+      if (overallScore >= 80) suggestions.push('Great match! Your CV is well-aligned with this position.');
+      if (missing.length > 0 && overallScore < 80) suggestions.push(`${missing.length} required keyword(s) are missing — use the fix buttons below to add them.`);
+      if (!hasSummary) suggestions.push('Add a professional summary to improve format score.');
+      if (userSkills.length < 5) suggestions.push('Consider adding more relevant skills to your profile.');
 
       setResult({
         overall_score: overallScore,
@@ -136,6 +163,7 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
         matched_keywords: matched,
         missing_keywords: missing,
         suggestions,
+        fixes,
       });
 
       toast.success(`ATS Score: ${overallScore}%`);
@@ -144,6 +172,59 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
     }
 
     setChecking(false);
+  };
+
+  const applyFix = async (fix: ATSFix) => {
+    setApplying(fix.id);
+    try {
+      if (fix.type === 'add_skill' && fix.data?.skill_name) {
+        const { error } = await supabase.from('profile_skills').insert({
+          user_id: userId,
+          skill_name: fix.data.skill_name,
+          proficiency: 'intermediate',
+          is_primary: false,
+        });
+        if (error) throw error;
+        toast.success(`Added "${fix.data.skill_name}" to your skills`);
+      }
+
+      // Mark fix as applied
+      setResult(prev => prev ? {
+        ...prev,
+        fixes: prev.fixes.map(f => f.id === fix.id ? { ...f, applied: true } : f),
+      } : prev);
+    } catch (err: any) {
+      toast.error('Fix failed: ' + (err.message || 'Unknown error'));
+    }
+    setApplying(null);
+  };
+
+  const applyAllSkillFixes = async () => {
+    if (!result) return;
+    const skillFixes = result.fixes.filter(f => f.type === 'add_skill' && !f.applied);
+    if (skillFixes.length === 0) return;
+
+    setApplying('all');
+    try {
+      const inserts = skillFixes.map(f => ({
+        user_id: userId,
+        skill_name: f.data.skill_name,
+        proficiency: 'intermediate' as const,
+        is_primary: false,
+      }));
+
+      const { error } = await supabase.from('profile_skills').insert(inserts);
+      if (error) throw error;
+
+      toast.success(`Added ${skillFixes.length} missing keywords to your skills`);
+      setResult(prev => prev ? {
+        ...prev,
+        fixes: prev.fixes.map(f => f.type === 'add_skill' ? { ...f, applied: true } : f),
+      } : prev);
+    } catch (err: any) {
+      toast.error('Bulk fix failed: ' + (err.message || 'Unknown error'));
+    }
+    setApplying(null);
   };
 
   const getScoreColor = (score: number) => {
