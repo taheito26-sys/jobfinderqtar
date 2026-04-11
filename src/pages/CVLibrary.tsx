@@ -250,8 +250,6 @@ const CVLibrary = () => {
           })));
         }
       }
-        );
-      }
 
       await supabase.from('activity_log').insert({
         user_id: user.id, action: 'imported_cv_to_profile',
