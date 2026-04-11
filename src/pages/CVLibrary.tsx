@@ -287,7 +287,14 @@ const CVLibrary = () => {
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-2 mt-4">
+                <div className="flex gap-2 mt-4 flex-wrap">
+                  <Button variant="ghost" size="sm" onClick={async () => {
+                    setPreviewDoc(doc);
+                    const { data } = await supabase.storage.from('documents').createSignedUrl(doc.file_path, 300);
+                    setPreviewUrl(data?.signedUrl || null);
+                  }} title="Preview">
+                    <Eye className="w-4 h-4" />
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={() => togglePrimary(doc.id)} title={doc.is_primary ? 'Unset primary' : 'Set as primary'}>
                     {doc.is_primary ? <StarOff className="w-4 h-4" /> : <Star className="w-4 h-4" />}
                   </Button>
@@ -302,6 +309,10 @@ const CVLibrary = () => {
                   <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteDoc(doc.id, doc.file_path)}>
                     <Trash2 className="w-4 h-4" />
                   </Button>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2 text-[10px] text-muted-foreground">
+                  <History className="w-3 h-3" />v{doc.version || 1}
+                  {doc.file_size && <span>• {Math.round(doc.file_size / 1024)}KB</span>}
                 </div>
               </CardContent>
             </Card>
