@@ -68,6 +68,7 @@ const JobFeed = () => {
   const [sourceFilter, setSourceFilter] = useState('all');
   const [hasSalary, setHasSalary] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
+  const [employmentTypeFilter, setEmploymentTypeFilter] = useState('all');
 
   useEffect(() => {
     if (!user) return;
