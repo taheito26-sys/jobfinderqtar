@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { FileSearch, Loader2, CheckCircle2, AlertCircle, XCircle, Sparkles } from 'lucide-react';
+import { FileSearch, Loader2, CheckCircle2, AlertCircle, XCircle, Sparkles, Wrench, Plus } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
