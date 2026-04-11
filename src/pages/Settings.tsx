@@ -140,14 +140,49 @@ const SettingsPage = () => {
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2"><Plug className="w-4 h-4" />AI Integration</CardTitle>
+            <CardDescription>Choose the AI provider for CV parsing, job scoring, and tailoring</CardDescription>
           </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground mb-4">
-              AI-powered features (CV parsing, job scoring, tailoring) use the Lovable AI Gateway.
-            </p>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>AI Provider</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={prefs['ai_provider'] || 'lovable'}
+                onChange={e => setPref('ai_provider', e.target.value)}
+              >
+                <option value="lovable">Lovable AI (Gemini via Gateway)</option>
+                <option value="anthropic">Claude (Anthropic)</option>
+                <option value="openai">ChatGPT (OpenAI)</option>
+                <option value="gemini">Gemini (Google Direct)</option>
+              </select>
+            </div>
+
+            {prefs['ai_provider'] && prefs['ai_provider'] !== 'lovable' && (
+              <div className="space-y-2">
+                <Label>API Key</Label>
+                <Input
+                  type="password"
+                  placeholder={`Enter your ${prefs['ai_provider'] === 'anthropic' ? 'Anthropic' : prefs['ai_provider'] === 'openai' ? 'OpenAI' : 'Google'} API key`}
+                  value={prefs['ai_api_key'] || ''}
+                  onChange={e => setPref('ai_api_key', e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {prefs['ai_provider'] === 'anthropic' && 'Get your key from console.anthropic.com'}
+                  {prefs['ai_provider'] === 'openai' && 'Get your key from platform.openai.com'}
+                  {prefs['ai_provider'] === 'gemini' && 'Get your key from aistudio.google.com'}
+                </p>
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-score-excellent" />
-              <span className="text-sm text-foreground">Lovable AI Gateway — Connected</span>
+              <div className={`w-2 h-2 rounded-full ${(!prefs['ai_provider'] || prefs['ai_provider'] === 'lovable') ? 'bg-score-excellent' : prefs['ai_api_key'] ? 'bg-score-excellent' : 'bg-warning'}`} />
+              <span className="text-sm text-foreground">
+                {(!prefs['ai_provider'] || prefs['ai_provider'] === 'lovable')
+                  ? 'Lovable AI Gateway — Connected'
+                  : prefs['ai_api_key']
+                    ? `${prefs['ai_provider'] === 'anthropic' ? 'Claude' : prefs['ai_provider'] === 'openai' ? 'ChatGPT' : 'Gemini'} — Key configured`
+                    : 'API key required'}
+              </span>
             </div>
           </CardContent>
         </Card>
