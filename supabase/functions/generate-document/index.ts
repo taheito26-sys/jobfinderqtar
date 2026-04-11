@@ -410,7 +410,8 @@ function generateDOCX(
       hr();
       for (const exp of content.experience) {
         p(`${exp.title} — ${exp.company}`, true, 22);
-        p(`${exp.start_date} – ${exp.is_current ? "Present" : exp.end_date || "N/A"}`, false, 20);
+        if (exp.location) p(exp.location, false, 18);
+        p(`${exp.start_date || ""} – ${exp.is_current ? "Present" : exp.end_date || "N/A"}`, false, 20);
         if (exp.highlights?.length) {
           for (const h of exp.highlights) {
             p(`• ${h}`, false, 20);
@@ -420,10 +421,32 @@ function generateDOCX(
       }
     }
 
+    if (content?.education?.length) {
+      p("EDUCATION", true, 24);
+      hr();
+      for (const edu of content.education) {
+        p(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, 22);
+        p(edu.institution || "", false, 20);
+        if (edu.start_date || edu.end_date) {
+          p(`${edu.start_date || ""} – ${edu.end_date || "Present"}`, false, 18);
+        }
+        if (edu.gpa) p(`GPA: ${edu.gpa}`, false, 18);
+        paragraphs.push("<w:p/>");
+      }
+    }
+
     if (content?.skills?.length) {
       p("SKILLS", true, 24);
       hr();
       p(content.skills.join(", "));
+    }
+
+    if (content?.certifications?.length) {
+      p("CERTIFICATIONS", true, 24);
+      hr();
+      for (const cert of content.certifications) {
+        p(`• ${cert.name}${cert.issuing_organization ? ` — ${cert.issuing_organization}` : ""}`, false, 20);
+      }
     }
   }
 
