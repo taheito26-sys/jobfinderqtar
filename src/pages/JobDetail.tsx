@@ -96,18 +96,24 @@ const JobDetail = () => {
         body: { job_id: id, document_type: docType },
       });
       if (error) throw error;
-      if (data?.error) {
-        if (data.error.includes('Profile not found') || data.error.includes('profile')) {
+      if (data?.fallback || (data?.error && !data?.content)) {
+        if (data?.error?.includes('Profile not found') || data?.error?.includes('profile')) {
           toast({
             title: 'Profile is empty',
             description: 'Please complete your profile first. Go to Profile → "Extract from CV" to auto-fill from your uploaded CV.',
             variant: 'destructive',
             duration: 8000,
           });
-          setter(false);
-          return;
+        } else {
+          toast({
+            title: 'Temporarily unavailable',
+            description: data?.error || 'AI provider is busy. Please wait 30-60 seconds and try again.',
+            variant: 'destructive',
+            duration: 6000,
+          });
         }
-        throw new Error(data.error);
+        setter(false);
+        return;
       }
       await logEvent(docType === 'cv' ? 'cv_tailored' : 'cover_letter_generated', { job_id: id });
       toast({ title: docType === 'cv' ? 'CV tailored!' : 'Cover letter generated!', description: 'View it in Tailoring Review.' });
