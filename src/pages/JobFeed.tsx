@@ -28,6 +28,7 @@ const JobFeed = () => {
   const [sortBy, setSortBy] = useState('newest');
   const [addOpen, setAddOpen] = useState(false);
   const [batchScoring, setBatchScoring] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [newJob, setNewJob] = useState({ title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' });
 
   useEffect(() => {
