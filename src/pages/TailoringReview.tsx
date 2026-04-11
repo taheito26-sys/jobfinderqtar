@@ -7,27 +7,42 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Textarea } from '@/components/ui/textarea';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
-import { GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X, FileText, Mail, Download, Loader2 } from 'lucide-react';
+import {
+  GitCompare, CheckCircle2, AlertTriangle, Eye, ThumbsUp, ThumbsDown, X,
+  FileText, Mail, Download, Loader2, MoreVertical, Copy, Trash2, RefreshCw,
+  Pencil, CheckCheck, ExternalLink
+} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 const TailoringReview = () => {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [documents, setDocuments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<any>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [retailoring, setRetailoring] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'cv' | 'cover_letter'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'approved' | 'rejected' | 'needs_revision'>('all');
+  const [editingContent, setEditingContent] = useState<string | null>(null);
+  const [editText, setEditText] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    supabase.from('tailored_documents').select('*, jobs(title, company)').eq('user_id', user.id)
+    supabase.from('tailored_documents').select('*, jobs(id, title, company)').eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .then(({ data }) => { setDocuments(data ?? []); setLoading(false); });
   }, [user]);
 
-  const filtered = filter === 'all' ? documents : documents.filter(d => d.document_type === filter);
+  const filtered = documents
+    .filter(d => filter === 'all' || d.document_type === filter)
+    .filter(d => statusFilter === 'all' || d.approval_status === statusFilter);
 
   const updateApproval = async (id: string, status: string) => {
     const updates: any = { approval_status: status };
@@ -39,17 +54,26 @@ const TailoringReview = () => {
     } else {
       setDocuments(documents.map(d => d.id === id ? { ...d, ...updates } : d));
       if (selected?.id === id) setSelected({ ...selected, ...updates });
-      toast({ title: status === 'approved' ? 'Document approved' : 'Document rejected' });
+      toast({ title: status === 'approved' ? 'Document approved ✓' : status === 'rejected' ? 'Document rejected' : 'Status updated' });
 
       if (user) {
         await supabase.from('activity_log').insert({
-          user_id: user.id,
-          action: `${status}_document`,
-          entity_type: 'tailored_document',
-          entity_id: id,
+          user_id: user.id, action: `${status}_document`, entity_type: 'tailored_document', entity_id: id,
         });
       }
     }
+  };
+
+  const bulkApprove = async () => {
+    const pendingDocs = filtered.filter(d => d.approval_status === 'pending' && !(d.unsupported_claims as any[])?.length);
+    if (!pendingDocs.length) {
+      toast({ title: 'Nothing to approve', description: 'No pending documents without flags.' });
+      return;
+    }
+    for (const doc of pendingDocs) {
+      await updateApproval(doc.id, 'approved');
+    }
+    toast({ title: `${pendingDocs.length} documents approved` });
   };
 
   const downloadDocument = async (docId: string, format: 'pdf' | 'docx') => {
@@ -60,8 +84,6 @@ const TailoringReview = () => {
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
-
-      // The response is a blob
       const blob = data instanceof Blob ? data : new Blob([data]);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -78,6 +100,89 @@ const TailoringReview = () => {
     setDownloading(null);
   };
 
+  const reTailor = async (doc: any) => {
+    if (!doc.jobs?.id) {
+      toast({ title: 'Cannot re-tailor', description: 'Job reference missing.', variant: 'destructive' });
+      return;
+    }
+    setRetailoring(doc.id);
+    try {
+      const { data, error } = await supabase.functions.invoke('tailor-cv', {
+        body: { job_id: doc.jobs.id, document_type: doc.document_type },
+      });
+      if (error) throw error;
+      if (data?.error || data?.fallback) {
+        toast({ title: 'AI busy', description: data.error || 'Rate limited, try again shortly.', variant: 'destructive' });
+        return;
+      }
+      toast({ title: 'New version created!', description: 'A fresh tailored document has been generated.' });
+      // Refresh list
+      const { data: refreshed } = await supabase.from('tailored_documents').select('*, jobs(id, title, company)').eq('user_id', user!.id).order('created_at', { ascending: false });
+      setDocuments(refreshed ?? []);
+    } catch (err: any) {
+      toast({ title: 'Re-tailor failed', description: err.message, variant: 'destructive' });
+    }
+    setRetailoring(null);
+  };
+
+  const copyToClipboard = async (doc: any) => {
+    let text = '';
+    const content = doc.content;
+    if (doc.document_type === 'cover_letter') {
+      text = typeof content === 'string' ? content : content.letter_text || content.content || JSON.stringify(content, null, 2);
+    } else {
+      const parts: string[] = [];
+      if (content.summary) parts.push(`SUMMARY\n${content.summary}`);
+      if (content.experience?.length) {
+        parts.push('EXPERIENCE');
+        content.experience.forEach((exp: any) => {
+          parts.push(`${exp.title} at ${exp.company} (${exp.start_date} — ${exp.is_current ? 'Present' : exp.end_date || 'N/A'})`);
+          exp.highlights?.forEach((h: string) => parts.push(`  • ${h}`));
+        });
+      }
+      if (content.skills?.length) parts.push(`\nSKILLS\n${content.skills.join(', ')}`);
+      text = parts.join('\n');
+    }
+    await navigator.clipboard.writeText(text);
+    toast({ title: 'Copied to clipboard' });
+  };
+
+  const deleteDocument = async (id: string) => {
+    const { error } = await supabase.from('tailored_documents').delete().eq('id', id);
+    if (error) {
+      toast({ title: 'Delete failed', description: error.message, variant: 'destructive' });
+    } else {
+      setDocuments(documents.filter(d => d.id !== id));
+      if (selected?.id === id) setSelected(null);
+      toast({ title: 'Document deleted' });
+    }
+    setDeleteConfirm(null);
+  };
+
+  const saveEditedContent = async () => {
+    if (!editingContent) return;
+    try {
+      const parsed = JSON.parse(editText);
+      const { error } = await supabase.from('tailored_documents').update({ content: parsed }).eq('id', editingContent);
+      if (error) throw error;
+      setDocuments(documents.map(d => d.id === editingContent ? { ...d, content: parsed } : d));
+      if (selected?.id === editingContent) setSelected({ ...selected, content: parsed });
+      toast({ title: 'Content updated' });
+      setEditingContent(null);
+    } catch (err: any) {
+      toast({ title: 'Save failed', description: err.message?.includes('JSON') ? 'Invalid JSON format' : err.message, variant: 'destructive' });
+    }
+  };
+
+  const openEditDialog = (doc: any) => {
+    setEditingContent(doc.id);
+    setEditText(JSON.stringify(doc.content, null, 2));
+  };
+
+  const goToJob = (doc: any) => {
+    if (doc.jobs?.id) navigate(`/jobs/${doc.jobs.id}`);
+  };
+
   const statusVariant = (s: string) => {
     switch (s) {
       case 'approved': return 'default' as const;
@@ -89,6 +194,7 @@ const TailoringReview = () => {
 
   const cvCount = documents.filter(d => d.document_type === 'cv').length;
   const clCount = documents.filter(d => d.document_type === 'cover_letter').length;
+  const pendingCount = filtered.filter(d => d.approval_status === 'pending' && !(d.unsupported_claims as any[])?.length).length;
 
   return (
     <div className="animate-fade-in">
@@ -98,17 +204,34 @@ const TailoringReview = () => {
       />
 
       {!loading && documents.length > 0 && (
-        <Tabs value={filter} onValueChange={(v) => setFilter(v as any)} className="mb-4">
-          <TabsList>
-            <TabsTrigger value="all">All ({documents.length})</TabsTrigger>
-            <TabsTrigger value="cv" className="flex items-center gap-1.5">
-              <FileText className="w-3.5 h-3.5" />CVs ({cvCount})
-            </TabsTrigger>
-            <TabsTrigger value="cover_letter" className="flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5" />Cover Letters ({clCount})
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+          <div className="flex flex-wrap gap-2">
+            <Tabs value={filter} onValueChange={(v) => setFilter(v as any)}>
+              <TabsList>
+                <TabsTrigger value="all">All ({documents.length})</TabsTrigger>
+                <TabsTrigger value="cv" className="flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5" />CVs ({cvCount})
+                </TabsTrigger>
+                <TabsTrigger value="cover_letter" className="flex items-center gap-1.5">
+                  <Mail className="w-3.5 h-3.5" />Letters ({clCount})
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <Tabs value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)}>
+              <TabsList>
+                <TabsTrigger value="all">Any Status</TabsTrigger>
+                <TabsTrigger value="pending">Pending</TabsTrigger>
+                <TabsTrigger value="approved">Approved</TabsTrigger>
+                <TabsTrigger value="needs_revision">Flagged</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+          {pendingCount > 0 && (
+            <Button size="sm" variant="outline" onClick={bulkApprove} className="flex items-center gap-1.5">
+              <CheckCheck className="w-4 h-4" />Approve All Clean ({pendingCount})
+            </Button>
+          )}
+        </div>
       )}
 
       {loading ? (
@@ -130,10 +253,10 @@ const TailoringReview = () => {
                     : <FileText className="w-5 h-5 text-muted-foreground" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-medium text-foreground">
+                  <h3 className="font-medium text-foreground truncate">
                     {doc.document_type === 'cv' ? 'Tailored CV' : 'Cover Letter'} — {doc.jobs?.title}
                   </h3>
-                  <p className="text-sm text-muted-foreground">{doc.jobs?.company} • v{doc.version}</p>
+                  <p className="text-sm text-muted-foreground">{doc.jobs?.company || 'Unknown Company'} • v{doc.version}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   {(doc.unsupported_claims as any[])?.length > 0 && (
@@ -142,14 +265,56 @@ const TailoringReview = () => {
                     </Badge>
                   )}
                   <Badge variant={statusVariant(doc.approval_status)} className="capitalize text-xs">
-                    {doc.approval_status.replace('_', ' ')}
+                    {doc.approval_status?.replace('_', ' ') || 'pending'}
                   </Badge>
-                  <Button variant="ghost" size="sm" onClick={() => downloadDocument(doc.id, 'pdf')} disabled={downloading === `${doc.id}-pdf`}>
+
+                  {/* Quick actions */}
+                  <Button variant="ghost" size="sm" onClick={() => copyToClipboard(doc)} title="Copy to clipboard">
+                    <Copy className="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => downloadDocument(doc.id, 'pdf')} disabled={downloading === `${doc.id}-pdf`} title="Download PDF">
                     {downloading === `${doc.id}-pdf` ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                   </Button>
-                  <Button variant="ghost" size="sm" onClick={() => setSelected(doc)}>
+                  <Button variant="ghost" size="sm" onClick={() => setSelected(doc)} title="Preview">
                     <Eye className="w-4 h-4" />
                   </Button>
+
+                  {/* More actions dropdown */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm"><MoreVertical className="w-4 h-4" /></Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => goToJob(doc)}>
+                        <ExternalLink className="w-4 h-4 mr-2" />View Job
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => reTailor(doc)} disabled={retailoring === doc.id}>
+                        <RefreshCw className={`w-4 h-4 mr-2 ${retailoring === doc.id ? 'animate-spin' : ''}`} />
+                        {retailoring === doc.id ? 'Re-tailoring...' : 'Re-tailor (New Version)'}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => openEditDialog(doc)}>
+                        <Pencil className="w-4 h-4 mr-2" />Edit Content
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => downloadDocument(doc.id, 'docx')} disabled={downloading === `${doc.id}-docx`}>
+                        <Download className="w-4 h-4 mr-2" />Download DOCX
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      {doc.approval_status !== 'approved' && !(doc.unsupported_claims as any[])?.length && (
+                        <DropdownMenuItem onClick={() => updateApproval(doc.id, 'approved')}>
+                          <ThumbsUp className="w-4 h-4 mr-2" />Approve
+                        </DropdownMenuItem>
+                      )}
+                      {doc.approval_status !== 'rejected' && (
+                        <DropdownMenuItem onClick={() => updateApproval(doc.id, 'rejected')}>
+                          <ThumbsDown className="w-4 h-4 mr-2" />Reject
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setDeleteConfirm(doc.id)} className="text-destructive focus:text-destructive">
+                        <Trash2 className="w-4 h-4 mr-2" />Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </div>
               </CardContent>
             </Card>
@@ -172,11 +337,28 @@ const TailoringReview = () => {
           {selected && (
             <div className="space-y-6">
               {/* Status & Actions */}
-              <div className="flex items-center justify-between">
-                <Badge variant={statusVariant(selected.approval_status)} className="capitalize">
-                  {selected.approval_status.replace('_', ' ')}
-                </Badge>
-                <div className="flex gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Badge variant={statusVariant(selected.approval_status)} className="capitalize">
+                    {selected.approval_status?.replace('_', ' ')}
+                  </Badge>
+                  <span className="text-xs text-muted-foreground">
+                    v{selected.version} • {new Date(selected.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => copyToClipboard(selected)}>
+                    <Copy className="w-4 h-4 mr-1" />Copy
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => openEditDialog(selected)}>
+                    <Pencil className="w-4 h-4 mr-1" />Edit
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => reTailor(selected)} disabled={retailoring === selected.id}>
+                    {retailoring === selected.id
+                      ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                      : <RefreshCw className="w-4 h-4 mr-1" />}
+                    Re-tailor
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => downloadDocument(selected.id, 'pdf')} disabled={downloading === `${selected.id}-pdf`}>
                     {downloading === `${selected.id}-pdf` ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Download className="w-4 h-4 mr-1" />}PDF
                   </Button>
@@ -184,11 +366,7 @@ const TailoringReview = () => {
                     {downloading === `${selected.id}-docx` ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Download className="w-4 h-4 mr-1" />}DOCX
                   </Button>
                   {selected.approval_status !== 'approved' && (
-                    <Button
-                      size="sm"
-                      onClick={() => updateApproval(selected.id, 'approved')}
-                      disabled={(selected.unsupported_claims as any[])?.length > 0}
-                    >
+                    <Button size="sm" onClick={() => updateApproval(selected.id, 'approved')} disabled={(selected.unsupported_claims as any[])?.length > 0}>
                       <ThumbsUp className="w-4 h-4 mr-1" />Approve
                     </Button>
                   )}
@@ -261,6 +439,39 @@ const TailoringReview = () => {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Edit Content Dialog */}
+      <Dialog open={!!editingContent} onOpenChange={() => setEditingContent(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Pencil className="w-5 h-5" />Edit Document Content</DialogTitle>
+          </DialogHeader>
+          <Textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            className="min-h-[400px] font-mono text-xs"
+            placeholder="JSON content..."
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingContent(null)}>Cancel</Button>
+            <Button onClick={saveEditedContent}>Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive"><Trash2 className="w-5 h-5" />Delete Document</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">This action cannot be undone. The tailored document will be permanently removed.</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirm(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => deleteConfirm && deleteDocument(deleteConfirm)}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
@@ -272,9 +483,7 @@ const CoverLetterView = ({ content }: { content: any }) => {
     <Card>
       <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Mail className="w-4 h-4" />Cover Letter</CardTitle></CardHeader>
       <CardContent>
-        <div className="prose prose-sm max-w-none text-foreground whitespace-pre-wrap leading-relaxed">
-          {text}
-        </div>
+        <div className="prose prose-sm max-w-none text-foreground whitespace-pre-wrap leading-relaxed">{text}</div>
       </CardContent>
     </Card>
   );
