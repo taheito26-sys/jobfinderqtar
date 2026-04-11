@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, X, Save, Briefcase, GraduationCap, Award, Star, Pencil, Trash2, Zap, FileText, Loader2, Sparkles } from 'lucide-react';
+import { Plus, X, Save, Briefcase, GraduationCap, Award, Star, Pencil, Trash2, Zap, FileText, Loader2, Sparkles, Linkedin } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import EmptyState from '@/components/EmptyState';
 import EmploymentModal from '@/components/EmploymentModal';
