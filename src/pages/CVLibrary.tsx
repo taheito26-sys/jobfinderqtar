@@ -260,6 +260,9 @@ const CVLibrary = () => {
                 {Array.isArray(importDoc.parsed_content.certifications) && importDoc.parsed_content.certifications.length > 0 && (
                   <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-score-excellent" /><span>{importDoc.parsed_content.certifications.length} certifications</span></div>
                 )}
+                {Array.isArray(importDoc.parsed_content.desired_titles) && importDoc.parsed_content.desired_titles.length > 0 && (
+                  <div className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-score-excellent" /><span>{importDoc.parsed_content.desired_titles.length} desired job titles for auto-search</span></div>
+                )}
               </div>
               <p className="text-xs text-muted-foreground">Existing skills won't be duplicated. New employment/education entries will be added.</p>
               <Button onClick={importToProfile} className="w-full" disabled={importing}>
