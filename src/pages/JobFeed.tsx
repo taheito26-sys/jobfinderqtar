@@ -195,6 +195,22 @@ const JobFeed = () => {
     toast.success('Job deleted');
   };
 
+  const archiveJob = async (e: React.MouseEvent, jobId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await supabase.from('jobs').update({ status: 'archived' }).eq('id', jobId);
+    setJobs(jobs.map(j => j.id === jobId ? { ...j, status: 'archived' } : j));
+    toast.success('Job archived');
+  };
+
+  const unarchiveJob = async (e: React.MouseEvent, jobId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await supabase.from('jobs').update({ status: 'active' }).eq('id', jobId);
+    setJobs(jobs.map(j => j.id === jobId ? { ...j, status: 'active' } : j));
+    toast.success('Job restored');
+  };
+
   const bulkDelete = async () => {
     if (selectedJobs.size === 0) return;
     for (const jobId of selectedJobs) {
