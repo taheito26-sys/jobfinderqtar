@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
 - title (job title only, not company)
 - company (company name)
 - location (city/country)
-- remote_type ("remote"|"hybrid"|"onsite"|"unknown")
+- remote_type ("remote"|"hybrid"|"onsite"|"unknown") IMPORTANT: If a job has a physical location (city/country) and does NOT explicitly say "remote" or "work from home", set to "onsite". Only use "remote" if explicitly stated. A job in "Doha, Qatar" is "onsite" unless it says otherwise.
 - employment_type ("full-time"|"part-time"|"contract"|"internship")
 - seniority_level (e.g. "Senior", "Mid", "Junior", "")
 - salary_min (number or null)
