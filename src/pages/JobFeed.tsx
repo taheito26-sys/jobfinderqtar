@@ -872,6 +872,7 @@ const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary, u
           <div className="flex items-center justify-between pt-1 border-t border-border/50">
             <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
             <div className="flex items-center gap-1.5">
+              {userId && <QuickApplyButton job={job} userId={userId} size="sm" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100" />}
               {match && <ScoreBadge score={match.overall_score} />}
               {match?.recommendation && (
                 <Badge variant={match.recommendation === 'apply' ? 'default' : match.recommendation === 'skip' ? 'destructive' : 'secondary'} className="text-[10px] capitalize h-5">
