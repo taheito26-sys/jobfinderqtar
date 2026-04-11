@@ -5,11 +5,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
-import { Loader2, Globe, Check, Linkedin } from 'lucide-react';
+import { Loader2, Globe, Check, Linkedin, ClipboardPaste } from 'lucide-react';
 
 interface ImportJobDialogProps {
   open: boolean;
@@ -18,37 +19,45 @@ interface ImportJobDialogProps {
 }
 
 const QATAR_JOB_BOARDS = [
-  { name: 'Indeed Qatar', url: 'https://qa.indeed.com', color: 'bg-blue-100 text-blue-800' },
-  { name: 'Bayt.com', url: 'https://www.bayt.com', color: 'bg-green-100 text-green-800' },
-  { name: 'GulfTalent', url: 'https://www.gulftalent.com', color: 'bg-orange-100 text-orange-800' },
-  { name: 'Naukrigulf', url: 'https://www.naukrigulf.com', color: 'bg-red-100 text-red-800' },
-  { name: 'LinkedIn', url: 'https://www.linkedin.com/jobs', color: 'bg-sky-100 text-sky-800' },
-  { name: 'Tanqeeb', url: 'https://www.tanqeeb.com', color: 'bg-purple-100 text-purple-800' },
+  { name: 'Indeed Qatar', url: 'https://qa.indeed.com' },
+  { name: 'Bayt.com', url: 'https://www.bayt.com' },
+  { name: 'GulfTalent', url: 'https://www.gulftalent.com' },
+  { name: 'Naukrigulf', url: 'https://www.naukrigulf.com' },
+  { name: 'LinkedIn', url: 'https://www.linkedin.com/jobs' },
+  { name: 'Tanqeeb', url: 'https://www.tanqeeb.com' },
 ];
 
 function isLinkedInUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.hostname.includes('linkedin.com');
-  } catch {
-    return false;
-  }
+  try { return new URL(url).hostname.includes('linkedin.com'); } catch { return false; }
 }
 
 function normalizeLinkedInJobUrl(url: string): string {
   try {
     const u = new URL(url);
-    // Extract job ID from various LinkedIn URL formats
     const jobIdMatch = u.pathname.match(/\/jobs\/view\/(\d+)/) ||
                        u.pathname.match(/\/jobs\/(\d+)/) ||
                        url.match(/currentJobId=(\d+)/);
-    if (jobIdMatch) {
-      return `https://www.linkedin.com/jobs/view/${jobIdMatch[1]}/`;
-    }
+    if (jobIdMatch) return `https://www.linkedin.com/jobs/view/${jobIdMatch[1]}/`;
     return url;
-  } catch {
-    return url;
+  } catch { return url; }
+}
+
+/** Scrape via edge function with manual description support */
+async function scrapeOrParse(url: string, manualDescription?: string): Promise<{ success: boolean; job?: ScrapedJob; error?: string; linkedinLoginRequired?: boolean }> {
+  const { data, error } = await supabase.functions.invoke('scrape-job-url', {
+    body: manualDescription ? { url, manualDescription } : { url },
+  });
+
+  if (error) {
+    return { success: false, error: error.message };
   }
+  if (data?.error === 'LINKEDIN_LOGIN_REQUIRED') {
+    return { success: false, error: data.message, linkedinLoginRequired: true };
+  }
+  if (data?.error) {
+    return { success: false, error: data.error };
+  }
+  return { success: true, job: data.job };
 }
 
 const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProps) => {
@@ -59,6 +68,8 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
   const [scraped, setScraped] = useState<ScrapedJob | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editedJob, setEditedJob] = useState<ScrapedJob | null>(null);
+  const [activeTab, setActiveTab] = useState('url');
+  const [pastedDescription, setPastedDescription] = useState('');
 
   const isLinkedin = isLinkedInUrl(url);
 
@@ -68,22 +79,43 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
     setScraped(null);
 
     const normalizedUrl = isLinkedin ? normalizeLinkedInJobUrl(url) : url;
-    const result = await scrapeJobUrl(normalizedUrl);
+    const result = await scrapeOrParse(normalizedUrl);
 
-    if (result.success && result.job) {
+    if (result.linkedinLoginRequired) {
+      setActiveTab('paste');
+      toast({ title: 'LinkedIn login required', description: 'Paste the job description below instead.', variant: 'destructive' });
+    } else if (result.success && result.job) {
       setScraped(result.job);
       setEditedJob(result.job);
       toast({ title: 'Job extracted!', description: `Found: ${result.job.title} at ${result.job.company}` });
     } else {
       toast({ title: 'Scrape failed', description: result.error || 'Could not extract job data', variant: 'destructive' });
     }
+    setScraping(false);
+  };
 
+  const handlePasteExtract = async () => {
+    if (!pastedDescription.trim() || pastedDescription.trim().length < 50) {
+      toast({ title: 'Too short', description: 'Please paste a complete job description (at least 50 characters).', variant: 'destructive' });
+      return;
+    }
+    setScraping(true);
+    setScraped(null);
+
+    const result = await scrapeOrParse(url || '', pastedDescription.trim());
+
+    if (result.success && result.job) {
+      setScraped(result.job);
+      setEditedJob(result.job);
+      toast({ title: 'Job extracted!', description: `Found: ${result.job.title} at ${result.job.company}` });
+    } else {
+      toast({ title: 'Extraction failed', description: result.error || 'Could not parse job data', variant: 'destructive' });
+    }
     setScraping(false);
   };
 
   const handleSave = async () => {
     if (!user || !editedJob) return;
-
     const sourceUrl = url.trim();
     const isLI = isLinkedInUrl(sourceUrl);
 
@@ -106,14 +138,10 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
     }).select().single();
 
     if (data) {
-      // Log the import event
       await supabase.from('application_events').insert({
-        user_id: user.id,
-        job_id: data.id,
-        event_type: 'job_imported',
+        user_id: user.id, job_id: data.id, event_type: 'job_imported',
         metadata: { source: isLI ? 'linkedin' : 'web', source_url: sourceUrl } as any,
       });
-
       onJobAdded(data);
       onOpenChange(false);
       resetState();
@@ -129,6 +157,8 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
     setScraped(null);
     setEditedJob(null);
     setEditMode(false);
+    setPastedDescription('');
+    setActiveTab('url');
   };
 
   return (
@@ -137,14 +167,14 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Globe className="w-5 h-5" />
-            Import Job from URL
+            Import Job
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
           {/* Supported boards */}
           <div>
-            <p className="text-xs text-muted-foreground mb-2">Paste a job listing URL from any site. Works best with:</p>
+            <p className="text-xs text-muted-foreground mb-2">Import from any job board:</p>
             <div className="flex flex-wrap gap-1.5">
               {QATAR_JOB_BOARDS.map(board => (
                 <Badge key={board.name} variant="outline" className="text-xs cursor-pointer hover:opacity-80"
@@ -155,30 +185,61 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
             </div>
           </div>
 
-          {/* LinkedIn notice */}
-          {isLinkedin && (
-            <div className="flex items-start gap-2 p-3 rounded-lg border border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
-              <Linkedin className="w-4 h-4 text-[#0A66C2] mt-0.5 flex-shrink-0" />
-              <div className="text-xs text-muted-foreground">
-                <p className="font-medium text-foreground">LinkedIn job detected</p>
-                <p>This job will be tagged as "Imported from LinkedIn". You'll apply manually through the original listing — this app does not submit applications on your behalf.</p>
-              </div>
-            </div>
-          )}
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="url" className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5" /> From URL
+              </TabsTrigger>
+              <TabsTrigger value="paste" className="flex items-center gap-1.5">
+                <ClipboardPaste className="w-3.5 h-3.5" /> Paste Description
+              </TabsTrigger>
+            </TabsList>
 
-          {/* URL input */}
-          <div className="flex gap-2">
-            <Input
-              placeholder="https://linkedin.com/jobs/view/... or any job URL"
-              value={url}
-              onChange={e => setUrl(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleScrape()}
-              disabled={scraping}
-            />
-            <Button onClick={handleScrape} disabled={scraping || !url.trim()}>
-              {scraping ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Extract'}
-            </Button>
-          </div>
+            <TabsContent value="url" className="space-y-3 mt-3">
+              {isLinkedin && (
+                <div className="flex items-start gap-2 p-3 rounded-lg border border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
+                  <Linkedin className="w-4 h-4 text-[#0A66C2] mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">LinkedIn job detected.</span> If auto-extract fails, switch to "Paste Description" and copy the job details from LinkedIn.
+                  </p>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  placeholder="https://linkedin.com/jobs/view/... or any job URL"
+                  value={url} onChange={e => setUrl(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleScrape()}
+                  disabled={scraping}
+                />
+                <Button onClick={handleScrape} disabled={scraping || !url.trim()}>
+                  {scraping ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Extract'}
+                </Button>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="paste" className="space-y-3 mt-3">
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">
+                  Copy the full job posting from the website and paste it here. AI will extract the structured data.
+                </Label>
+                <Input
+                  placeholder="Original job URL (optional)"
+                  value={url} onChange={e => setUrl(e.target.value)}
+                  className="text-sm"
+                />
+                <Textarea
+                  placeholder="Paste the full job description here...&#10;&#10;e.g. Job Title: Senior Engineer&#10;Company: Acme Corp&#10;Location: Doha, Qatar&#10;..."
+                  value={pastedDescription}
+                  onChange={e => setPastedDescription(e.target.value)}
+                  rows={8}
+                  disabled={scraping}
+                />
+                <Button onClick={handlePasteExtract} disabled={scraping || pastedDescription.trim().length < 50} className="w-full">
+                  {scraping ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Extracting...</> : 'Extract Job Data'}
+                </Button>
+              </div>
+            </TabsContent>
+          </Tabs>
 
           {/* Results */}
           {scraped && editedJob && (
