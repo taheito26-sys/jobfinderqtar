@@ -61,13 +61,29 @@ serve(async (req) => {
     const jobTitle = (doc as any).jobs?.title || "Position";
     const company = (doc as any).jobs?.company || "Company";
 
+    // Format ISO dates to readable format
+    const formatDate = (d: string | null | undefined): string => {
+      if (!d) return "";
+      try {
+        const date = new Date(d);
+        if (isNaN(date.getTime())) return d;
+        const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        return `${months[date.getMonth()]} ${date.getFullYear()}`;
+      } catch { return d; }
+    };
+
     // Normalize field names: parsed_content uses "employment", generator expects "experience"
-    // Also map "achievements" to "highlights" per entry
     const experience = (rawContent?.experience || rawContent?.employment || []).map((e: any) => ({
       ...e,
       highlights: e.highlights || e.achievements || [],
+      start_date: formatDate(e.start_date),
+      end_date: formatDate(e.end_date),
     }));
-    const education = rawContent?.education || [];
+    const education = (rawContent?.education || []).map((e: any) => ({
+      ...e,
+      start_date: formatDate(e.start_date),
+      end_date: formatDate(e.end_date),
+    }));
     const certifications = rawContent?.certifications || [];
 
     const content = {
@@ -195,9 +211,8 @@ function generatePDF(
         lines.push("");
         lines.push(`__BOLD__${edu.degree}__ENDBOLD__${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`);
         lines.push(edu.institution || "");
-        if (edu.start_date || edu.end_date) {
-          lines.push(`${edu.start_date || ""} – ${edu.end_date || "Present"}`);
-        }
+        const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
+        if (dateParts.length) lines.push(dateParts.join(" – "));
         if (edu.gpa) lines.push(`GPA: ${edu.gpa}`);
       }
     }
@@ -429,9 +444,8 @@ function generateDOCX(
       for (const edu of content.education) {
         p(`${edu.degree}${edu.field_of_study ? ` — ${edu.field_of_study}` : ""}`, true, 22);
         p(edu.institution || "", false, 20);
-        if (edu.start_date || edu.end_date) {
-          p(`${edu.start_date || ""} – ${edu.end_date || "Present"}`, false, 18);
-        }
+        const dateParts = [edu.start_date, edu.end_date].filter(Boolean);
+        if (dateParts.length) p(dateParts.join(" – "), false, 18);
         if (edu.gpa) p(`GPA: ${edu.gpa}`, false, 18);
         paragraphs.push("<w:p/>");
       }
