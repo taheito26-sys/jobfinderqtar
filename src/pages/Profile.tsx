@@ -477,7 +477,7 @@ const Profile = () => {
           </Card>
           <Card>
             <CardHeader><CardTitle className="text-base">Links</CardTitle></CardHeader>
-            <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <CardContent className="grid grid-cols-1 gap-4">
               <div className="space-y-2"><Label>LinkedIn</Label><Input value={profile.linkedin_url} onChange={e => updateField('linkedin_url', e.target.value)} /></div>
               <div className="space-y-2"><Label>GitHub</Label><Input value={profile.github_url} onChange={e => updateField('github_url', e.target.value)} /></div>
               <div className="space-y-2"><Label>Portfolio</Label><Input value={profile.portfolio_url} onChange={e => updateField('portfolio_url', e.target.value)} /></div>
