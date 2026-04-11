@@ -177,6 +177,12 @@ const TailoringReview = () => {
                   {selected.approval_status.replace('_', ' ')}
                 </Badge>
                 <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => downloadDocument(selected.id, 'pdf')} disabled={downloading === `${selected.id}-pdf`}>
+                    {downloading === `${selected.id}-pdf` ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Download className="w-4 h-4 mr-1" />}PDF
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => downloadDocument(selected.id, 'docx')} disabled={downloading === `${selected.id}-docx`}>
+                    {downloading === `${selected.id}-docx` ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Download className="w-4 h-4 mr-1" />}DOCX
+                  </Button>
                   {selected.approval_status !== 'approved' && (
                     <Button
                       size="sm"
