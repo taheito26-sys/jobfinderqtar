@@ -39,7 +39,7 @@ const CVLibrary = () => {
       const p = data.parsed;
       setDocuments(prev => prev.map(d => d.id === doc.id ? { ...d, parsed_content: p } : d));
 
-      // Auto-import to profile
+      // Auto-import to profile — clear existing data first to avoid duplicates
       const profileUpdate: any = {};
       if (p.full_name) profileUpdate.full_name = p.full_name;
       if (p.headline) profileUpdate.headline = p.headline;
@@ -53,11 +53,16 @@ const CVLibrary = () => {
         await supabase.from('profiles_v2').upsert({ user_id: user.id, ...profileUpdate }, { onConflict: 'user_id' });
       }
 
+      // Clear existing profile data to avoid duplicates on re-import
+      await Promise.all([
+        supabase.from('profile_skills').delete().eq('user_id', user.id),
+        supabase.from('employment_history').delete().eq('user_id', user.id),
+        supabase.from('education_history').delete().eq('user_id', user.id),
+        supabase.from('certifications').delete().eq('user_id', user.id),
+      ]);
+
       if (Array.isArray(p.skills) && p.skills.length > 0) {
-        const { data: existing } = await supabase.from('profile_skills').select('skill_name').eq('user_id', user.id);
-        const existingNames = new Set((existing ?? []).map((s: any) => s.skill_name.toLowerCase()));
-        const newSkills = p.skills.filter((s: string) => !existingNames.has(s.toLowerCase()));
-        if (newSkills.length > 0) await supabase.from('profile_skills').insert(newSkills.map((s: string) => ({ user_id: user.id, skill_name: s })));
+        await supabase.from('profile_skills').insert(p.skills.map((s: string) => ({ user_id: user.id, skill_name: s })));
       }
 
       if (Array.isArray(p.employment) && p.employment.length > 0) {
