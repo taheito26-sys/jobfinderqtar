@@ -306,7 +306,11 @@ const Profile = () => {
         title="Profile"
         description="Your canonical professional profile — the source of truth for all tailored documents"
         actions={
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" onClick={() => setLinkedinDialogOpen(true)} disabled={importingLinkedin}>
+              {importingLinkedin ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Linkedin className="w-4 h-4 mr-2" />}
+              {importingLinkedin ? 'Importing...' : 'Import LinkedIn'}
+            </Button>
             <Button variant="outline" onClick={openCvPicker} disabled={extracting}>
               {extracting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
               {extracting ? 'Extracting...' : 'Extract from CV'}
