@@ -45,7 +45,9 @@ const JobFeed = () => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
-  const [newJob, setNewJob] = useState({ title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' });
+  const emptyJob = { title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' };
+  const [multiJobs, setMultiJobs] = useState([{ ...emptyJob }]);
+  const [addingJobs, setAddingJobs] = useState(false);
 
   // Advanced filters
   const [companyFilter, setCompanyFilter] = useState('all');
