@@ -932,7 +932,7 @@ function getJobSource(job: any) {
   return rawData?.source === 'linkedin' || (job.source_url || job.apply_url || '').includes('linkedin.com');
 }
 
-const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, userId }: any) => {
+const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
   const isLI = getJobSource(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
@@ -1003,7 +1003,7 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, u
   );
 };
 
-const JobCardGrid = ({ job, match, selected, onSelect, onDelete, formatSalary, userId }: any) => {
+const JobCardGrid = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
   const isLI = getJobSource(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
