@@ -71,6 +71,86 @@ const Profile = () => {
   const [extracting, setExtracting] = useState(false);
   const [loadingCvs, setLoadingCvs] = useState(false);
 
+  // LinkedIn import state
+  const [linkedinDialogOpen, setLinkedinDialogOpen] = useState(false);
+  const [linkedinUrl, setLinkedinUrl] = useState('');
+  const [importingLinkedin, setImportingLinkedin] = useState(false);
+
+  const importFromLinkedin = async () => {
+    if (!user || !linkedinUrl.trim()) return;
+    setImportingLinkedin(true);
+    setLinkedinDialogOpen(false);
+    toast({ title: 'Importing from LinkedIn...', description: 'Scraping and parsing your LinkedIn profile. This may take a moment.' });
+
+    try {
+      const { data, error } = await supabase.functions.invoke('scrape-linkedin', { body: { linkedin_url: linkedinUrl.trim() } });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (!data?.parsed) throw new Error('No data extracted');
+
+      const p = data.parsed;
+
+      setProfile(prev => ({
+        ...prev,
+        full_name: p.full_name || prev.full_name,
+        headline: p.headline || prev.headline,
+        summary: p.summary || prev.summary,
+        location: p.location || prev.location,
+        country: p.country || prev.country,
+        linkedin_url: p.linkedin_url || prev.linkedin_url,
+        desired_titles: p.desired_titles?.length ? p.desired_titles : prev.desired_titles,
+      }));
+
+      if (p.skills?.length) {
+        const existingNames = new Set(skills.map((s: any) => s.skill_name.toLowerCase()));
+        const newSkills = p.skills.filter((s: string) => !existingNames.has(s.toLowerCase()));
+        if (newSkills.length) {
+          const { data: insertedSkills } = await supabase.from('profile_skills')
+            .insert(newSkills.map((s: string) => ({ user_id: user.id, skill_name: s }))).select();
+          if (insertedSkills) setSkills(prev => [...prev, ...insertedSkills]);
+        }
+      }
+
+      if (p.employment?.length) {
+        for (const emp of p.employment) {
+          const { data: inserted } = await supabase.from('employment_history').insert({
+            user_id: user.id, title: emp.title || 'Untitled', company: emp.company || 'Unknown',
+            location: emp.location || null, start_date: emp.start_date || '2020-01-01',
+            end_date: emp.end_date || null, is_current: emp.is_current || false,
+            description: emp.description || null, achievements: emp.achievements || null,
+          }).select().single();
+          if (inserted) setEmployment(prev => [inserted, ...prev]);
+        }
+      }
+
+      if (p.education?.length) {
+        for (const edu of p.education) {
+          const { data: inserted } = await supabase.from('education_history').insert({
+            user_id: user.id, degree: edu.degree || 'Degree', institution: edu.institution || 'Institution',
+            field_of_study: edu.field_of_study || null, start_date: edu.start_date || null, end_date: edu.end_date || null,
+          }).select().single();
+          if (inserted) setEducation(prev => [inserted, ...prev]);
+        }
+      }
+
+      if (p.certifications?.length) {
+        for (const cert of p.certifications) {
+          const { data: inserted } = await supabase.from('certifications').insert({
+            user_id: user.id, name: cert.name || 'Certification', issuing_organization: cert.issuing_organization || 'Unknown', issue_date: cert.issue_date || null,
+          }).select().single();
+          if (inserted) setCertifications(prev => [inserted, ...prev]);
+        }
+      }
+
+      toast({ title: 'LinkedIn profile imported!', description: 'Review the populated fields and click Save Profile.' });
+    } catch (err: any) {
+      console.error('LinkedIn import error:', err);
+      toast({ title: 'LinkedIn import failed', description: err.message, variant: 'destructive' });
+    } finally {
+      setImportingLinkedin(false);
+    }
+  };
+
   const openCvPicker = async () => {
     if (!user) return;
     setLoadingCvs(true);
