@@ -22,6 +22,7 @@ import {
   Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe, Linkedin,
   Filter, X, ChevronDown, Clock, DollarSign, Briefcase, Star, LayoutGrid, List,
   ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3
+  Plane
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
@@ -42,6 +43,10 @@ const JobFeed = () => {
   const [batchScoring, setBatchScoring] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkSearchOpen, setBulkSearchOpen] = useState(false);
+  const [gccSearchQuery, setGccSearchQuery] = useState('');
+  const [gccSearchCountry, setGccSearchCountry] = useState('');
+  const [gccSearchRemoteOnly, setGccSearchRemoteOnly] = useState(true);
+  const [gccSearching, setGccSearching] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
