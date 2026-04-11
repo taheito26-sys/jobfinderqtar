@@ -815,6 +815,9 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, formatSalary, u
                 {match.recommendation}
               </Badge>
             )}
+            {userId && (
+              <QuickApplyButton job={job} userId={userId} size="sm" className="opacity-0 group-hover:opacity-100 h-7 w-7 p-0" />
+            )}
             <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive h-7 w-7 p-0" onClick={(e) => onDelete(e, job.id)}>
               <Trash2 className="w-3 h-3" />
             </Button>
