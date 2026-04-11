@@ -57,29 +57,7 @@ Deno.serve(async (req) => {
         query: `${query} job listing`,
         limit: Math.min(limit, 20),
         scrapeOptions: {
-          formats: [
-            'markdown',
-            {
-              type: 'json',
-              schema: {
-                type: 'object',
-                properties: {
-                  title: { type: 'string', description: 'Job title' },
-                  company: { type: 'string', description: 'Company name' },
-                  location: { type: 'string', description: 'Job location (city, country)' },
-                  remote_type: { type: 'string', enum: ['remote', 'hybrid', 'onsite', 'unknown'], description: 'Remote work type' },
-                  description: { type: 'string', description: 'Brief job description (first 500 chars)' },
-                  salary_min: { type: 'number', description: 'Minimum salary if mentioned' },
-                  salary_max: { type: 'number', description: 'Maximum salary if mentioned' },
-                  salary_currency: { type: 'string', description: 'Salary currency code' },
-                  employment_type: { type: 'string', enum: ['full-time', 'part-time', 'contract', 'internship'], description: 'Employment type' },
-                  seniority_level: { type: 'string', description: 'Seniority level' },
-                  requirements: { type: 'array', items: { type: 'string' }, description: 'Key requirements (max 5)' },
-                },
-                required: ['title', 'company'],
-              },
-            },
-          ],
+          formats: ['markdown'],
         },
       }),
     });
