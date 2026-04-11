@@ -14,34 +14,25 @@ export interface PipelineConfig {
   primary: ProviderConfig;
 }
 
-const PROVIDER_DEFS: Record<string, (key: string) => Omit<ProviderConfig, "apiKey"> & { apiKey?: string }> = {
-  lovable: () => ({
-    name: "Lovable AI",
-    provider: "lovable",
-    url: "https://ai.gateway.lovable.dev/v1/chat/completions",
-    model: "google/gemini-3-flash-preview",
-  }),
-  gemini: (key: string) => ({
-    name: "Gemini",
-    provider: "gemini",
-    apiKey: key,
-    url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-    model: "gemini-2.5-flash",
-  }),
-  openai: (key: string) => ({
-    name: "OpenAI",
-    provider: "openai",
-    apiKey: key,
-    url: "https://api.openai.com/v1/chat/completions",
-    model: "gpt-4o",
-  }),
-  anthropic: (key: string) => ({
-    name: "Claude",
-    provider: "anthropic",
-    apiKey: key,
-    url: "https://api.anthropic.com/v1/messages",
-    model: "claude-sonnet-4-20250514",
-  }),
+const DEFAULT_MODELS: Record<string, string> = {
+  lovable: "google/gemini-3-flash-preview",
+  gemini: "gemini-2.5-flash",
+  openai: "gpt-4o",
+  anthropic: "claude-sonnet-4-20250514",
+};
+
+const PROVIDER_URLS: Record<string, string> = {
+  lovable: "https://ai.gateway.lovable.dev/v1/chat/completions",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+  openai: "https://api.openai.com/v1/chat/completions",
+  anthropic: "https://api.anthropic.com/v1/messages",
+};
+
+const PROVIDER_NAMES: Record<string, string> = {
+  lovable: "Lovable AI",
+  gemini: "Gemini",
+  openai: "OpenAI",
+  anthropic: "Claude",
 };
 
 /** Fetch pipeline config for a user — determines single or multi-provider mode */
@@ -59,6 +50,8 @@ export async function getPipelineConfig(userId: string): Promise<PipelineConfig>
       "ai_provider", "ai_api_key",
       "ai_pipeline_enabled",
       "ai_key_anthropic", "ai_key_openai", "ai_key_gemini",
+      "ai_model_primary", "ai_model_lovable", "ai_model_openai",
+      "ai_model_gemini", "ai_model_anthropic",
     ]);
 
   const pm: Record<string, string> = {};
@@ -67,45 +60,53 @@ export async function getPipelineConfig(userId: string): Promise<PipelineConfig>
   const lovableKey = Deno.env.get("LOVABLE_API_KEY") || "";
   const pipelineEnabled = pm["ai_pipeline_enabled"] === "true";
 
-  // Build primary provider (backward compatible with existing single-provider setting)
+  // Build primary provider
   const primaryName = pm["ai_provider"] || "lovable";
   const primaryKey = primaryName === "lovable" ? lovableKey : (pm["ai_api_key"] || "");
-  const primary = buildProvider(primaryName, primaryKey, lovableKey);
+  // Use primary model pref, fall back to provider-specific model pref, fall back to default
+  const primaryModel = pm["ai_model_primary"] || pm[`ai_model_${primaryName}`] || DEFAULT_MODELS[primaryName] || DEFAULT_MODELS.lovable;
+  const primary = buildProvider(primaryName, primaryKey, lovableKey, primaryModel);
 
   if (!pipelineEnabled) {
     return { enabled: false, providers: [primary], primary };
   }
 
-  // Build ordered chain: Lovable → Gemini → OpenAI → Claude (skip if no key)
+  // Build ordered chain: Lovable → Gemini → OpenAI → Claude
   const chain: ProviderConfig[] = [];
 
-  // Always start with Lovable (free, fast draft)
-  if (lovableKey) chain.push(buildProvider("lovable", lovableKey, lovableKey));
-
-  // Add Gemini if key exists and not already primary
-  const geminiKey = pm["ai_key_gemini"] || "";
-  if (geminiKey && !(primaryName === "lovable")) {
-    chain.push(buildProvider("gemini", geminiKey, lovableKey));
+  // Always start with Lovable
+  if (lovableKey) {
+    const model = pm["ai_model_lovable"] || DEFAULT_MODELS.lovable;
+    chain.push(buildProvider("lovable", lovableKey, lovableKey, model));
   }
 
-  // Add OpenAI if key exists
+  // Gemini
+  const geminiKey = pm["ai_key_gemini"] || "";
+  if (geminiKey) {
+    const model = pm["ai_model_gemini"] || DEFAULT_MODELS.gemini;
+    if (!chain.find(c => c.provider === "gemini")) {
+      chain.push(buildProvider("gemini", geminiKey, lovableKey, model));
+    }
+  }
+
+  // OpenAI
   const openaiKey = pm["ai_key_openai"] || (primaryName === "openai" ? pm["ai_api_key"] : "");
   if (openaiKey) {
-    // Avoid duplicate if already in chain
+    const model = pm["ai_model_openai"] || DEFAULT_MODELS.openai;
     if (!chain.find(c => c.provider === "openai")) {
-      chain.push(buildProvider("openai", openaiKey, lovableKey));
+      chain.push(buildProvider("openai", openaiKey, lovableKey, model));
     }
   }
 
-  // Claude is ALWAYS last (finalizer) if key exists
+  // Claude is ALWAYS last (finalizer)
   const anthropicKey = pm["ai_key_anthropic"] || (primaryName === "anthropic" ? pm["ai_api_key"] : "");
   if (anthropicKey) {
+    const model = pm["ai_model_anthropic"] || DEFAULT_MODELS.anthropic;
     if (!chain.find(c => c.provider === "anthropic")) {
-      chain.push(buildProvider("anthropic", anthropicKey, lovableKey));
+      chain.push(buildProvider("anthropic", anthropicKey, lovableKey, model));
     }
   }
 
-  // If we only have one provider, disable pipeline
   if (chain.length <= 1) {
     return { enabled: false, providers: [primary], primary };
   }
@@ -113,14 +114,14 @@ export async function getPipelineConfig(userId: string): Promise<PipelineConfig>
   return { enabled: true, providers: chain, primary: chain[chain.length - 1] };
 }
 
-function buildProvider(name: string, key: string, lovableKey: string): ProviderConfig {
-  if (name === "lovable") {
-    return { name: "Lovable AI", provider: "lovable", apiKey: lovableKey, url: "https://ai.gateway.lovable.dev/v1/chat/completions", model: "google/gemini-3-flash-preview" };
-  }
-  const def = PROVIDER_DEFS[name];
-  if (!def) throw new Error(`Unknown provider: ${name}`);
-  const config = def(key);
-  return { ...config, apiKey: key } as ProviderConfig;
+function buildProvider(name: string, key: string, lovableKey: string, model?: string): ProviderConfig {
+  return {
+    name: PROVIDER_NAMES[name] || name,
+    provider: name,
+    apiKey: name === "lovable" ? lovableKey : key,
+    url: PROVIDER_URLS[name] || PROVIDER_URLS.lovable,
+    model: model || DEFAULT_MODELS[name] || DEFAULT_MODELS.lovable,
+  };
 }
 
 /** Call a single AI provider with messages + optional tool calling */
@@ -165,7 +166,7 @@ async function callAnthropic(
 
   if (!response.ok) {
     const err = await response.text();
-    console.error(`${config.name} error:`, response.status, err);
+    console.error(`${config.name} (${config.model}) error:`, response.status, err);
     if (response.status === 429) throw Object.assign(new Error("Rate limited"), { status: 429 });
     if (response.status === 402) throw Object.assign(new Error("Credits exhausted"), { status: 402 });
     throw new Error(`${config.name} error: ${response.status}`);
@@ -195,7 +196,7 @@ async function callOpenAICompat(
 
   if (!response.ok) {
     const errText = await response.text();
-    console.error(`${config.name} error:`, response.status, errText);
+    console.error(`${config.name} (${config.model}) error:`, response.status, errText);
     if (response.status === 429) throw Object.assign(new Error("Rate limited"), { status: 429 });
     if (response.status === 402) throw Object.assign(new Error("Credits exhausted"), { status: 402 });
     throw new Error(`${config.name} error: ${response.status}`);
@@ -235,7 +236,6 @@ export async function callProviderText(config: ProviderConfig, messages: any[]):
 /**
  * Run the sequential AI pipeline.
  * Provider 1 drafts → Provider 2 reviews → Claude finalizes.
- * Returns the final result + chain of providers used.
  */
 export async function runPipeline(opts: {
   config: PipelineConfig;
@@ -248,18 +248,16 @@ export async function runPipeline(opts: {
 }): Promise<{ result: { tool_arguments: string }; providerChain: string[] }> {
   const { config, systemPrompt, userPrompt, tools, toolChoice, reviewInstruction, maxTokens = 8192 } = opts;
 
-  // Single provider mode
   if (!config.enabled || config.providers.length <= 1) {
     const provider = config.primary;
-    console.log(`[Pipeline] Single mode: ${provider.name}`);
+    console.log(`[Pipeline] Single mode: ${provider.name} (${provider.model})`);
     const result = await callProvider(provider, [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ], tools, toolChoice, maxTokens);
-    return { result, providerChain: [provider.name] };
+    return { result, providerChain: [`${provider.name} (${provider.model})`] };
   }
 
-  // Multi-provider sequential chain
   const chain: string[] = [];
   let currentOutput: any = null;
 
@@ -271,16 +269,14 @@ export async function runPipeline(opts: {
     let messages: any[];
 
     if (isFirst) {
-      // First provider: generate initial draft
-      console.log(`[Pipeline] Step ${i + 1}/${config.providers.length}: ${provider.name} (DRAFT)`);
+      console.log(`[Pipeline] Step ${i + 1}/${config.providers.length}: ${provider.name} (${provider.model}) — DRAFT`);
       messages = [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ];
     } else {
-      // Subsequent providers: review and improve
       const role = isLast ? "FINAL REVIEWER & EXECUTOR" : "REVIEWER";
-      console.log(`[Pipeline] Step ${i + 1}/${config.providers.length}: ${provider.name} (${role})`);
+      console.log(`[Pipeline] Step ${i + 1}/${config.providers.length}: ${provider.name} (${provider.model}) — ${role}`);
 
       const reviewPrompt = `You are the ${role} in a multi-AI quality pipeline.
 
@@ -310,15 +306,10 @@ Review the output carefully:
     try {
       const result = await callProvider(provider, messages, tools, toolChoice, maxTokens);
       currentOutput = JSON.parse(result.tool_arguments);
-      chain.push(provider.name);
+      chain.push(`${provider.name} (${provider.model})`);
     } catch (err: any) {
-      console.warn(`[Pipeline] ${provider.name} failed: ${err.message}. Skipping.`);
-      // If a middle provider fails, skip it and continue with the next
-      if (isFirst && !currentOutput) {
-        // First provider failed — can't continue
-        throw err;
-      }
-      // Otherwise skip this provider
+      console.warn(`[Pipeline] ${provider.name} (${provider.model}) failed: ${err.message}. Skipping.`);
+      if (isFirst && !currentOutput) throw err;
       chain.push(`${provider.name} (skipped)`);
     }
   }
@@ -331,7 +322,6 @@ Review the output carefully:
 
 /**
  * Run pipeline for text-only responses (no tool calling).
- * Used by search-jobs AI extraction.
  */
 export async function runPipelineText(opts: {
   config: PipelineConfig;
@@ -347,7 +337,7 @@ export async function runPipelineText(opts: {
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
     ]);
-    return { result, providerChain: [provider.name] };
+    return { result, providerChain: [`${provider.name} (${provider.model})`] };
   }
 
   const chain: string[] = [];
@@ -374,9 +364,9 @@ export async function runPipelineText(opts: {
 
     try {
       currentOutput = await callProviderText(provider, messages);
-      chain.push(provider.name);
+      chain.push(`${provider.name} (${provider.model})`);
     } catch (err: any) {
-      console.warn(`[Pipeline] ${provider.name} failed: ${err.message}. Skipping.`);
+      console.warn(`[Pipeline] ${provider.name} (${provider.model}) failed: ${err.message}. Skipping.`);
       if (isFirst) throw err;
       chain.push(`${provider.name} (skipped)`);
     }
