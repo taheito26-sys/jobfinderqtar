@@ -568,6 +568,7 @@ const JobFeed = () => {
           {sourceFilter !== 'all' && <FilterChip label={`Source: ${sourceFilter}`} onClear={() => setSourceFilter('all')} />}
           {hasSalary !== 'all' && <FilterChip label={`Salary: ${hasSalary}`} onClear={() => setHasSalary('all')} />}
           {dateFilter !== 'all' && <FilterChip label={`Date: ${dateFilter}`} onClear={() => setDateFilter('all')} />}
+          {employmentTypeFilter !== 'all' && <FilterChip label={`Employment: ${employmentTypeFilter}`} onClear={() => setEmploymentTypeFilter('all')} />}
           {(scoreRange[0] > 0 || scoreRange[1] < 100) && <FilterChip label={`Score: ${scoreRange[0]}–${scoreRange[1]}`} onClear={() => setScoreRange([0, 100])} />}
           {activeFilterCount > 1 && (
             <button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground underline ml-1">Clear all</button>
