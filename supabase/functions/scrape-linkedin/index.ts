@@ -48,7 +48,7 @@ const extractProfileTool = {
   type: "function",
   function: {
     name: "extract_linkedin_profile",
-    description: "Extract structured professional profile data from LinkedIn profile page content.",
+    description: "Extract structured professional profile data from LinkedIn profile text content.",
     parameters: {
       type: "object",
       properties: {
@@ -64,13 +64,9 @@ const extractProfileTool = {
           items: {
             type: "object",
             properties: {
-              title: { type: "string" },
-              company: { type: "string" },
-              location: { type: "string" },
-              start_date: { type: "string" },
-              end_date: { type: "string" },
-              is_current: { type: "boolean" },
-              description: { type: "string" },
+              title: { type: "string" }, company: { type: "string" }, location: { type: "string" },
+              start_date: { type: "string" }, end_date: { type: "string" },
+              is_current: { type: "boolean" }, description: { type: "string" },
               achievements: { type: "array", items: { type: "string" } }
             },
             required: ["title", "company"]
@@ -81,11 +77,8 @@ const extractProfileTool = {
           items: {
             type: "object",
             properties: {
-              degree: { type: "string" },
-              institution: { type: "string" },
-              field_of_study: { type: "string" },
-              start_date: { type: "string" },
-              end_date: { type: "string" }
+              degree: { type: "string" }, institution: { type: "string" },
+              field_of_study: { type: "string" }, start_date: { type: "string" }, end_date: { type: "string" }
             },
             required: ["degree", "institution"]
           }
@@ -95,9 +88,7 @@ const extractProfileTool = {
           items: {
             type: "object",
             properties: {
-              name: { type: "string" },
-              issuing_organization: { type: "string" },
-              issue_date: { type: "string" }
+              name: { type: "string" }, issuing_organization: { type: "string" }, issue_date: { type: "string" }
             },
             required: ["name"]
           }
@@ -133,124 +124,68 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { linkedin_url } = await req.json();
-    if (!linkedin_url) {
-      return new Response(JSON.stringify({ error: "linkedin_url is required" }), {
+    const { linkedin_text, linkedin_url } = await req.json();
+    if (!linkedin_text || linkedin_text.trim().length < 50) {
+      return new Response(JSON.stringify({ error: "Please paste your LinkedIn profile text (at least 50 characters). Open your LinkedIn profile in a browser, select all text (Ctrl+A), copy (Ctrl+C), and paste it here." }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Validate LinkedIn URL
-    const urlNorm = linkedin_url.trim().toLowerCase();
-    if (!urlNorm.includes("linkedin.com/in/")) {
-      return new Response(JSON.stringify({ error: "Please provide a valid LinkedIn profile URL (e.g. https://linkedin.com/in/yourname)" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    const textContent = linkedin_text.trim().substring(0, 20000);
+    console.log(`Parsing LinkedIn text: ${textContent.length} chars`);
 
-    // Use Firecrawl to scrape LinkedIn
-    const firecrawlKey = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!firecrawlKey) {
-      return new Response(JSON.stringify({ error: "Firecrawl not configured. Please set up Firecrawl in Settings." }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    let formattedUrl = linkedin_url.trim();
-    if (!formattedUrl.startsWith("http")) formattedUrl = `https://${formattedUrl}`;
-
-    console.log("Scraping LinkedIn profile:", formattedUrl);
-
-    const scrapeResponse = await fetch("https://api.firecrawl.dev/v1/scrape", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${firecrawlKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        url: formattedUrl,
-        formats: ["markdown"],
-        onlyMainContent: true,
-      }),
-    });
-
-    const scrapeData = await scrapeResponse.json();
-    if (!scrapeResponse.ok) {
-      console.error("Firecrawl error:", scrapeData);
-      return new Response(JSON.stringify({ error: "Failed to scrape LinkedIn profile. It may be private or the URL is incorrect." }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const markdown = scrapeData.data?.markdown || scrapeData.markdown || "";
-    if (!markdown || markdown.length < 100) {
-      return new Response(JSON.stringify({ error: "Could not extract enough content from the LinkedIn profile. It may be private." }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    console.log(`Scraped ${markdown.length} chars from LinkedIn`);
-
-    // Use AI to extract structured data
     const aiConfig = await getAIConfig(user.id);
 
-    const systemPrompt = `You are a LinkedIn profile parser. Extract ONLY facts present in the scraped content.
+    const systemPrompt = `You are a LinkedIn profile parser. Extract ONLY facts present in the pasted text.
 RULES:
 - Never fabricate data
 - Use YYYY-MM-DD for dates; if only month/year, use YYYY-MM-01
 - For desired_titles: infer 3-5 job titles from current/recent roles
 - Extract all experience, education, and certifications found`;
 
-    const body: any = {
-      model: aiConfig.model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `Parse this LinkedIn profile:\n\n${markdown.substring(0, 20000)}` },
-      ],
-      tools: [extractProfileTool],
-      tool_choice: { type: "function", function: { name: "extract_linkedin_profile" } },
-    };
+    const userPrompt = `Parse this LinkedIn profile text:\n\n${textContent}`;
 
-    let aiResponse;
+    let rawResult: string;
+
     if (aiConfig.provider === "anthropic") {
-      const anthropicBody = {
+      const body = {
         model: aiConfig.model, max_tokens: 8192, system: systemPrompt,
-        messages: [{ role: "user", content: `Parse this LinkedIn profile:\n\n${markdown.substring(0, 20000)}` }],
+        messages: [{ role: "user", content: userPrompt }],
         tools: [{ name: "extract_linkedin_profile", description: extractProfileTool.function.description, input_schema: extractProfileTool.function.parameters }],
         tool_choice: { type: "tool", name: "extract_linkedin_profile" },
       };
-      aiResponse = await fetch(aiConfig.url, {
+      const response = await fetch(aiConfig.url, {
         method: "POST",
         headers: { "x-api-key": aiConfig.apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
-        body: JSON.stringify(anthropicBody),
+        body: JSON.stringify(body),
       });
+      if (!response.ok) { const err = await response.text(); console.error("AI error:", err); throw new Error(`AI error: ${response.status}`); }
+      const data = await response.json();
+      const toolUse = data.content?.find((c: any) => c.type === "tool_use");
+      if (!toolUse) throw new Error("No structured data returned from AI");
+      rawResult = JSON.stringify(toolUse.input);
     } else {
-      aiResponse = await fetch(aiConfig.url, {
+      const body = {
+        model: aiConfig.model,
+        messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
+        tools: [extractProfileTool],
+        tool_choice: { type: "function", function: { name: "extract_linkedin_profile" } },
+      };
+      const response = await fetch(aiConfig.url, {
         method: "POST",
         headers: { Authorization: `Bearer ${aiConfig.apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
+      if (!response.ok) { const errText = await response.text(); console.error("AI error:", response.status, errText); throw new Error(`AI error: ${response.status}`); }
+      const data = await response.json();
+      const toolCall = data.choices?.[0]?.message?.tool_calls?.[0];
+      rawResult = toolCall ? toolCall.function.arguments : (data.choices?.[0]?.message?.content || "{}");
     }
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      console.error("AI error:", aiResponse.status, errText);
-      throw new Error(`AI processing failed: ${aiResponse.status}`);
-    }
+    const parsed = JSON.parse(rawResult);
+    if (linkedin_url) parsed.linkedin_url = linkedin_url.trim();
 
-    const aiData = await aiResponse.json();
-    let parsed;
-
-    if (aiConfig.provider === "anthropic") {
-      const toolUse = aiData.content?.find((c: any) => c.type === "tool_use");
-      parsed = toolUse ? toolUse.input : JSON.parse(aiData.content?.find((c: any) => c.type === "text")?.text || "{}");
-    } else {
-      const toolCall = aiData.choices?.[0]?.message?.tool_calls?.[0];
-      parsed = toolCall ? JSON.parse(toolCall.function.arguments) : JSON.parse(aiData.choices?.[0]?.message?.content || "{}");
-    }
-
-    // Add the LinkedIn URL
-    parsed.linkedin_url = formattedUrl;
+    console.log(`Extracted: name="${parsed.full_name}", ${(parsed.skills || []).length} skills, ${(parsed.employment || []).length} jobs`);
 
     return new Response(JSON.stringify({ success: true, parsed }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
