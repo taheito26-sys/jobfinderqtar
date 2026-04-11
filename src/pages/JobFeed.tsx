@@ -520,7 +520,7 @@ const JobFeed = () => {
 
       {/* Stats Bar */}
       {!loading && jobs.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
           <StatCard icon={Hash} label="Total Jobs" value={stats.total} />
           <StatCard icon={BarChart3} label="Scored" value={stats.scored} sub={stats.scored > 0 ? `avg ${stats.avgScore}` : undefined} />
           <StatCard icon={Star} label="Recommended" value={stats.applyRec} accent />
@@ -555,7 +555,7 @@ const JobFeed = () => {
               value={gccSearchQuery}
               onChange={e => setGccSearchQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && searchGccJobs()}
-              className="flex-1 min-w-[200px]"
+              className="flex-1 min-w-0"
               disabled={gccSearching}
             />
             <div className="flex items-center gap-1.5">
@@ -583,7 +583,7 @@ const JobFeed = () => {
 
       {/* Search + Controls */}
       <div className="flex gap-2 mb-2 flex-wrap items-center">
-        <div className="relative flex-1 min-w-[200px]">
+        <div className="relative flex-1 min-w-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Search by title, company, or location..." value={search} onChange={e => setSearch(e.target.value)} />
           {search && (
@@ -667,7 +667,7 @@ const JobFeed = () => {
                   </Button>
                 )}
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                 <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter} options={[
                   { value: 'all', label: 'All Status' },
                   { value: 'active', label: 'Active' },

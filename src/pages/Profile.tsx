@@ -401,14 +401,16 @@ const Profile = () => {
         {/* Main Content */}
         <div className="lg:col-span-3">
       <Tabs defaultValue="personal" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="personal">Personal</TabsTrigger>
-          <TabsTrigger value="skills">Skills</TabsTrigger>
-          <TabsTrigger value="experience">Experience ({employment.length})</TabsTrigger>
-          <TabsTrigger value="education">Education ({education.length})</TabsTrigger>
-          <TabsTrigger value="certifications">Certs ({certifications.length})</TabsTrigger>
-          <TabsTrigger value="proofpoints">Proof Points ({proofPoints.length})</TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto -mx-4 px-4 lg:mx-0 lg:px-0">
+          <TabsList className="w-max">
+            <TabsTrigger value="personal">Personal</TabsTrigger>
+            <TabsTrigger value="skills">Skills</TabsTrigger>
+            <TabsTrigger value="experience">Experience ({employment.length})</TabsTrigger>
+            <TabsTrigger value="education">Education ({education.length})</TabsTrigger>
+            <TabsTrigger value="certifications">Certs ({certifications.length})</TabsTrigger>
+            <TabsTrigger value="proofpoints">Proof ({proofPoints.length})</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="personal" className="space-y-4">
           <Card>
