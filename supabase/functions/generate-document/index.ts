@@ -101,9 +101,10 @@ serve(async (req) => {
     };
     const candidateName = profile.full_name;
 
-    // Build filename as Company_JobTitle.ext
+    // Build filename as Company_JobTitle_CV.ext or Company_JobTitle_CoverLetter.ext
     const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9\s]/g, "").replace(/\s+/g, "_").substring(0, 50);
-    const filePrefix = `${sanitize(company)}_${sanitize(jobTitle)}`;
+    const docTypeSuffix = isCoverLetter ? "CoverLetter" : "CV";
+    const filePrefix = `${sanitize(company)}_${sanitize(jobTitle)}_${docTypeSuffix}`;
 
     let fileBuffer: Uint8Array;
     let mimeType: string;
