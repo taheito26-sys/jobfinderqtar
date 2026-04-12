@@ -328,6 +328,7 @@ Deno.serve(async (req) => {
           console.warn('Firecrawl error:', msg);
         }
       }
+    }
 
     // === Final fallback: direct fetch + AI ===
     if (!extracted) {
