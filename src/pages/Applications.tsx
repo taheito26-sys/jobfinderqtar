@@ -201,9 +201,8 @@ const Applications = () => {
               <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={submitForm.method} onChange={e => setSubmitForm({ ...submitForm, method: e.target.value })}>
                 <option value="manual">Manual</option>
-                <option value="email">Email</option>
-                <option value="portal">Company Portal</option>
-                <option value="linkedin">LinkedIn Easy Apply</option>
+                <option value="assisted">Assisted</option>
+                <option value="auto_submit">Auto Submit</option>
               </select>
             </div>
             <div className="space-y-2">
