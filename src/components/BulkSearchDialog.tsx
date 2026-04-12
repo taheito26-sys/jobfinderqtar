@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -62,6 +63,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [importing, setImporting] = useState(false);
   const [imported, setImported] = useState<Set<number>>(new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Profile data
   const [profileTitles, setProfileTitles] = useState<string[]>([]);
@@ -505,7 +507,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
                     {selected.size} of {results.length} selected
                   </span>
                 </div>
-                <Button onClick={handleImport} disabled={importing || unimportedSelected === 0} size="sm">
+                <Button onClick={() => setConfirmOpen(true)} disabled={importing || unimportedSelected === 0} size="sm">
                   {importing ? (
                     <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing...</>
                   ) : (
@@ -572,6 +574,31 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
             </>
           )}
         </div>
+
+        <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirm Import</AlertDialogTitle>
+              <AlertDialogDescription>
+                You are about to import <strong>{unimportedSelected}</strong> job{unimportedSelected !== 1 ? 's' : ''} to your feed. You can review and remove them later from your Job Feed.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="max-h-[200px] overflow-y-auto space-y-1 my-2">
+              {results.filter((_, i) => selected.has(i) && !imported.has(i)).map((job, i) => (
+                <div key={i} className="text-xs flex items-center gap-2 py-1 px-2 rounded bg-muted/50">
+                  <span className="font-medium truncate">{job.title}</span>
+                  <span className="text-muted-foreground">@ {job.company}</span>
+                </div>
+              ))}
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={() => { setConfirmOpen(false); handleImport(); }}>
+                Confirm Import
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
