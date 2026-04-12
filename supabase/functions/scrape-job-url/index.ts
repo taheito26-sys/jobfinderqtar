@@ -131,6 +131,7 @@ ${text}`;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn('Could not load pipeline config, using Lovable AI only:', msg);
+  }
 
   let lastError = '';
   for (const prov of providers) {
