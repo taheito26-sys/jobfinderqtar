@@ -15,9 +15,46 @@ function extractLinkedInJobId(url: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Extract ALL job IDs from a LinkedIn search/collection URL */
+function extractAllLinkedInJobIds(url: string): string[] {
+  const ids = new Set<string>();
+
+  // currentJobId param
+  const currentMatch = url.match(/currentJobId=(\d+)/);
+  if (currentMatch) ids.add(currentMatch[1]);
+
+  // originToLandingJobPostings param (comma-separated IDs)
+  const landingMatch = url.match(/originToLandingJobPostings=([^&]+)/);
+  if (landingMatch) {
+    const decoded = decodeURIComponent(landingMatch[1]);
+    decoded.split(/[,%2C]+/).forEach(id => {
+      const trimmed = id.trim();
+      if (/^\d+$/.test(trimmed)) ids.add(trimmed);
+    });
+  }
+
+  // /jobs/view/ID pattern
+  const viewMatch = url.match(/\/jobs\/view\/(\d+)/);
+  if (viewMatch) ids.add(viewMatch[1]);
+
+  return [...ids];
+}
+
+/** Check if this is a LinkedIn search/collection page (not a single job view) */
+function isLinkedInSearchUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const path = u.pathname;
+    // Search pages, collections, alerts
+    if (path.includes('/jobs/search') || path.includes('/jobs/collections')) return true;
+    // Has multiple job IDs
+    if (u.searchParams.get('originToLandingJobPostings')) return true;
+    return false;
+  } catch { return false; }
+}
+
 /** Try LinkedIn's guest/public job posting endpoint */
 async function fetchLinkedInJob(jobId: string): Promise<string> {
-  // LinkedIn serves public job HTML at this guest endpoint
   const guestUrl = `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`;
   console.log('Trying LinkedIn guest API:', guestUrl);
   
@@ -32,7 +69,6 @@ async function fetchLinkedInJob(jobId: string): Promise<string> {
   if (!res.ok) throw new Error(`LinkedIn guest API returned ${res.status}`);
   const html = await res.text();
   
-  // Strip tags to get text
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -67,7 +103,7 @@ async function fetchPageText(url: string): Promise<string> {
     .substring(0, 12000);
 }
 
-/** Use AI to extract structured job data from raw text — tries Lovable AI first (free), then user's providers */
+/** Use AI to extract structured job data from raw text */
 async function extractJobWithAI(text: string, sourceUrl: string, userId: string): Promise<any> {
   const prompt = `Extract structured job posting data from the following text. Return ONLY a valid JSON object with these fields:
 {
@@ -88,7 +124,6 @@ async function extractJobWithAI(text: string, sourceUrl: string, userId: string)
 TEXT:
 ${text}`;
 
-  // Try Lovable AI Gateway first (always available with LOVABLE_API_KEY)
   const lovableKey = Deno.env.get('LOVABLE_API_KEY');
   const providers: Array<{name: string; url: string; headers: Record<string,string>; body: any; extractContent: (d:any)=>string}> = [];
   
@@ -105,7 +140,6 @@ ${text}`;
     });
   }
 
-  // Also try user's configured providers as fallback
   try {
     const config = await getPipelineConfig(userId);
     if (config.primary.apiKey && config.primary.provider !== 'lovable') {
@@ -166,6 +200,37 @@ ${text}`;
     }
   }
   throw new Error(`All AI providers failed. Last error: ${lastError}`);
+}
+
+/** Scrape a single LinkedIn job by ID, return structured job or null */
+async function scrapeSingleLinkedInJob(jobId: string, userId: string): Promise<any | null> {
+  try {
+    const pageText = await fetchLinkedInJob(jobId);
+    if (pageText.length < 200) {
+      console.warn(`Job ${jobId}: insufficient content (${pageText.length} chars)`);
+      return null;
+    }
+    const jobUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
+    const data = await extractJobWithAI(pageText, jobUrl, userId);
+    return {
+      title: data.title || 'Untitled Job',
+      company: data.company || 'Unknown Company',
+      location: data.location || '',
+      remote_type: data.remote_type || 'unknown',
+      description: data.description || '',
+      salary_min: data.salary_min || null,
+      salary_max: data.salary_max || null,
+      salary_currency: data.salary_currency || null,
+      employment_type: data.employment_type || 'full-time',
+      seniority_level: data.seniority_level || '',
+      requirements: data.requirements || [],
+      apply_url: data.apply_url || jobUrl,
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`Failed to scrape LinkedIn job ${jobId}:`, msg);
+    return null;
+  }
 }
 
 Deno.serve(async (req) => {
@@ -234,7 +299,52 @@ Deno.serve(async (req) => {
     let job: any;
     let extracted = false;
 
-    // === LinkedIn: use guest API ===
+    // === LinkedIn Search/Collection URL: extract MULTIPLE jobs ===
+    if (isLinkedin && isLinkedInSearchUrl(formattedUrl)) {
+      const allJobIds = extractAllLinkedInJobIds(formattedUrl);
+      console.log(`LinkedIn search URL detected. Found ${allJobIds.length} job IDs:`, allJobIds);
+
+      if (allJobIds.length > 0) {
+        const jobs: any[] = [];
+        const failedIds: string[] = [];
+
+        // Scrape each job sequentially (to avoid rate limiting)
+        for (const jobId of allJobIds) {
+          const result = await scrapeSingleLinkedInJob(jobId, user.id);
+          if (result) {
+            jobs.push(result);
+            console.log(`✓ Job ${jobId}: ${result.title} at ${result.company}`);
+          } else {
+            failedIds.push(jobId);
+          }
+        }
+
+        if (jobs.length > 0) {
+          console.log(`Successfully extracted ${jobs.length}/${allJobIds.length} jobs from LinkedIn search URL`);
+          return new Response(JSON.stringify({
+            success: true,
+            multiple: true,
+            jobs,
+            total_found: allJobIds.length,
+            failed_count: failedIds.length,
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        // All failed — fall back to login required message
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'LINKEDIN_LOGIN_REQUIRED',
+          message: 'Could not extract jobs from this LinkedIn page. Use the "Paste Description" tab to manually paste job details.',
+          fallback: true,
+        }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // === LinkedIn Single Job URL ===
     if (isLinkedin) {
       const jobId = extractLinkedInJobId(formattedUrl);
       if (jobId) {
