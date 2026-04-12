@@ -27,6 +27,7 @@ import {
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
 import BulkSearchDialog from '@/components/BulkSearchDialog';
+import JobSearchHub from '@/components/JobSearchHub';
 import { formatDistanceToNow } from 'date-fns';
 import QuickApplyButton from '@/components/QuickApplyButton';
 import StealthApplyPanel from '@/components/StealthApplyPanel';
