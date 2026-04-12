@@ -63,10 +63,7 @@ const JobFeed = () => {
   const [batchScoring, setBatchScoring] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [bulkSearchOpen, setBulkSearchOpen] = useState(false);
-  const [gccSearchQuery, setGccSearchQuery] = useState('');
-  const [gccSearchCountry, setGccSearchCountry] = useState('');
-  const [gccSearchRemoteOnly, setGccSearchRemoteOnly] = useState(true);
-  const [gccSearching, setGccSearching] = useState(false);
+  // GCC search state removed — handled by JobSearchHub
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [subTab, setSubTab] = useState<SubTab>('all');
