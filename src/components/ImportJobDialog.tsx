@@ -1,16 +1,18 @@
 import { useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
-import { Loader2, Globe, Check, Linkedin, ClipboardPaste } from 'lucide-react';
+import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2 } from 'lucide-react';
 
 interface ImportJobDialogProps {
   open: boolean;
@@ -43,7 +45,16 @@ function normalizeLinkedInJobUrl(url: string): string {
 }
 
 /** Scrape via edge function with manual description support */
-async function scrapeOrParse(url: string, manualDescription?: string): Promise<{ success: boolean; job?: ScrapedJob; error?: string; linkedinLoginRequired?: boolean }> {
+async function scrapeOrParse(url: string, manualDescription?: string): Promise<{
+  success: boolean;
+  job?: ScrapedJob;
+  jobs?: ScrapedJob[];
+  multiple?: boolean;
+  total_found?: number;
+  failed_count?: number;
+  error?: string;
+  linkedinLoginRequired?: boolean;
+}> {
   const { data, error } = await supabase.functions.invoke('scrape-job-url', {
     body: manualDescription ? { url, manualDescription } : { url },
   });
@@ -57,6 +68,16 @@ async function scrapeOrParse(url: string, manualDescription?: string): Promise<{
   if (data?.error) {
     return { success: false, error: data.error };
   }
+  // Multiple jobs from LinkedIn search URL
+  if (data?.multiple && Array.isArray(data?.jobs)) {
+    return {
+      success: true,
+      multiple: true,
+      jobs: data.jobs,
+      total_found: data.total_found,
+      failed_count: data.failed_count,
+    };
+  }
   return { success: true, job: data.job };
 }
 
@@ -65,25 +86,41 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
   const { toast } = useToast();
   const [url, setUrl] = useState('');
   const [scraping, setScraping] = useState(false);
+  // Single job mode
   const [scraped, setScraped] = useState<ScrapedJob | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editedJob, setEditedJob] = useState<ScrapedJob | null>(null);
+  // Multi-job mode
+  const [multiJobs, setMultiJobs] = useState<ScrapedJob[]>([]);
+  const [multiSelected, setMultiSelected] = useState<Set<number>>(new Set());
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+
   const [activeTab, setActiveTab] = useState('url');
   const [pastedDescription, setPastedDescription] = useState('');
 
   const isLinkedin = isLinkedInUrl(url);
+  const isMultiMode = multiJobs.length > 0;
 
   const handleScrape = async () => {
     if (!url.trim()) return;
     setScraping(true);
     setScraped(null);
+    setMultiJobs([]);
+    setMultiSelected(new Set());
 
-    const normalizedUrl = isLinkedin ? normalizeLinkedInJobUrl(url) : url;
+    const normalizedUrl = isLinkedin ? url.trim() : url.trim(); // Keep full URL for search pages
     const result = await scrapeOrParse(normalizedUrl);
 
     if (result.linkedinLoginRequired) {
       setActiveTab('paste');
       toast({ title: 'LinkedIn login required', description: 'Paste the job description below instead.', variant: 'destructive' });
+    } else if (result.multiple && result.jobs && result.jobs.length > 0) {
+      // Multi-job result from LinkedIn search URL
+      setMultiJobs(result.jobs);
+      setMultiSelected(new Set(result.jobs.map((_, i) => i)));
+      const failedMsg = result.failed_count ? ` (${result.failed_count} could not be extracted)` : '';
+      toast({ title: `Found ${result.jobs.length} jobs!`, description: `Select which jobs to import${failedMsg}` });
     } else if (result.success && result.job) {
       setScraped(result.job);
       setEditedJob(result.job);
@@ -114,12 +151,99 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
     setScraping(false);
   };
 
+  const toggleMultiSelect = (idx: number) => {
+    const next = new Set(multiSelected);
+    if (next.has(idx)) next.delete(idx); else next.add(idx);
+    setMultiSelected(next);
+  };
+
+  const toggleAllMulti = () => {
+    if (multiSelected.size === multiJobs.length) {
+      setMultiSelected(new Set());
+    } else {
+      setMultiSelected(new Set(multiJobs.map((_, i) => i)));
+    }
+  };
+
+  const handleMultiImport = async () => {
+    if (!user || multiSelected.size === 0) return;
+    setImporting(true);
+
+    // Check for duplicates
+    const { data: existingJobs } = await supabase
+      .from('jobs')
+      .select('id, title, company, apply_url')
+      .eq('user_id', user.id);
+
+    const existingUrls = new Set((existingJobs || []).map(j => j.apply_url).filter(Boolean));
+    const existingKeys = new Set((existingJobs || []).map(j => `${j.title?.toLowerCase()}|${j.company?.toLowerCase()}`));
+
+    const selectedJobs = multiJobs.filter((_, i) => multiSelected.has(i));
+    const deduped = selectedJobs.filter(job => {
+      if (job.apply_url && existingUrls.has(job.apply_url)) return false;
+      const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
+      if (existingKeys.has(key)) return false;
+      return true;
+    });
+
+    const skipped = selectedJobs.length - deduped.length;
+
+    if (deduped.length === 0) {
+      toast({ title: 'All duplicates', description: `${skipped} job(s) already exist in your feed.` });
+      setImporting(false);
+      setConfirmOpen(false);
+      return;
+    }
+
+    const insertData = deduped.map(job => ({
+      user_id: user.id,
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      remote_type: job.remote_type,
+      description: job.description,
+      salary_min: job.salary_min,
+      salary_max: job.salary_max,
+      salary_currency: job.salary_currency,
+      employment_type: job.employment_type,
+      seniority_level: job.seniority_level,
+      requirements: job.requirements as any,
+      apply_url: job.apply_url,
+      source_url: job.apply_url,
+      raw_data: { source: 'linkedin_search', imported_from: url } as any,
+    }));
+
+    const { data, error } = await supabase.from('jobs').insert(insertData).select();
+
+    if (data) {
+      // Log events
+      for (const d of data) {
+        await supabase.from('application_events').insert({
+          user_id: user.id, job_id: d.id, event_type: 'job_imported',
+          metadata: { source: 'linkedin_search', source_url: url } as any,
+        });
+      }
+      onJobAdded(data);
+      const msg = skipped > 0
+        ? `Imported ${data.length} jobs! (${skipped} duplicates skipped)`
+        : `Imported ${data.length} jobs!`;
+      toast({ title: msg });
+      onOpenChange(false);
+      resetState();
+    }
+    if (error) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+
+    setImporting(false);
+    setConfirmOpen(false);
+  };
+
   const handleSave = async () => {
     if (!user || !editedJob) return;
     const sourceUrl = url.trim();
     const isLI = isLinkedInUrl(sourceUrl);
 
-    // Check for duplicates by URL or title+company
     const { data: existingJobs } = await supabase
       .from('jobs')
       .select('id, title, company, apply_url')
@@ -178,6 +302,9 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
     setEditMode(false);
     setPastedDescription('');
     setActiveTab('url');
+    setMultiJobs([]);
+    setMultiSelected(new Set());
+    setConfirmOpen(false);
   };
 
   return (
@@ -219,7 +346,7 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
                 <div className="flex items-start gap-2 p-3 rounded-lg border border-sky-200 bg-sky-50 dark:border-sky-800 dark:bg-sky-950/30">
                   <Linkedin className="w-4 h-4 text-[#0A66C2] mt-0.5 flex-shrink-0" />
                   <p className="text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">LinkedIn job detected.</span> If auto-extract fails, switch to "Paste Description" and copy the job details from LinkedIn.
+                    <span className="font-medium text-foreground">LinkedIn detected.</span> Search pages with multiple jobs will be extracted individually. Single job URLs work too.
                   </p>
                 </div>
               )}
@@ -260,8 +387,68 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
             </TabsContent>
           </Tabs>
 
-          {/* Results */}
-          {scraped && editedJob && (
+          {/* Multi-job results (LinkedIn search) */}
+          {isMultiMode && (
+            <div className="space-y-3 border border-border rounded-lg p-4 bg-muted/30">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-score-excellent" />
+                  <span className="text-sm font-medium">{multiJobs.length} Jobs Found</span>
+                  <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800">
+                    <Linkedin className="w-3 h-3 mr-1" /> LinkedIn
+                  </Badge>
+                </div>
+                <Button variant="ghost" size="sm" onClick={toggleAllMulti}>
+                  {multiSelected.size === multiJobs.length ? 'Deselect All' : 'Select All'}
+                </Button>
+              </div>
+
+              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                {multiJobs.map((job, idx) => (
+                  <div key={idx}
+                    className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      multiSelected.has(idx)
+                        ? 'border-primary/50 bg-primary/5'
+                        : 'border-border hover:bg-muted/50'
+                    }`}
+                    onClick={() => toggleMultiSelect(idx)}
+                  >
+                    <Checkbox
+                      checked={multiSelected.has(idx)}
+                      onCheckedChange={() => toggleMultiSelect(idx)}
+                      className="mt-0.5"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-medium text-sm text-foreground truncate">{job.title}</h4>
+                      <p className="text-xs text-muted-foreground truncate">{job.company} • {job.location || 'No location'}</p>
+                      <div className="flex gap-1 mt-1">
+                        {job.remote_type !== 'unknown' && (
+                          <Badge variant="outline" className="text-xs capitalize">{job.remote_type}</Badge>
+                        )}
+                        {job.employment_type && (
+                          <Badge variant="secondary" className="text-xs capitalize">{job.employment_type}</Badge>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <Button
+                onClick={() => setConfirmOpen(true)}
+                disabled={multiSelected.size === 0 || importing}
+                className="w-full"
+              >
+                {importing
+                  ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Importing...</>
+                  : `Import ${multiSelected.size} Job${multiSelected.size !== 1 ? 's' : ''}`
+                }
+              </Button>
+            </div>
+          )}
+
+          {/* Single job result */}
+          {scraped && editedJob && !isMultiMode && (
             <div className="space-y-3 border border-border rounded-lg p-4 bg-muted/30">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -342,6 +529,35 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
           )}
         </div>
       </DialogContent>
+
+      {/* Confirmation dialog for multi-import */}
+      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm Import</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div>
+                <p className="mb-3">You are about to import <strong>{multiSelected.size}</strong> job{multiSelected.size !== 1 ? 's' : ''}:</p>
+                <div className="max-h-[200px] overflow-y-auto space-y-1.5">
+                  {multiJobs.filter((_, i) => multiSelected.has(i)).map((job, idx) => (
+                    <div key={idx} className="text-sm flex items-center gap-2">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+                      <span className="truncate"><strong>{job.title}</strong> at {job.company}</span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">Duplicates will be automatically skipped.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={importing}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleMultiImport} disabled={importing}>
+              {importing ? <><Loader2 className="w-4 h-4 animate-spin mr-2" /> Importing...</> : 'Confirm Import'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 };
