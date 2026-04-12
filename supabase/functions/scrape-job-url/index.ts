@@ -131,6 +131,7 @@ ${text}`;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn('Could not load pipeline config, using Lovable AI only:', msg);
+  }
 
   let lastError = '';
   for (const prov of providers) {
@@ -162,6 +163,7 @@ ${text}`;
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`${prov.name} error: ${msg}`);
       lastError = msg;
+    }
   }
   throw new Error(`All AI providers failed. Last error: ${lastError}`);
 }
@@ -260,6 +262,7 @@ Deno.serve(async (req) => {
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           console.warn('LinkedIn guest API fallback failed:', msg);
+        }
       }
 
       if (!extracted) {
@@ -323,6 +326,7 @@ Deno.serve(async (req) => {
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           console.warn('Firecrawl error:', msg);
+        }
       }
     }
 
