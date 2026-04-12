@@ -357,11 +357,12 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ success: true, job }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-  } catch (error: unknown) {
-    console.error('Error:', error);
-    const msg = error instanceof Error ? error.message : 'Failed to scrape';
+  } catch (err) {
+    console.error('Error:', err);
+    const msg = err instanceof Error ? err.message : 'Failed to scrape';
     return new Response(JSON.stringify({ error: msg }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });
