@@ -9,12 +9,14 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
   Briefcase, FileText, Send, TrendingUp, Target, Clock, Zap, Plus,
-  Search, Upload, ArrowRight, BarChart3, Inbox
+  Search, Upload, ArrowRight, BarChart3, Inbox, CheckCircle2, XCircle,
+  MessageSquare, Timer, Award
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, subDays, format, startOfWeek, eachWeekOfInterval } from 'date-fns';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  PieChart, Pie, LineChart, Line, CartesianGrid, Legend,
 } from 'recharts';
 
 interface Stats {
@@ -27,6 +29,15 @@ interface Stats {
   thisWeekJobs: number;
 }
 
+interface SubmissionData {
+  id: string;
+  submission_status: string | null;
+  submitted_at: string;
+  response_received_at: string | null;
+  follow_up_date: string | null;
+  jobs?: { title?: string; company?: string } | null;
+}
+
 const SCORE_BUCKETS = [
   { range: '0-20', label: '0–20', color: 'hsl(var(--score-poor))' },
   { range: '21-40', label: '21–40', color: 'hsl(var(--score-poor))' },
@@ -35,19 +46,34 @@ const SCORE_BUCKETS = [
   { range: '81-100', label: '81–100', color: 'hsl(var(--score-excellent))' },
 ];
 
+const FUNNEL_COLORS: Record<string, string> = {
+  submitted: 'hsl(var(--primary))',
+  acknowledged: 'hsl(var(--info, 210 100% 50%))',
+  interview: 'hsl(var(--score-good))',
+  offer: 'hsl(var(--score-excellent))',
+  rejected: 'hsl(var(--destructive))',
+  withdrawn: 'hsl(var(--muted-foreground))',
+  no_response: 'hsl(var(--score-fair))',
+};
+
 const Dashboard = () => {
   const { user } = useAuth();
   const [stats, setStats] = useState<Stats>({ totalJobs: 0, matchedJobs: 0, applications: 0, documents: 0, avgScore: 0, topScore: 0, thisWeekJobs: 0 });
   const [recentMatches, setRecentMatches] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [allMatches, setAllMatches] = useState<any[]>([]);
+  const [submissions, setSubmissions] = useState<SubmissionData[]>([]);
+  const [drafts, setDrafts] = useState<any[]>([]);
+  const [weeklyJobs, setWeeklyJobs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user) return;
     const fetchAll = async () => {
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const [jobs, matchesCount, apps, docs, recentMatchRes, activityRes, allMatchRes, weekJobs] = await Promise.all([
+      const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
+
+      const [jobs, matchesCount, apps, docs, recentMatchRes, activityRes, allMatchRes, weekJobs, subsRes, draftsRes, recentJobsRes] = await Promise.all([
         supabase.from('jobs').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
         supabase.from('job_matches').select('id', { count: 'exact', head: true }).eq('user_id', user.id).gte('overall_score', 60),
         supabase.from('application_submissions').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
@@ -58,6 +84,9 @@ const Dashboard = () => {
           .order('created_at', { ascending: false }).limit(10),
         supabase.from('job_matches').select('overall_score').eq('user_id', user.id),
         supabase.from('jobs').select('id', { count: 'exact', head: true }).eq('user_id', user.id).gte('created_at', weekAgo),
+        supabase.from('application_submissions').select('id, submission_status, submitted_at, response_received_at, follow_up_date, jobs(title, company)').eq('user_id', user.id),
+        supabase.from('application_drafts').select('id, status').eq('user_id', user.id),
+        supabase.from('jobs').select('id, created_at').eq('user_id', user.id).gte('created_at', thirtyDaysAgo),
       ]);
 
       const scores = (allMatchRes.data ?? []).map((m: any) => m.overall_score);
@@ -76,6 +105,23 @@ const Dashboard = () => {
       setRecentMatches(recentMatchRes.data ?? []);
       setRecentActivity(activityRes.data ?? []);
       setAllMatches(allMatchRes.data ?? []);
+      setSubmissions((subsRes.data as SubmissionData[]) ?? []);
+      setDrafts(draftsRes.data ?? []);
+
+      // Build weekly job ingestion data
+      const recentJobs = recentJobsRes.data ?? [];
+      const now = new Date();
+      const weeks = eachWeekOfInterval({ start: subDays(now, 28), end: now }, { weekStartsOn: 1 });
+      const weeklyData = weeks.map(weekStart => {
+        const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const count = recentJobs.filter((j: any) => {
+          const d = new Date(j.created_at);
+          return d >= weekStart && d < weekEnd;
+        }).length;
+        return { week: format(weekStart, 'MMM d'), count };
+      });
+      setWeeklyJobs(weeklyData);
+
       setLoading(false);
     };
     fetchAll();
@@ -95,11 +141,56 @@ const Dashboard = () => {
     return SCORE_BUCKETS.map((b, i) => ({ ...b, count: buckets[i] }));
   }, [allMatches]);
 
+  // Application funnel data
+  const funnelData = useMemo(() => {
+    const statusCounts: Record<string, number> = {};
+    submissions.forEach(s => {
+      const status = s.submission_status || 'submitted';
+      statusCounts[status] = (statusCounts[status] || 0) + 1;
+    });
+    const draftCount = drafts.filter(d => d.status !== 'submitted').length;
+
+    return [
+      { stage: 'Drafts', count: draftCount, fill: 'hsl(var(--muted-foreground))' },
+      { stage: 'Submitted', count: statusCounts['submitted'] || 0, fill: FUNNEL_COLORS.submitted },
+      { stage: 'Acknowledged', count: statusCounts['acknowledged'] || 0, fill: FUNNEL_COLORS.acknowledged },
+      { stage: 'Interview', count: statusCounts['interview'] || 0, fill: FUNNEL_COLORS.interview },
+      { stage: 'Offer', count: statusCounts['offer'] || 0, fill: FUNNEL_COLORS.offer },
+      { stage: 'Rejected', count: statusCounts['rejected'] || 0, fill: FUNNEL_COLORS.rejected },
+      { stage: 'No Response', count: statusCounts['no_response'] || 0, fill: FUNNEL_COLORS.no_response },
+    ].filter(d => d.count > 0);
+  }, [submissions, drafts]);
+
+  // Response rate metrics
+  const responseMetrics = useMemo(() => {
+    const total = submissions.length;
+    if (total === 0) return { responseRate: 0, interviewRate: 0, offerRate: 0, avgResponseDays: 0 };
+
+    const responded = submissions.filter(s => s.response_received_at).length;
+    const interviews = submissions.filter(s => s.submission_status === 'interview' || s.submission_status === 'offer').length;
+    const offers = submissions.filter(s => s.submission_status === 'offer').length;
+
+    const responseDays = submissions
+      .filter(s => s.response_received_at)
+      .map(s => (new Date(s.response_received_at!).getTime() - new Date(s.submitted_at).getTime()) / (1000 * 60 * 60 * 24))
+      .filter(d => d > 0 && d < 365);
+    const avgResponseDays = responseDays.length > 0
+      ? Math.round(responseDays.reduce((a, b) => a + b, 0) / responseDays.length)
+      : 0;
+
+    return {
+      responseRate: Math.round((responded / total) * 100),
+      interviewRate: Math.round((interviews / total) * 100),
+      offerRate: Math.round((offers / total) * 100),
+      avgResponseDays,
+    };
+  }, [submissions]);
+
   const statCards = [
     { title: 'Jobs Tracked', value: stats.totalJobs, icon: Briefcase, color: 'text-primary', sub: `+${stats.thisWeekJobs} this week` },
     { title: 'High Matches (60+)', value: stats.matchedJobs, icon: Target, color: 'text-score-excellent', sub: `avg ${stats.avgScore}, top ${stats.topScore}` },
-    { title: 'Applications', value: stats.applications, icon: Send, color: 'text-info', sub: null },
-    { title: 'Documents', value: stats.documents, icon: FileText, color: 'text-warning', sub: null },
+    { title: 'Applications', value: stats.applications, icon: Send, color: 'text-primary', sub: null },
+    { title: 'Documents', value: stats.documents, icon: FileText, color: 'text-primary', sub: null },
   ];
 
   const quickActions = [
@@ -107,6 +198,13 @@ const Dashboard = () => {
     { label: 'Search Jobs', icon: Search, to: '/jobs', desc: 'Run bulk job search' },
     { label: 'Upload CV', icon: Upload, to: '/cv-library', desc: 'Upload a new document' },
     { label: 'Follow-up', icon: Inbox, to: '/follow-up', desc: 'Review next actions' },
+  ];
+
+  const responseMetricCards = [
+    { label: 'Response Rate', value: `${responseMetrics.responseRate}%`, icon: MessageSquare, desc: 'Companies that replied' },
+    { label: 'Interview Rate', value: `${responseMetrics.interviewRate}%`, icon: CheckCircle2, desc: 'Led to interview' },
+    { label: 'Offer Rate', value: `${responseMetrics.offerRate}%`, icon: Award, desc: 'Resulted in offer' },
+    { label: 'Avg Response', value: responseMetrics.avgResponseDays > 0 ? `${responseMetrics.avgResponseDays}d` : '—', icon: Timer, desc: 'Days to hear back' },
   ];
 
   return (
@@ -155,7 +253,63 @@ const Dashboard = () => {
         ))}
       </div>
 
+      {/* Response Rate Metrics */}
+      {submissions.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {responseMetricCards.map(({ label, value, icon: Icon, desc }) => (
+            <Card key={label}>
+              <CardContent className="py-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center text-muted-foreground">
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-xl font-bold text-foreground">{loading ? '—' : value}</p>
+                    <p className="text-[10px] text-muted-foreground">{desc}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        {/* Application Funnel */}
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <TrendingUp className="w-4 h-4 text-muted-foreground" />
+              Application Funnel
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {funnelData.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">No applications yet.</p>
+            ) : (
+              <div className="space-y-3">
+                {funnelData.map(({ stage, count, fill }) => {
+                  const maxCount = Math.max(...funnelData.map(d => d.count), 1);
+                  return (
+                    <div key={stage} className="space-y-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-foreground font-medium">{stage}</span>
+                        <span className="text-muted-foreground">{count}</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{ width: `${(count / maxCount) * 100}%`, backgroundColor: fill }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Score Distribution Chart */}
         <Card className="lg:col-span-1">
           <CardHeader>
@@ -187,12 +341,42 @@ const Dashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Recent Matches */}
+        {/* Weekly Job Ingestion Trend */}
         <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="w-4 h-4 text-muted-foreground" />
-              Recent Matches
+              <BarChart3 className="w-4 h-4 text-muted-foreground" />
+              Weekly Job Ingestion
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {weeklyJobs.length === 0 || weeklyJobs.every(w => w.count === 0) ? (
+              <p className="text-sm text-muted-foreground py-8 text-center">Add jobs to see weekly trends.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={180}>
+                <LineChart data={weeklyJobs} margin={{ top: 5, right: 5, bottom: 5, left: -10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="week" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid hsl(var(--border))' }}
+                    formatter={(value: number) => [`${value} jobs`, 'Added']}
+                  />
+                  <Line type="monotone" dataKey="count" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Recent Matches */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Target className="w-4 h-4 text-muted-foreground" />
+              Top Recent Matches
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -222,7 +406,7 @@ const Dashboard = () => {
         </Card>
 
         {/* Activity Timeline */}
-        <Card className="lg:col-span-1">
+        <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Clock className="w-4 h-4 text-muted-foreground" />
@@ -236,7 +420,7 @@ const Dashboard = () => {
               </p>
             ) : (
               <div className="space-y-1">
-                {recentActivity.map((log, i) => (
+                {recentActivity.map((log) => (
                   <div key={log.id} className="flex items-start gap-2.5 py-1.5">
                     <div className="mt-1.5 w-2 h-2 rounded-full bg-primary/40 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
@@ -265,7 +449,7 @@ const Dashboard = () => {
                 <div>
                   <p className="text-sm font-medium text-foreground">Weekly Summary</p>
                   <p className="text-xs text-muted-foreground">
-                    {stats.thisWeekJobs} new jobs · {stats.matchedJobs} high matches · {stats.applications} applications sent
+                    {stats.thisWeekJobs} new jobs · {stats.matchedJobs} high matches · {stats.applications} applications tracked
                   </p>
                 </div>
               </div>

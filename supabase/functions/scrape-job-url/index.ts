@@ -128,9 +128,9 @@ ${text}`;
         });
       }
     }
-  } catch (e) {
-    console.warn('Could not load pipeline config, using Lovable AI only:', e.message);
-  }
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('Could not load pipeline config, using Lovable AI only:', msg);
 
   let lastError = '';
   for (const prov of providers) {
@@ -158,10 +158,10 @@ ${text}`;
       const parsed = JSON.parse(jsonMatch[0]);
       console.log(`AI extraction succeeded with ${prov.name}`);
       return parsed;
-    } catch (e) {
-      console.warn(`${prov.name} error: ${e.message}`);
-      lastError = e.message;
-    }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`${prov.name} error: ${msg}`);
+      lastError = msg;
   }
   throw new Error(`All AI providers failed. Last error: ${lastError}`);
 }
@@ -257,9 +257,9 @@ Deno.serve(async (req) => {
             extracted = true;
             console.log('LinkedIn guest API + AI extracted:', job.title);
           }
-        } catch (e) {
-          console.warn('LinkedIn guest API fallback failed:', e.message);
-        }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn('LinkedIn guest API fallback failed:', msg);
       }
 
       if (!extracted) {
@@ -320,9 +320,9 @@ Deno.serve(async (req) => {
           } else {
             console.warn('Firecrawl failed, trying direct fetch fallback');
           }
-        } catch (e) {
-          console.warn('Firecrawl error:', e.message);
-        }
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn('Firecrawl error:', msg);
       }
     }
 
@@ -345,8 +345,9 @@ Deno.serve(async (req) => {
           apply_url: data.apply_url || formattedUrl,
         };
         extracted = true;
-      } catch (e) {
-        console.error('All extraction methods failed:', e.message);
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error('All extraction methods failed:', msg);
         return new Response(JSON.stringify({ success: false, error: 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -356,10 +357,12 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ success: true, job }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-  } catch (error) {
-    console.error('Error:', error);
-    return new Response(JSON.stringify({ error: error.message || 'Failed to scrape' }), {
-      status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  } catch (err) {
+    console.error('Error:', err);
+    const msg = err instanceof Error ? err.message : 'Failed to scrape';
+    return new Response(JSON.stringify({ error: msg }), {
+      status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
 });

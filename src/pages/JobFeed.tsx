@@ -921,6 +921,36 @@ const JobFeed = () => {
         </div>
       )}
 
+      {/* Top Recommendations Highlight */}
+      {!loading && feedMode === 'all' && (() => {
+        const topRecs = jobs
+          .filter(j => matches[j.id]?.recommendation === 'apply' && j.status !== 'archived')
+          .map(j => ({ ...j, match: matches[j.id] }))
+          .sort((a, b) => (b.match?.overall_score || 0) - (a.match?.overall_score || 0))
+          .slice(0, 3);
+        if (topRecs.length === 0) return null;
+        return (
+          <div className="mb-4 p-3 rounded-lg border border-primary/20 bg-primary/5">
+            <div className="flex items-center gap-2 mb-2">
+              <Star className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium text-foreground">Top Recommendations</span>
+              <span className="text-xs text-muted-foreground">— AI suggests you apply to these</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {topRecs.map(j => (
+                <Link key={j.id} to={`/jobs/${j.id}`} className="flex items-center gap-2 p-2 rounded-md bg-background border hover:border-primary/30 transition-colors">
+                  <ScoreBadge score={j.match.overall_score} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{j.title}</p>
+                    <p className="text-xs text-muted-foreground truncate">{j.company}</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       {savedPresets.length > 0 && (
         <div className="mb-3">
           <p className="text-[11px] text-muted-foreground mb-1.5">Saved searches</p>

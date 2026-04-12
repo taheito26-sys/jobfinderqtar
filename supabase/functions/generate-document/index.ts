@@ -119,7 +119,7 @@ serve(async (req) => {
       fileName = `${filePrefix}.docx`;
     }
 
-    return new Response(fileBuffer, {
+    return new Response(fileBuffer as unknown as BodyInit, {
       headers: {
         ...corsHeaders,
         "Content-Type": mimeType,
@@ -149,7 +149,7 @@ const HELVETICA_WIDTHS: Record<string, number> = {
   "h": 556, "i": 222, "j": 222, "k": 500, "l": 222, "m": 833, "n": 556, "o": 556,
   "p": 556, "q": 556, "r": 333, "s": 500, "t": 278, "u": 556, "v": 500, "w": 722,
   "x": 500, "y": 500, "z": 500, "{": 334, "|": 260, "}": 334, "~": 584,
-  "•": 350, "–": 556, "—": 1000, "\u2022": 350,
+  "\u2022": 350, "\u2013": 556, "\u2014": 1000,
 };
 
 // Bold widths are slightly wider
