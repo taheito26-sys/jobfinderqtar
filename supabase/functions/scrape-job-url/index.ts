@@ -348,6 +348,7 @@ Deno.serve(async (req) => {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error('All extraction methods failed:', msg);
+        return new Response(JSON.stringify({ success: false, error: 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
