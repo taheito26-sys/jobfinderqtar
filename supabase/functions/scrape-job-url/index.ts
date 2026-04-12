@@ -260,6 +260,7 @@ Deno.serve(async (req) => {
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           console.warn('LinkedIn guest API fallback failed:', msg);
+        }
       }
 
       if (!extracted) {
