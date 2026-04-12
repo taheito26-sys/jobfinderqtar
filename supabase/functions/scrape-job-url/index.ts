@@ -163,6 +163,7 @@ ${text}`;
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`${prov.name} error: ${msg}`);
       lastError = msg;
+    }
   }
   throw new Error(`All AI providers failed. Last error: ${lastError}`);
 }
@@ -325,8 +326,8 @@ Deno.serve(async (req) => {
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
           console.warn('Firecrawl error:', msg);
+        }
       }
-    }
 
     // === Final fallback: direct fetch + AI ===
     if (!extracted) {
