@@ -26,7 +26,7 @@ Deno.serve(async (req) => {
     // Get all users with desired_titles set
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from('profiles_v2')
-      .select('user_id, desired_titles, location, country')
+      .select('user_id, desired_titles, location, country, remote_preference')
       .not('desired_titles', 'eq', '[]');
 
     if (profilesError) {
@@ -43,13 +43,33 @@ Deno.serve(async (req) => {
       });
     }
 
+    const userIds = [...new Set(profiles.map((profile) => profile.user_id))];
+    const { data: preferences } = await supabaseAdmin
+      .from('user_preferences')
+      .select('user_id, key, value')
+      .in('user_id', userIds)
+      .in('key', ['auto_search_enabled', 'auto_search_max_titles', 'auto_notify_new']);
+
+    const preferenceMap = new Map<string, Record<string, string>>();
+    (preferences || []).forEach((preference) => {
+      const existing = preferenceMap.get(preference.user_id) ?? {};
+      existing[preference.key] = preference.value;
+      preferenceMap.set(preference.user_id, existing);
+    });
+
     let totalNewJobs = 0;
 
     for (const profile of profiles) {
+      const userPrefs = preferenceMap.get(profile.user_id) ?? {};
+      if (userPrefs.auto_search_enabled !== 'true') continue;
+
       const titles = (profile.desired_titles as string[]) || [];
       if (titles.length === 0) continue;
 
-      const location = profile.location || profile.country || 'Qatar';
+      const location = profile.location || profile.country || '';
+      const remotePreference = profile.remote_preference || 'flexible';
+      const maxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '3', 10) || 3, titles.length));
+      const shouldNotify = userPrefs.auto_notify_new !== 'false';
 
       // Get existing job URLs for this user to deduplicate
       const { data: existingJobs } = await supabaseAdmin
@@ -60,8 +80,12 @@ Deno.serve(async (req) => {
       const existingUrls = new Set((existingJobs || []).map(j => j.apply_url).filter(Boolean));
       const existingKeys = new Set((existingJobs || []).map(j => `${j.title?.toLowerCase()}|${j.company?.toLowerCase()}`));
 
-      for (const title of titles.slice(0, 3)) { // Limit to 3 titles per user per run
-        const searchQuery = `${title} ${location} job listing`;
+      for (const title of titles.slice(0, maxTitles)) {
+        const queryParts = [title];
+        if (remotePreference === 'remote') queryParts.push('remote');
+        if (location) queryParts.push(location);
+        queryParts.push('job listing');
+        const searchQuery = queryParts.join(' ');
         console.log(`Searching for user ${profile.user_id}: "${searchQuery}"`);
 
         try {
@@ -111,8 +135,8 @@ Deno.serve(async (req) => {
               user_id: profile.user_id,
               title: jobTitle,
               company,
-              location: '',
-              remote_type: 'unknown',
+              location,
+              remote_type: remotePreference === 'remote' ? 'remote' : 'unknown',
               description: (result.metadata?.description || markdown).substring(0, 2000),
               salary_min: null,
               salary_max: null,
@@ -121,6 +145,13 @@ Deno.serve(async (req) => {
               seniority_level: '',
               requirements: [],
               apply_url: applyUrl,
+              source_url: applyUrl,
+              raw_data: {
+                source: 'auto_search',
+                search_title: title,
+                search_location: location,
+                remote_preference: remotePreference,
+              } as any,
             }).select('id, title, company').single();
 
             if (insertError) {
@@ -133,13 +164,15 @@ Deno.serve(async (req) => {
             existingKeys.add(key);
 
             // Create notification
-            await supabaseAdmin.from('notifications').insert({
-              user_id: profile.user_id,
-              title: 'New job found!',
-              message: `${jobTitle} at ${company}`,
-              type: 'new_job',
-              entity_id: newJob?.id || null,
-            });
+            if (shouldNotify) {
+              await supabaseAdmin.from('notifications').insert({
+                user_id: profile.user_id,
+                title: 'New job found!',
+                message: `${jobTitle} at ${company}`,
+                type: 'new_job',
+                entity_id: newJob?.id || null,
+              });
+            }
 
             totalNewJobs++;
             console.log(`New job added: ${jobTitle} at ${company}`);

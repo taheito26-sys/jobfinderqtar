@@ -31,6 +31,21 @@ import { formatDistanceToNow } from 'date-fns';
 import QuickApplyButton from '@/components/QuickApplyButton';
 import StealthApplyPanel from '@/components/StealthApplyPanel';
 import AutoApplyQueue from '@/components/AutoApplyQueue';
+import {
+  buildDuplicateClusters,
+  filterJobsByFeedMode,
+  getFeedSource,
+  type FeedMode,
+} from '@/lib/job-feed';
+import {
+  buildPresetSubscriptionQuery,
+  matchesSavedSearchKeywords,
+  parseKeywordList,
+  parseSavedSearches,
+  stringifySavedSearches,
+  type SavedSearchFilters,
+  type SavedSearchPreset,
+} from '@/lib/saved-searches';
 
 type ViewMode = 'list' | 'grid';
 type SubTab = 'all' | 'remote' | 'onsite' | string; // string for country names
@@ -54,7 +69,16 @@ const JobFeed = () => {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [subTab, setSubTab] = useState<SubTab>('all');
+  const [feedMode, setFeedMode] = useState<FeedMode>('all');
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
+  const [savedPresets, setSavedPresets] = useState<SavedSearchPreset[]>([]);
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
+  const [savePresetOpen, setSavePresetOpen] = useState(false);
+  const [savingPreset, setSavingPreset] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  const [presetIncludeInput, setPresetIncludeInput] = useState('');
+  const [presetExcludeInput, setPresetExcludeInput] = useState('');
+  const [createPresetAlert, setCreatePresetAlert] = useState(true);
   const emptyJob = { title: '', company: '', location: '', remote_type: 'unknown', description: '', apply_url: '', salary_min: '', salary_max: '' };
   const [multiJobs, setMultiJobs] = useState([{ ...emptyJob }]);
   const [addingJobs, setAddingJobs] = useState(false);
@@ -75,13 +99,19 @@ const JobFeed = () => {
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      const { data: jobsData } = await supabase.from('jobs').select('*').eq('user_id', user.id)
-        .order('created_at', { ascending: false }).limit(200);
-      const { data: matchesData } = await supabase.from('job_matches').select('*').eq('user_id', user.id);
+      const [jobsRes, matchesRes, prefsRes] = await Promise.all([
+        supabase.from('jobs').select('*').eq('user_id', user.id)
+          .order('created_at', { ascending: false }).limit(200),
+        supabase.from('job_matches').select('*').eq('user_id', user.id),
+        supabase.from('user_preferences').select('value').eq('user_id', user.id).eq('key', 'saved_search_presets').maybeSingle(),
+      ]);
+      const jobsData = jobsRes.data;
+      const matchesData = matchesRes.data;
       setJobs(jobsData ?? []);
       const matchMap: Record<string, any> = {};
       (matchesData ?? []).forEach(m => { matchMap[m.job_id] = m; });
       setMatches(matchMap);
+      setSavedPresets(parseSavedSearches(prefsRes.data?.value));
       setLoading(false);
     };
     load();
@@ -129,7 +159,39 @@ const JobFeed = () => {
     return count;
   }, [companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, employmentTypeFilter]);
 
+  const currentSavedSearchFilters = useMemo<SavedSearchFilters>(() => ({
+    statusFilter,
+    companyFilter,
+    remoteFilter,
+    locationFilter,
+    scoreRange,
+    recommendationFilter,
+    seniorityFilter,
+    industryFilter,
+    sourceFilter,
+    hasSalary,
+    dateFilter,
+    employmentTypeFilter,
+    feedMode,
+  }), [
+    statusFilter,
+    companyFilter,
+    remoteFilter,
+    locationFilter,
+    scoreRange,
+    recommendationFilter,
+    seniorityFilter,
+    industryFilter,
+    sourceFilter,
+    hasSalary,
+    dateFilter,
+    employmentTypeFilter,
+    feedMode,
+  ]);
+
   const clearAllFilters = () => {
+    setActivePresetId(null);
+    setFeedMode('all');
     setCompanyFilter('all');
     setRemoteFilter('all');
     setLocationFilter('all');
@@ -143,6 +205,130 @@ const JobFeed = () => {
     setEmploymentTypeFilter('all');
     setStatusFilter('all');
     setSearch('');
+  };
+
+  const persistSavedPresets = async (nextPresets: SavedSearchPreset[]) => {
+    if (!user) return;
+    const value = stringifySavedSearches(nextPresets);
+    await supabase.from('user_preferences').upsert(
+      { user_id: user.id, key: 'saved_search_presets', value },
+      { onConflict: 'user_id,key' },
+    );
+    setSavedPresets(nextPresets);
+  };
+
+  const applyPreset = (preset: SavedSearchPreset) => {
+    setActivePresetId(preset.id);
+    setSearch(preset.search);
+    setStatusFilter(preset.filters.statusFilter);
+    setCompanyFilter(preset.filters.companyFilter);
+    setRemoteFilter(preset.filters.remoteFilter);
+    setLocationFilter(preset.filters.locationFilter);
+    setScoreRange(preset.filters.scoreRange);
+    setRecommendationFilter(preset.filters.recommendationFilter);
+    setSeniorityFilter(preset.filters.seniorityFilter);
+    setIndustryFilter(preset.filters.industryFilter);
+    setSourceFilter(preset.filters.sourceFilter);
+    setHasSalary(preset.filters.hasSalary);
+    setDateFilter(preset.filters.dateFilter);
+    setEmploymentTypeFilter(preset.filters.employmentTypeFilter);
+    setFeedMode(preset.filters.feedMode);
+    setSubTab('all');
+  };
+
+  const createAlertForPreset = async (preset: SavedSearchPreset) => {
+    if (!user) return;
+
+    const searchQuery = buildPresetSubscriptionQuery(preset);
+    if (!searchQuery) {
+      toast.error('Saved searches need a query or include keywords before creating an alert.');
+      return;
+    }
+
+    const { data, error } = await supabase.from('job_subscriptions').insert({
+      user_id: user.id,
+      subscription_type: 'keyword_alert',
+      name: preset.name,
+      search_query: searchQuery,
+      country: preset.filters.locationFilter !== 'all' ? preset.filters.locationFilter : '',
+      config: {
+        include_keywords: preset.includeKeywords,
+        exclude_keywords: preset.excludeKeywords,
+        saved_filters: preset.filters,
+      } as any,
+    }).select('id').single();
+
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+
+    const nextPresets = savedPresets.map((item) =>
+      item.id === preset.id ? { ...item, alertSubscriptionId: data.id } : item,
+    );
+    await persistSavedPresets(nextPresets);
+    setActivePresetId(preset.id);
+    toast.success(`Alert created for "${preset.name}"`);
+  };
+
+  const saveCurrentPreset = async () => {
+    if (!user || !presetName.trim()) return;
+
+    setSavingPreset(true);
+    const preset: SavedSearchPreset = {
+      id: crypto.randomUUID(),
+      name: presetName.trim(),
+      search: search.trim(),
+      includeKeywords: parseKeywordList(presetIncludeInput),
+      excludeKeywords: parseKeywordList(presetExcludeInput),
+      filters: currentSavedSearchFilters,
+      createdAt: new Date().toISOString(),
+    };
+
+    let nextPreset = preset;
+    if (createPresetAlert) {
+      const searchQuery = buildPresetSubscriptionQuery(preset);
+      if (searchQuery) {
+        const { data, error } = await supabase.from('job_subscriptions').insert({
+          user_id: user.id,
+          subscription_type: 'keyword_alert',
+          name: preset.name,
+          search_query: searchQuery,
+          country: preset.filters.locationFilter !== 'all' ? preset.filters.locationFilter : '',
+          config: {
+            include_keywords: preset.includeKeywords,
+            exclude_keywords: preset.excludeKeywords,
+            saved_filters: preset.filters,
+          } as any,
+        }).select('id').single();
+
+        if (error) {
+          setSavingPreset(false);
+          toast.error(error.message);
+          return;
+        }
+
+        nextPreset = { ...preset, alertSubscriptionId: data.id };
+      }
+    }
+
+    const nextPresets = [nextPreset, ...savedPresets].slice(0, 12);
+    await persistSavedPresets(nextPresets);
+    setActivePresetId(nextPreset.id);
+    setSavePresetOpen(false);
+    setPresetName('');
+    setPresetIncludeInput('');
+    setPresetExcludeInput('');
+    setCreatePresetAlert(true);
+    setSavingPreset(false);
+    toast.success(`Saved "${nextPreset.name}"`);
+  };
+
+  const deletePreset = async (presetId: string) => {
+    const nextPresets = savedPresets.filter((preset) => preset.id !== presetId);
+    await persistSavedPresets(nextPresets);
+    if (activePresetId === presetId) setActivePresetId(null);
+    toast.success('Saved search removed');
   };
 
   const updateMultiJob = (index: number, field: string, value: string) => {
@@ -269,7 +455,24 @@ const JobFeed = () => {
       if (error) {
         toast.error('Search failed: ' + error.message);
       } else if (data?.jobs?.length > 0) {
-        const insertData = data.jobs.map((job: any) => ({
+        const { data: existingJobs } = await supabase
+          .from('jobs')
+          .select('title, company, apply_url')
+          .eq('user_id', user.id);
+
+        const existingUrls = new Set((existingJobs || []).map(job => job.apply_url).filter(Boolean));
+        const existingKeys = new Set((existingJobs || []).map(job => `${job.title?.toLowerCase()}|${job.company?.toLowerCase()}`));
+
+        const dedupedJobs = data.jobs.filter((job: any) => {
+          const identity = `${job.title?.toLowerCase()}|${job.company?.toLowerCase()}`;
+          if (job.apply_url && existingUrls.has(job.apply_url)) return false;
+          if (existingKeys.has(identity)) return false;
+          existingUrls.add(job.apply_url);
+          existingKeys.add(identity);
+          return true;
+        });
+
+        const insertData = dedupedJobs.map((job: any) => ({
           user_id: user.id,
           title: job.title,
           company: job.company,
@@ -283,11 +486,22 @@ const JobFeed = () => {
           seniority_level: job.seniority_level,
           requirements: job.requirements as any,
           apply_url: job.apply_url,
+          source_url: job.source_url,
+          raw_data: {
+            source: 'search',
+            search_context: 'gcc',
+            query: searchQuery,
+            country: country || null,
+          } as any,
         }));
-        const { data: inserted } = await supabase.from('jobs').insert(insertData).select();
-        if (inserted) {
+        if (insertData.length === 0) {
+          toast('Everything found was already in your feed.');
+        } else {
+          const { data: inserted } = await supabase.from('jobs').insert(insertData).select();
+          if (inserted) {
           setJobs(prev => [...inserted, ...prev]);
-          toast.success(`Found & imported ${inserted.length} ${gccSearchRemoteOnly ? 'remote ' : ''}jobs${gccSearchCountry ? ` in ${gccSearchCountry}` : ' in GCC'}`);
+            toast.success(`Found & imported ${inserted.length} ${gccSearchRemoteOnly ? 'remote ' : ''}jobs${gccSearchCountry ? ` in ${gccSearchCountry}` : ' in GCC'}`);
+          }
         }
       } else {
         toast('No jobs found. Try a different query or country.');
@@ -323,12 +537,32 @@ const JobFeed = () => {
     }
   };
 
-  const filtered = useMemo(() => jobs
+  const duplicateData = useMemo(() => buildDuplicateClusters(jobs), [jobs]);
+  const activePreset = useMemo(
+    () => savedPresets.find((preset) => preset.id === activePresetId) ?? null,
+    [savedPresets, activePresetId],
+  );
+
+  const feedModeJobs = useMemo(
+    () => filterJobsByFeedMode(jobs, matches, feedMode, duplicateData.byJobId),
+    [jobs, matches, feedMode, duplicateData.byJobId],
+  );
+
+  const filtered = useMemo(() => feedModeJobs
     .filter(j => {
       // Hide archived jobs unless explicitly viewing them
       if (statusFilter !== 'archived' && j.status === 'archived') return false;
       if (statusFilter === 'archived' && j.status !== 'archived') return false;
       const matchesSearch = !search || j.title.toLowerCase().includes(search.toLowerCase()) || j.company.toLowerCase().includes(search.toLowerCase()) || (j.location || '').toLowerCase().includes(search.toLowerCase());
+      const keywordHaystack = [j.title, j.company, j.location, j.description, ...(Array.isArray(j.requirements) ? j.requirements : [])]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      const matchesPresetKeywords = !activePreset || matchesSavedSearchKeywords(
+        keywordHaystack,
+        activePreset.includeKeywords,
+        activePreset.excludeKeywords,
+      );
       const matchesStatus = statusFilter === 'all' || statusFilter === 'archived' || j.status === statusFilter;
       const matchesCompany = companyFilter === 'all' || j.company === companyFilter;
       const matchesRemote = remoteFilter === 'all' || j.remote_type === remoteFilter;
@@ -343,11 +577,8 @@ const JobFeed = () => {
       const matchesScore = score === -1 || (score >= scoreRange[0] && score <= scoreRange[1]);
       const matchesRec = recommendationFilter === 'all' || match?.recommendation === recommendationFilter;
 
-      const rawData = j.raw_data as any;
-      const isLI = rawData?.source === 'linkedin' || (j.source_url || j.apply_url || '').includes('linkedin.com');
-      const matchesSource = sourceFilter === 'all' ||
-        (sourceFilter === 'linkedin' && isLI) ||
-        (sourceFilter === 'manual' && !isLI);
+      const feedSource = getFeedSource(j);
+      const matchesSource = sourceFilter === 'all' || sourceFilter === feedSource;
 
       const matchesSalary = hasSalary === 'all' ||
         (hasSalary === 'yes' && (j.salary_min || j.salary_max)) ||
@@ -355,7 +586,7 @@ const JobFeed = () => {
 
       const matchesEmploymentType = employmentTypeFilter === 'all' || j.employment_type === employmentTypeFilter;
 
-      return matchesSearch && matchesStatus && matchesCompany && matchesRemote &&
+      return matchesSearch && matchesPresetKeywords && matchesStatus && matchesCompany && matchesRemote &&
         matchesLocation && matchesScore && matchesRec && matchesSeniority &&
         matchesIndustry && matchesSource && matchesSalary && matchesDate && matchesEmploymentType;
     })
@@ -365,7 +596,7 @@ const JobFeed = () => {
       if (sortBy === 'title') return a.title.localeCompare(b.title);
       if (sortBy === 'salary') return (b.salary_max || b.salary_min || 0) - (a.salary_max || a.salary_min || 0);
       return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-    }), [jobs, search, statusFilter, companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, employmentTypeFilter, sortBy, matches]);
+    }), [feedModeJobs, search, activePreset, statusFilter, companyFilter, remoteFilter, locationFilter, scoreRange, recommendationFilter, seniorityFilter, industryFilter, sourceFilter, hasSalary, dateFilter, employmentTypeFilter, sortBy, matches]);
 
   // Stats
   const stats = useMemo(() => {
@@ -375,8 +606,27 @@ const JobFeed = () => {
     const avgScore = scored > 0 ? Math.round(Object.values(matches).reduce((s: number, m: any) => s + (m.overall_score || 0), 0) / scored) : 0;
     const withSalary = activeJobs.filter(j => j.salary_min || j.salary_max).length;
     const applyRec = Object.values(matches).filter((m: any) => m.recommendation === 'apply').length;
-    return { total: activeJobs.length, scored, avgScore, withSalary, applyRec, unscored: activeJobs.length - scored, archived: archivedCount };
-  }, [jobs, matches]);
+    const recent = activeJobs.filter(j => isWithinDateRange(j.created_at, '7d')).length;
+    return {
+      total: activeJobs.length,
+      scored,
+      avgScore,
+      withSalary,
+      applyRec,
+      recent,
+      unscored: activeJobs.length - scored,
+      archived: archivedCount,
+      duplicates: duplicateData.clusters.reduce((sum, cluster) => sum + cluster.ids.length, 0),
+      duplicateGroups: duplicateData.clusters.length,
+    };
+  }, [jobs, matches, duplicateData.clusters]);
+
+  const feedModeCounts = useMemo(() => ({
+    recommended: filterJobsByFeedMode(jobs, matches, 'recommended', duplicateData.byJobId).length,
+    unscored: filterJobsByFeedMode(jobs, matches, 'unscored', duplicateData.byJobId).length,
+    recent: filterJobsByFeedMode(jobs, matches, 'recent', duplicateData.byJobId).length,
+    duplicates: filterJobsByFeedMode(jobs, matches, 'duplicates', duplicateData.byJobId).length,
+  }), [jobs, matches, duplicateData.byJobId]);
 
   // Sub-tab: extract countries from job locations
   const countryTabs = useMemo(() => {
@@ -437,7 +687,7 @@ const JobFeed = () => {
     <div className="animate-fade-in">
       <PageHeader
         title="Job Feed"
-        description={statusFilter === 'archived' ? `${stats.archived} archived jobs` : `${stats.total} jobs tracked • ${stats.scored} scored • ${stats.applyRec} recommended`}
+        description={statusFilter === 'archived' ? `${stats.archived} archived jobs` : `${stats.total} jobs tracked • ${stats.applyRec} recommended • ${stats.recent} added this week`}
         actions={
           <div className="flex gap-2 flex-wrap">
             {stats.unscored > 0 && (
@@ -520,12 +770,13 @@ const JobFeed = () => {
 
       {/* Stats Bar */}
       {!loading && jobs.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
           <StatCard icon={Hash} label="Total Jobs" value={stats.total} />
           <StatCard icon={BarChart3} label="Scored" value={stats.scored} sub={stats.scored > 0 ? `avg ${stats.avgScore}` : undefined} />
           <StatCard icon={Star} label="Recommended" value={stats.applyRec} accent />
+          <StatCard icon={Calendar} label="This Week" value={stats.recent} />
           <StatCard icon={DollarSign} label="With Salary" value={stats.withSalary} />
-          <StatCard icon={Clock} label="Unscored" value={stats.unscored} />
+          <StatCard icon={Clock} label="Unscored" value={stats.unscored} sub={stats.duplicates > 0 ? `${stats.duplicateGroups} duplicate groups` : undefined} />
         </div>
       )}
 
@@ -631,11 +882,96 @@ const JobFeed = () => {
           )}
           <ChevronDown className={`w-3 h-3 transition-transform ${filtersOpen ? 'rotate-180' : ''}`} />
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 h-9"
+          onClick={() => {
+            setPresetName(search.trim() || 'Saved search');
+            setPresetIncludeInput(activePreset?.includeKeywords.join(', ') || '');
+            setPresetExcludeInput(activePreset?.excludeKeywords.join(', ') || '');
+            setCreatePresetAlert(true);
+            setSavePresetOpen(true);
+          }}
+        >
+          <BookmarkPlus className="w-4 h-4" />
+          Save Search
+        </Button>
       </div>
 
-      {/* Quick filter chips */}
-      {(activeFilterCount > 0 || statusFilter !== 'all') && (
+      {!loading && jobs.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mb-3">
+          {[
+            { key: 'all', label: `All (${jobs.length})` },
+            { key: 'recommended', label: `Recommended (${feedModeCounts.recommended})` },
+            { key: 'unscored', label: `Needs scoring (${feedModeCounts.unscored})` },
+            { key: 'recent', label: `Fresh (${feedModeCounts.recent})` },
+            { key: 'duplicates', label: `Duplicates (${feedModeCounts.duplicates})` },
+          ].map((view) => (
+            <Button
+              key={view.key}
+              variant={feedMode === view.key ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setFeedMode(view.key as FeedMode)}
+            >
+              {view.label}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      {savedPresets.length > 0 && (
+        <div className="mb-3">
+          <p className="text-[11px] text-muted-foreground mb-1.5">Saved searches</p>
+          <div className="flex flex-wrap gap-1.5">
+            {savedPresets.map((preset) => (
+              <div key={preset.id} className="flex items-center gap-1">
+                <Button
+                  variant={activePresetId === preset.id ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => applyPreset(preset)}
+                >
+                  {preset.name}
+                </Button>
+                {!preset.alertSubscriptionId && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => createAlertForPreset(preset)}
+                    title="Create alert"
+                  >
+                    Alert
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs text-muted-foreground"
+                  onClick={() => deletePreset(preset.id)}
+                  title="Remove preset"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Quick filter chips */}
+      {(activeFilterCount > 0 || statusFilter !== 'all' || feedMode !== 'all' || !!activePreset) && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {feedMode !== 'all' && <FilterChip label={`Feed: ${feedMode}`} onClear={() => setFeedMode('all')} />}
+          {activePreset && <FilterChip label={`Preset: ${activePreset.name}`} onClear={() => setActivePresetId(null)} />}
+          {activePreset?.includeKeywords.map((keyword) => (
+            <Badge key={`include-${keyword}`} variant="secondary" className="text-xs">+ {keyword}</Badge>
+          ))}
+          {activePreset?.excludeKeywords.map((keyword) => (
+            <Badge key={`exclude-${keyword}`} variant="secondary" className="text-xs">- {keyword}</Badge>
+          ))}
           {statusFilter !== 'all' && <FilterChip label={`Status: ${statusFilter}`} onClear={() => setStatusFilter('all')} />}
           {companyFilter !== 'all' && <FilterChip label={`Company: ${companyFilter}`} onClear={() => setCompanyFilter('all')} />}
           {remoteFilter !== 'all' && <FilterChip label={`Type: ${remoteFilter}`} onClear={() => setRemoteFilter('all')} />}
@@ -648,7 +984,7 @@ const JobFeed = () => {
           {dateFilter !== 'all' && <FilterChip label={`Date: ${dateFilter}`} onClear={() => setDateFilter('all')} />}
           {employmentTypeFilter !== 'all' && <FilterChip label={`Employment: ${employmentTypeFilter}`} onClear={() => setEmploymentTypeFilter('all')} />}
           {(scoreRange[0] > 0 || scoreRange[1] < 100) && <FilterChip label={`Score: ${scoreRange[0]}–${scoreRange[1]}`} onClear={() => setScoreRange([0, 100])} />}
-          {activeFilterCount > 1 && (
+          {(activeFilterCount > 1 || feedMode !== 'all' || !!activePreset) && (
             <button onClick={clearAllFilters} className="text-xs text-muted-foreground hover:text-foreground underline ml-1">Clear all</button>
           )}
         </div>
@@ -707,6 +1043,8 @@ const JobFeed = () => {
                 <FilterSelect label="Source" value={sourceFilter} onChange={setSourceFilter} options={[
                   { value: 'all', label: 'All Sources' },
                   { value: 'linkedin', label: 'LinkedIn' },
+                  { value: 'search', label: 'Search Imports' },
+                  { value: 'subscription', label: 'Subscriptions' },
                   { value: 'manual', label: 'Manual / Other' },
                 ]} />
                 <FilterSelect label="Salary Info" value={hasSalary} onChange={setHasSalary} options={[
@@ -794,7 +1132,8 @@ const JobFeed = () => {
       {!loading && (
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs text-muted-foreground">
-            {subTabFiltered.length} of {jobs.length} jobs
+            {subTabFiltered.length} of {feedModeJobs.length} jobs
+            {feedMode !== 'all' && ` • ${feedMode}`}
             {subTab !== 'all' && ` • ${subTab === 'remote' ? 'Remote' : subTab === 'onsite' ? 'On-site/Hybrid' : subTab}`}
             {activeFilterCount > 0 && ` • ${activeFilterCount} filter${activeFilterCount > 1 ? 's' : ''} active`}
           </p>
@@ -839,10 +1178,10 @@ const JobFeed = () => {
       ) : subTabFiltered.length === 0 ? (
         <EmptyState
           icon={Rss}
-          title={search || activeFilterCount > 0 || subTab !== 'all' ? 'No matching jobs' : 'No jobs tracked yet'}
-          description={search || activeFilterCount > 0 || subTab !== 'all' ? 'Try different filters, tabs, or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
-          actionLabel={search || activeFilterCount > 0 || subTab !== 'all' ? 'Clear Filters' : 'Add Job'}
-          onAction={search || activeFilterCount > 0 ? clearAllFilters : subTab !== 'all' ? () => setSubTab('all') : () => setAddOpen(true)}
+          title={search || activeFilterCount > 0 || subTab !== 'all' || feedMode !== 'all' || !!activePreset ? 'No matching jobs' : 'No jobs tracked yet'}
+          description={search || activeFilterCount > 0 || subTab !== 'all' || feedMode !== 'all' || !!activePreset ? 'Try different filters, tabs, or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
+          actionLabel={search || activeFilterCount > 0 || feedMode !== 'all' || subTab !== 'all' || !!activePreset ? 'Clear Filters' : 'Add Job'}
+          onAction={search || activeFilterCount > 0 || feedMode !== 'all' || !!activePreset ? clearAllFilters : subTab !== 'all' ? () => setSubTab('all') : () => setAddOpen(true)}
         />
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -881,6 +1220,37 @@ const JobFeed = () => {
           ))}
         </div>
       )}
+
+      <Dialog open={savePresetOpen} onOpenChange={setSavePresetOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Save Search Preset</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Preset Name</Label>
+              <Input value={presetName} onChange={(e) => setPresetName(e.target.value)} placeholder="Remote React roles" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Include Keywords</Label>
+              <Input value={presetIncludeInput} onChange={(e) => setPresetIncludeInput(e.target.value)} placeholder="remote, typescript, react" />
+              <p className="text-[11px] text-muted-foreground">These keywords must appear in the job title, description, company, location, or requirements.</p>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Exclude Keywords</Label>
+              <Input value={presetExcludeInput} onChange={(e) => setPresetExcludeInput(e.target.value)} placeholder="intern, unpaid, manager" />
+            </div>
+            <div className="flex items-center justify-between rounded-md border border-border px-3 py-2">
+              <div>
+                <p className="text-sm font-medium text-foreground">Create alert now</p>
+                <p className="text-[11px] text-muted-foreground">Adds a keyword alert to Subscriptions in one click.</p>
+              </div>
+              <Checkbox checked={createPresetAlert} onCheckedChange={(checked) => setCreatePresetAlert(!!checked)} />
+            </div>
+            <Button onClick={saveCurrentPreset} disabled={savingPreset || !presetName.trim()} className="w-full">
+              {savingPreset ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</> : 'Save Preset'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <ImportJobDialog open={importOpen} onOpenChange={setImportOpen} onJobAdded={(job) => setJobs([job, ...jobs])} />
       <BulkSearchDialog open={bulkSearchOpen} onOpenChange={setBulkSearchOpen} onJobsAdded={(newJobs) => setJobs([...newJobs, ...jobs])} />
@@ -927,13 +1297,21 @@ const FilterSelect = ({ label, value, onChange, options }: { label: string; valu
   </div>
 );
 
-function getJobSource(job: any) {
-  const rawData = job.raw_data as any;
-  return rawData?.source === 'linkedin' || (job.source_url || job.apply_url || '').includes('linkedin.com');
+function isLinkedInJob(job: any) {
+  return getFeedSource(job) === 'linkedin';
+}
+
+function getJobSourceBadge(job: any) {
+  const source = getFeedSource(job);
+  if (source === 'linkedin') return { label: 'LI', className: 'border-sky-200 text-sky-700 dark:border-sky-800 dark:text-sky-300' };
+  if (source === 'search') return { label: 'Search', className: 'border-violet-200 text-violet-700 dark:border-violet-800 dark:text-violet-300' };
+  if (source === 'subscription') return { label: 'Sub', className: 'border-amber-200 text-amber-700 dark:border-amber-800 dark:text-amber-300' };
+  return null;
 }
 
 const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
-  const isLI = getJobSource(job);
+  const isLI = isLinkedInJob(job);
+  const sourceBadge = getJobSourceBadge(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
 
@@ -972,8 +1350,8 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUn
             {job.seniority_level && (
               <Badge variant="outline" className="text-[10px] capitalize h-5">{job.seniority_level}</Badge>
             )}
-            {isLI && (
-              <Badge variant="outline" className="text-[10px] border-sky-200 text-sky-700 dark:border-sky-800 dark:text-sky-300 h-5">LI</Badge>
+            {sourceBadge && (
+              <Badge variant="outline" className={`text-[10px] h-5 ${sourceBadge.className}`}>{sourceBadge.label}</Badge>
             )}
             {match && <ScoreBadge score={match.overall_score} />}
             {match?.recommendation && (
@@ -1004,7 +1382,8 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUn
 };
 
 const JobCardGrid = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
-  const isLI = getJobSource(job);
+  const isLI = isLinkedInJob(job);
+  const sourceBadge = getJobSourceBadge(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
 
@@ -1049,6 +1428,7 @@ const JobCardGrid = ({ job, match, selected, onSelect, onDelete, onArchive, onUn
               <Badge variant="outline" className="text-[10px] capitalize h-5">{job.remote_type}</Badge>
             )}
             {job.seniority_level && <Badge variant="outline" className="text-[10px] capitalize h-5">{job.seniority_level}</Badge>}
+            {sourceBadge && <Badge variant="outline" className={`text-[10px] h-5 ${sourceBadge.className}`}>{sourceBadge.label}</Badge>}
             {salary && <Badge variant="outline" className="text-[10px] h-5 text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800">{salary}</Badge>}
           </div>
 

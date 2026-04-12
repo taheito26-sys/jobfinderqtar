@@ -6,6 +6,36 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function normalizeText(value: string | null | undefined) {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+function normalizeUrl(value: string | null | undefined) {
+  if (!value) return "";
+
+  try {
+    const url = new URL(value);
+    url.hash = "";
+    ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "trk", "ref", "refid"].forEach((param) => {
+      url.searchParams.delete(param);
+    });
+    const normalizedPath = url.pathname.replace(/\/+$/, "") || "/";
+    const search = url.searchParams.toString();
+    return `${url.hostname.toLowerCase()}${normalizedPath.toLowerCase()}${search ? `?${search}` : ""}`;
+  } catch {
+    return value.trim().toLowerCase();
+  }
+}
+
+function buildResultIdentity(result: any) {
+  const urlKey = normalizeUrl(result?.url);
+  if (urlKey) return `url:${urlKey}`;
+
+  const title = normalizeText(result?.metadata?.title || result?.title || "");
+  const description = normalizeText(result?.metadata?.description || "");
+  return `text:${title}|${description}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -64,10 +94,18 @@ Deno.serve(async (req) => {
     }
 
     const rawResults = searchData.data || [];
+    const seenIdentities = new Set<string>();
+    const dedupedResults = rawResults.filter((result: any) => {
+      const identity = buildResultIdentity(result);
+      if (!identity) return false;
+      if (seenIdentities.has(identity)) return false;
+      seenIdentities.add(identity);
+      return true;
+    });
 
-    if (rawResults.length > 0) {
+    if (dedupedResults.length > 0) {
       try {
-        const summaries = rawResults.map((r: any, i: number) => {
+        const summaries = dedupedResults.map((r: any, i: number) => {
           const title = r.metadata?.title || r.title || "";
           const desc = r.metadata?.description || "";
           const markdown = (r.markdown || "").substring(0, 800);
@@ -103,7 +141,7 @@ ${summaries}`,
         const parsed = JSON.parse(cleaned);
         if (Array.isArray(parsed)) {
           const enriched = parsed.map((p: any) => {
-            const source = rawResults[p.index];
+            const source = dedupedResults[p.index];
             if (!source) return null;
             return {
               title: p.title || "Untitled Job",
@@ -135,7 +173,7 @@ ${summaries}`,
     }
 
     // Fallback: basic extraction without AI
-    const results = rawResults.map((result: any) => {
+    const results = dedupedResults.map((result: any) => {
       const title = result.metadata?.title || result.title || "";
       const description = result.metadata?.description || (result.markdown || "").substring(0, 1000);
       const titleParts = title.split(/\s[-–|@]\s/);

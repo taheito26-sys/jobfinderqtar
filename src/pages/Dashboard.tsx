@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
   Briefcase, FileText, Send, TrendingUp, Target, Clock, Zap, Plus,
-  Search, Upload, ArrowRight, BarChart3, Activity
+  Search, Upload, ArrowRight, BarChart3, Inbox
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow } from 'date-fns';
@@ -106,7 +106,7 @@ const Dashboard = () => {
     { label: 'Add Job', icon: Plus, to: '/jobs', desc: 'Manually add a new job' },
     { label: 'Search Jobs', icon: Search, to: '/jobs', desc: 'Run bulk job search' },
     { label: 'Upload CV', icon: Upload, to: '/cv-library', desc: 'Upload a new document' },
-    { label: 'View Profile', icon: Activity, to: '/profile', desc: 'Check profile completeness' },
+    { label: 'Follow-up', icon: Inbox, to: '/follow-up', desc: 'Review next actions' },
   ];
 
   return (

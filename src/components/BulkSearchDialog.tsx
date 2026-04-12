@@ -249,6 +249,13 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
       seniority_level: job.seniority_level,
       requirements: job.requirements as any,
       apply_url: job.apply_url,
+      source_url: job.source_url,
+      raw_data: {
+        source: 'search',
+        search_mode: searchMode,
+        country: getEffectiveCountry() || null,
+        query: buildSearchQuery(),
+      } as any,
     }));
 
     const { data, error } = await supabase.from('jobs').insert(insertData).select();

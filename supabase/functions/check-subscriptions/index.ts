@@ -55,6 +55,21 @@ function extractJobFromResult(result: any): { title: string; company: string; de
   };
 }
 
+function matchesKeywordAlert(job: { title: string; company: string; description: string }, sub: any): boolean {
+  const config = sub.config || {};
+  const includeKeywords = Array.isArray(config.include_keywords)
+    ? config.include_keywords.filter(Boolean)
+    : (sub.search_query || '').split(/\s+/).filter((keyword: string) => keyword.length > 2);
+  const excludeKeywords = Array.isArray(config.exclude_keywords)
+    ? config.exclude_keywords.filter(Boolean)
+    : [];
+
+  const combined = `${job.title} ${job.company} ${job.description}`.toLowerCase();
+  const includesMatch = includeKeywords.length === 0 || includeKeywords.every((keyword: string) => combined.includes(keyword.toLowerCase()));
+  const excludesMatch = excludeKeywords.every((keyword: string) => !combined.includes(keyword.toLowerCase()));
+  return includesMatch && excludesMatch;
+}
+
 // Check if a job result is relevant to the subscription target
 function isRelevantJob(job: { title: string; company: string; description: string; apply_url: string }, sub: any): boolean {
   const subName = (sub.name || '').toLowerCase();
@@ -90,11 +105,7 @@ function isRelevantJob(job: { title: string; company: string; description: strin
       return jobUrl.includes('linkedin.com') || jobCompany.includes(subName) || jobDesc.includes(subName);
 
     case 'keyword_alert':
-      // Must match the search query keywords
-      const keywords = subQuery.split(/\s+/).filter((k: string) => k.length > 2);
-      if (keywords.length === 0) return true;
-      const combined = `${jobTitle} ${jobCompany} ${jobDesc}`;
-      return keywords.some((kw: string) => combined.includes(kw));
+      return matchesKeywordAlert(job, sub);
 
     default:
       return true;
