@@ -91,16 +91,35 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
     }
   };
 
+  const normalizeLinkedInJobUrl = (value: string) => {
+    try {
+      const parsed = new URL(value.trim());
+      if (parsed.hostname.includes('linkedin.com') && parsed.pathname.includes('/safety/go')) {
+        const target = parsed.searchParams.get('url');
+        if (target) {
+          const decoded = decodeURIComponent(target);
+          return decoded.startsWith('http://') || decoded.startsWith('https://')
+            ? decoded
+            : `https://${decoded}`;
+        }
+      }
+      return value.trim();
+    } catch {
+      return value.trim();
+    }
+  };
+
   const scrapeImportUrl = async (urlToScrape: string) => {
+    const normalizedUrl = normalizeLinkedInJobUrl(urlToScrape);
     setActiveTab('url');
-    setImportUrl(urlToScrape);
+    setImportUrl(normalizedUrl);
     setScraping(true);
     setUrlResults([]);
     setUrlSelected(new Set());
 
     try {
       const { data, error } = await supabase.functions.invoke('scrape-job-url', {
-        body: { url: urlToScrape },
+        body: { url: normalizedUrl },
       });
 
       if (error) {

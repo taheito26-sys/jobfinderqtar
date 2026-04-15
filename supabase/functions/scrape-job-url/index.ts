@@ -11,6 +11,27 @@ function isLinkedInUrl(url: string): boolean {
   try { return new URL(url).hostname.includes('linkedin.com'); } catch { return false; }
 }
 
+function unwrapLinkedInSafetyUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const isSafetyRedirect =
+      parsed.hostname.includes('linkedin.com') &&
+      parsed.pathname.includes('/safety/go');
+
+    if (!isSafetyRedirect) return url;
+
+    const target = parsed.searchParams.get('url');
+    if (!target) return url;
+
+    const decoded = decodeURIComponent(target);
+    return decoded.startsWith('http://') || decoded.startsWith('https://')
+      ? decoded
+      : `https://${decoded}`;
+  } catch {
+    return url;
+  }
+}
+
 function extractLinkedInJobId(url: string): string | null {
   const match = url.match(/\/jobs\/view\/(\d+)/) || url.match(/currentJobId=(\d+)/);
   return match ? match[1] : null;
@@ -364,7 +385,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    let formattedUrl = url.trim();
+    let formattedUrl = unwrapLinkedInSafetyUrl(url.trim());
     if (!formattedUrl.startsWith('http://') && !formattedUrl.startsWith('https://')) {
       formattedUrl = `https://${formattedUrl}`;
     }

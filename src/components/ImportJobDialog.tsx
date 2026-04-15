@@ -37,6 +37,15 @@ function isLinkedInUrl(url: string): boolean {
 function normalizeLinkedInJobUrl(url: string): string {
   try {
     const u = new URL(url);
+    if (u.hostname.includes('linkedin.com') && u.pathname.includes('/safety/go')) {
+      const target = u.searchParams.get('url');
+      if (target) {
+        const decoded = decodeURIComponent(target);
+        return decoded.startsWith('http://') || decoded.startsWith('https://')
+          ? decoded
+          : `https://${decoded}`;
+      }
+    }
     const jobIdMatch = u.pathname.match(/\/jobs\/view\/(\d+)/) ||
                        u.pathname.match(/\/jobs\/(\d+)/) ||
                        url.match(/currentJobId=(\d+)/);
@@ -110,7 +119,7 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
     setMultiJobs([]);
     setMultiSelected(new Set());
 
-    const normalizedUrl = isLinkedin ? url.trim() : url.trim(); // Keep full URL for search pages
+    const normalizedUrl = normalizeLinkedInJobUrl(url.trim());
     const result = await scrapeOrParse(normalizedUrl);
 
     if (result.linkedinLoginRequired) {
