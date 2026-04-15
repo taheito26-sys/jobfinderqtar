@@ -121,10 +121,27 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     return '';
   };
 
+  const isProbablyUrl = (value: string) => {
+    try {
+      const parsed = new URL(value.trim());
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
   const handleSearch = async () => {
     const searchQuery = buildSearchQuery();
     if (!searchQuery) {
       toast({ title: 'Missing query', description: 'Please enter a search term.', variant: 'destructive' });
+      return;
+    }
+    if (isProbablyUrl(searchQuery)) {
+      toast({
+        title: 'That looks like a URL',
+        description: 'Use the Import URL tab for direct job links instead of Quick Search.',
+        variant: 'destructive',
+      });
       return;
     }
     setSearching(true);

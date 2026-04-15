@@ -82,8 +82,56 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
     try { return new URL(url).hostname.includes('linkedin.com'); } catch { return false; }
   };
 
+  const isProbablyUrl = (value: string) => {
+    try {
+      const parsed = new URL(value.trim());
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const scrapeImportUrl = async (urlToScrape: string) => {
+    setActiveTab('url');
+    setImportUrl(urlToScrape);
+    setScraping(true);
+    setUrlResults([]);
+    setUrlSelected(new Set());
+
+    try {
+      const { data, error } = await supabase.functions.invoke('scrape-job-url', {
+        body: { url: urlToScrape },
+      });
+
+      if (error) {
+        toast({ title: 'Scrape failed', description: error.message, variant: 'destructive' });
+      } else if (data?.multiple && Array.isArray(data.jobs)) {
+        setUrlResults(data.jobs);
+        setUrlSelected(new Set(data.jobs.map((_: any, i: number) => i)));
+        const failedMsg = data.failed_count ? ` (${data.failed_count} could not be extracted)` : '';
+        toast({ title: `Found ${data.jobs.length} jobs!`, description: `Review and select which to import${failedMsg}` });
+      } else if (data?.job) {
+        setUrlResults([data.job]);
+        setUrlSelected(new Set([0]));
+        toast({ title: 'Job extracted!', description: `${data.job.title} at ${data.job.company}` });
+      } else if (data?.error === 'LINKEDIN_LOGIN_REQUIRED') {
+        toast({ title: 'LinkedIn login required', description: data.message || 'Try a direct job URL or use Bulk Search.', variant: 'destructive' });
+      } else {
+        toast({ title: 'Extraction failed', description: 'Could not extract job data from this URL.', variant: 'destructive' });
+      }
+    } catch {
+      toast({ title: 'Error', description: 'Scrape failed', variant: 'destructive' });
+    }
+
+    setScraping(false);
+  };
+
   const handleSearch = async () => {
     if (!query.trim() || !user) return;
+    if (isProbablyUrl(query.trim())) {
+      await scrapeImportUrl(query.trim());
+      return;
+    }
     setSearching(true);
     setResults([]);
     setSelected(new Set());
@@ -128,35 +176,7 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
 
   const handleUrlScrape = async () => {
     if (!importUrl.trim() || !user) return;
-    setScraping(true);
-    setUrlResults([]);
-    setUrlSelected(new Set());
-
-    try {
-      const { data, error } = await supabase.functions.invoke('scrape-job-url', {
-        body: { url: importUrl.trim() },
-      });
-
-      if (error) {
-        toast({ title: 'Scrape failed', description: error.message, variant: 'destructive' });
-      } else if (data?.multiple && Array.isArray(data.jobs)) {
-        setUrlResults(data.jobs);
-        setUrlSelected(new Set(data.jobs.map((_: any, i: number) => i)));
-        const failedMsg = data.failed_count ? ` (${data.failed_count} could not be extracted)` : '';
-        toast({ title: `Found ${data.jobs.length} jobs!`, description: `Review and select which to import${failedMsg}` });
-      } else if (data?.job) {
-        setUrlResults([data.job]);
-        setUrlSelected(new Set([0]));
-        toast({ title: 'Job extracted!', description: `${data.job.title} at ${data.job.company}` });
-      } else if (data?.error === 'LINKEDIN_LOGIN_REQUIRED') {
-        toast({ title: 'LinkedIn login required', description: data.message || 'Try a direct job URL or use Bulk Search.', variant: 'destructive' });
-      } else {
-        toast({ title: 'Extraction failed', description: 'Could not extract job data from this URL.', variant: 'destructive' });
-      }
-    } catch {
-      toast({ title: 'Error', description: 'Scrape failed', variant: 'destructive' });
-    }
-    setScraping(false);
+    await scrapeImportUrl(importUrl.trim());
   };
 
   const importJobs = async (jobs: FoundJob[], selectedSet: Set<number>, source: string) => {
