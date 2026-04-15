@@ -1,7 +1,8 @@
 // LinkedIn Native Search logic
-// Based on logic from:
-// 1. linkedin-jobs-api-py (Python reference)
-// 2. felipfr/linkedin-mcpserver (MCP/Service reference)
+// Research-backed implementation based on:
+// 1. speedyapply/JobSpy - BeautifulSoup class-based selectors, job ID from URL, datetime attribute
+// 2. python-scrapy-playbook/linkedin-python-scrapy-scraper - CSS selectors: h3::text, h4 a::text
+// 3. scrapfly/scrapfly-scrapers - XPath: //section[results-list]/ul/li, span/text() for title
 
 export interface LinkedInSearchInput {
   keywords: string;
@@ -44,54 +45,146 @@ export function buildLinkedInSearchUrl(input: LinkedInSearchInput): string {
   const { keywords, location, pageNum = 0, limit = 25, postedWithin, remotePreference } = input;
   const baseUrl = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search";
   const params = new URLSearchParams();
-  
+
   params.append("keywords", keywords);
   if (location) params.append("location", location);
-  
+
   const f_TPR = mapPostedWithinToLinkedIn(postedWithin);
   if (f_TPR) params.append("f_TPR", f_TPR);
-  
+
   const f_WT = mapRemotePreferenceToLinkedIn(remotePreference);
   if (f_WT) params.append("f_WT", f_WT);
-  
+
   const start = pageNum * limit;
   params.append("start", start.toString());
-  
+
   return `${baseUrl}?${params.toString()}`;
 }
 
 /**
- * Strategy 1: Regular card-based parsing
+ * Strip HTML tags and decode common HTML entities.
+ */
+function stripHtml(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Extract the numeric LinkedIn job ID from a URL or URN string.
+ *
+ * Reference: speedyapply/JobSpy → job_id = href.split("-")[-1]
+ * LinkedIn job URLs follow: /jobs/view/some-job-title-<JOBID>
+ * The ID is always the last numeric segment.
+ */
+function extractJobIdFromUrl(href: string): string | null {
+  const clean = href.split("?")[0];
+  // Pattern: /jobs/view/anything-NUMBERS or /jobs/view/NUMBERS
+  const fromPath = clean.match(/\/jobs\/view\/(?:[^/]*?-)?(\d{7,})\/?$/);
+  if (fromPath) return fromPath[1];
+  // Fallback: any 7+ digit number at end of path
+  const fallback = clean.match(/(\d{7,})\/?$/);
+  return fallback ? fallback[1] : null;
+}
+
+// ─────────────────────────────────────────────
+// STRATEGY 1 (PRIMARY): class-based <li> parsing
+// Reference: JobSpy + Scrapy Playbook
+// ─────────────────────────────────────────────
+/**
+ * Primary strategy: iterate <li> blocks, filter those that contain
+ * a `base-search-card` div (the actual job card), then extract fields
+ * using class-based regex patterns.
+ *
+ * Key selectors derived from reference implementations:
+ *   JobSpy:         soup.find_all("div", class_="base-search-card")
+ *   Scrapy Playbook: li > .base-card__full-link, h3::text, h4 a::text,
+ *                    .job-search-card__location::text, time::text
+ *   Scrapfly:       //section[results-list]/ul/li → .//div/a/span/text()
  */
 function parseStrategyCardBased(html: string): LinkedInJobSnippet[] {
   const snippets: LinkedInJobSnippet[] = [];
-  const cardRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+  // Matches every <li>…</li> block (job cards live in a flat <ul>)
+  const liRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
   let match;
 
-  while ((match = cardRegex.exec(html)) !== null) {
-    const cardContent = match[1];
+  while ((match = liRegex.exec(html)) !== null) {
+    const block = match[1];
 
-    // Extract job ID from data-entity-urn attribute which has format: urn:li:jobPosting:XXXXX
-    const urnMatch = cardContent.match(/data-entity-urn=["']urn:li:jobPosting:(\d+)["']/i);
-    if (!urnMatch) continue; // Skip if no valid job posting URN found
+    // Only process blocks containing a LinkedIn job card div
+    if (!block.includes("base-search-card")) continue;
 
-    const linkedin_job_id = urnMatch[1];
-    
-    const titleMatch = cardContent.match(/<h3[^>]*class=["'][^'"]*(base-search-card__title|result-card__title|job-search-card__title)[^'"]*["'][^>]*>\s*([\s\S]*?)\s*<\/h3>/i);
-    const title = titleMatch ? titleMatch[2].trim() : "Untitled";
-    
-    const companyMatch = cardContent.match(/<(h4|span)[^>]*class=["'][^'"]*(base-search-card__subtitle|result-card__subtitle|job-search-card__subtitle)[^'"]*["'][^>]*>[\s\S]*?<a[^>]*>\s*([\s\S]*?)\s*<\/a>/i) || 
-                         cardContent.match(/<(h4|span)[^>]*class=["'][^'"]*(base-search-card__subtitle|result-card__subtitle|job-search-card__subtitle)[^'"]*["'][^>]*>\s*([\s\S]*?)\s*<\/(h4|span)>/i);
-    const company = companyMatch ? companyMatch[3].trim() : "Unknown Company";
-    
-    const locationMatch = cardContent.match(/<span[^>]*class=["'][^'"]*(job-search-card__location|result-card__location)[^'"]*["'][^>]*>\s*([\s\S]*?)\s*<\/span>/i);
-    const location = locationMatch ? locationMatch[2].trim() : "Unknown Location";
-    
-    const dateMatch = cardContent.match(/<time[^>]*class=["'][^'"]*(job-search-card__listdate|result-card__listdate)[^'"]*["'][^>]*>\s*([\s\S]*?)\s*<\/time>/i);
-    const source_created_at_text = dateMatch ? dateMatch[2].trim() : undefined;
-    
-    const linkMatch = cardContent.match(/<a[^>]*class=["'][^'"]*(base-card__full-link|result-card__full-link|job-search-card__full-link)[^'"]*["'][^>]*href=["']([^'"]+)["']/i);
-    const apply_url = linkMatch ? linkMatch[2].split('?')[0] : `https://www.linkedin.com/jobs/view/${linkedin_job_id}`;
+    // ── Job URL ──────────────────────────────────────────────────────────────
+    // Scrapy Playbook: .base-card__full-link::attr(href)
+    // JobSpy:          job_card.find("a", class_="base-card__full-link")
+    const linkMatch =
+      block.match(/<a[^>]*class="[^"]*base-card__full-link[^"]*"[^>]*href="([^"]+)"/i) ||
+      block.match(/href="([^"]*\/jobs\/view\/[^"?]+)"/i);
+
+    if (!linkMatch) continue;
+
+    const href = linkMatch[1];
+    const apply_url = href.split("?")[0];
+
+    // ── Job ID ───────────────────────────────────────────────────────────────
+    // JobSpy: job_id = href.split("-")[-1]   (last numeric segment of URL)
+    // Fallback: data-entity-urn="urn:li:jobPosting:XXXXX"
+    let linkedin_job_id = extractJobIdFromUrl(href) ?? "";
+    if (!linkedin_job_id) {
+      const urnMatch = block.match(/data-entity-urn="urn:li:jobPosting:(\d+)"/i);
+      if (urnMatch) linkedin_job_id = urnMatch[1];
+    }
+    if (!linkedin_job_id) continue;
+
+    // ── Title ────────────────────────────────────────────────────────────────
+    // JobSpy:          job_card.find("span", class_="sr-only")   ← most reliable
+    // Scrapy Playbook: h3::text
+    // Scrapfly:        .//div/a/span/text()  (same sr-only span)
+    const srOnlyMatch = block.match(
+      /<span[^>]*class="[^"]*sr-only[^"]*"[^>]*>([\s\S]*?)<\/span>/i
+    );
+    const h3Match = block.match(
+      /<h3[^>]*class="[^"]*base-search-card__title[^"]*"[^>]*>([\s\S]*?)<\/h3>/i
+    );
+    const titleRaw = srOnlyMatch ? srOnlyMatch[1] : (h3Match ? h3Match[1] : "");
+    const title = stripHtml(titleRaw) || "Untitled";
+
+    // ── Company ──────────────────────────────────────────────────────────────
+    // JobSpy:          job_card.find("h4", class_="base-search-card__subtitle")
+    // Scrapy Playbook: h4 a::text
+    const h4Match = block.match(
+      /<h4[^>]*class="[^"]*base-search-card__subtitle[^"]*"[^>]*>([\s\S]*?)<\/h4>/i
+    );
+    const company = h4Match ? stripHtml(h4Match[1]) : "Unknown Company";
+
+    // ── Location ─────────────────────────────────────────────────────────────
+    // JobSpy:          metadata_card.find("span", class_="job-search-card__location")
+    // Scrapy Playbook: .job-search-card__location::text
+    const locMatch = block.match(
+      /<span[^>]*class="[^"]*job-search-card__location[^"]*"[^>]*>([\s\S]*?)<\/span>/i
+    );
+    const location = locMatch ? stripHtml(locMatch[1]) : "Unknown Location";
+
+    // ── Date ─────────────────────────────────────────────────────────────────
+    // JobSpy: time.job-search-card__listdate OR time.job-search-card__listdate--new
+    //         Uses the `datetime` attribute (ISO "YYYY-MM-DD") for accuracy.
+    // Scrapy Playbook: time::text  (human-readable fallback)
+    const dateAttrMatch = block.match(/<time[^>]*datetime="([^"]+)"[^>]*>/i);
+    const dateTextMatch = block.match(
+      /<time[^>]*class="[^"]*job-search-card__listdate[^"]*"[^>]*>([\s\S]*?)<\/time>/i
+    );
+    const source_created_at_text = dateAttrMatch
+      ? dateAttrMatch[1]                             // e.g. "2026-04-15" (preferred)
+      : dateTextMatch
+        ? stripHtml(dateTextMatch[1])                // e.g. "9 hours ago" (fallback)
+        : undefined;
 
     snippets.push({
       linkedin_job_id,
@@ -100,94 +193,202 @@ function parseStrategyCardBased(html: string): LinkedInJobSnippet[] {
       location,
       apply_url,
       source_created_at_text,
-      raw_card_payload: { html: cardContent }
+      raw_card_payload: { html: block.substring(0, 400) },
     });
   }
+
   return snippets;
 }
 
+// ─────────────────────────────────────────────
+// STRATEGY 2: URN anchor-based extraction
+// ─────────────────────────────────────────────
 /**
- * Strategy 2: Link-based discovery
- * Finds all /jobs/view/ID links and tries to find card info nearby
+ * Fallback: scan for all `data-entity-urn` anchors and extract a
+ * surrounding context window for field parsing.
+ */
+function parseStrategyUrnBased(html: string): LinkedInJobSnippet[] {
+  const snippets: LinkedInJobSnippet[] = [];
+  const seenIds = new Set<string>();
+  const urnRegex = /data-entity-urn="urn:li:jobPosting:(\d+)"/g;
+  let match;
+
+  while ((match = urnRegex.exec(html)) !== null) {
+    const linkedin_job_id = match[1];
+    if (seenIds.has(linkedin_job_id)) continue;
+    seenIds.add(linkedin_job_id);
+
+    const pos = match.index;
+    const ctx = html.substring(Math.max(0, pos - 100), Math.min(html.length, pos + 1800));
+
+    const linkMatch = ctx.match(/href="([^"]*\/jobs\/view\/[^"?]+)/i);
+    const apply_url = linkMatch
+      ? linkMatch[1].split("?")[0]
+      : `https://www.linkedin.com/jobs/view/${linkedin_job_id}`;
+
+    const srOnlyMatch = ctx.match(/<span[^>]*class="[^"]*sr-only[^"]*"[^>]*>([\s\S]*?)<\/span>/i);
+    const h3Match = ctx.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i);
+    const title = stripHtml(srOnlyMatch ? srOnlyMatch[1] : h3Match ? h3Match[1] : "") || "Untitled";
+
+    const h4Match = ctx.match(/<h4[^>]*>([\s\S]*?)<\/h4>/i);
+    const company = h4Match ? stripHtml(h4Match[1]) : "Unknown Company";
+
+    const locMatch = ctx.match(/<span[^>]*job-search-card__location[^>]*>([\s\S]*?)<\/span>/i);
+    const location = locMatch ? stripHtml(locMatch[1]) : "Unknown Location";
+
+    const dateAttrMatch = ctx.match(/<time[^>]*datetime="([^"]+)"/i);
+    const dateTextMatch = ctx.match(/<time[^>]*>([\s\S]*?)<\/time>/i);
+    const source_created_at_text = dateAttrMatch
+      ? dateAttrMatch[1]
+      : dateTextMatch ? stripHtml(dateTextMatch[1]) : undefined;
+
+    snippets.push({
+      linkedin_job_id,
+      title,
+      company,
+      location,
+      apply_url,
+      source_created_at_text,
+      raw_card_payload: { strategy: "urn-based" },
+    });
+  }
+
+  return snippets;
+}
+
+// ─────────────────────────────────────────────
+// STRATEGY 3: link-based discovery (last resort)
+// ─────────────────────────────────────────────
+/**
+ * Last-resort fallback: find all /jobs/view/ href anchors and extract
+ * job IDs + surrounding context.
  */
 function parseStrategyLinkBased(html: string): LinkedInJobSnippet[] {
   const snippets: LinkedInJobSnippet[] = [];
-  const linkRegex = /\/jobs\/view\/(\d+)/g;
   const seenIds = new Set<string>();
+  const linkRegex = /href="([^"]*\/jobs\/view\/[^"]+)"/g;
   let match;
-  
+
   while ((match = linkRegex.exec(html)) !== null) {
-    const jobId = match[1];
-    if (seenIds.has(jobId)) continue;
+    const href = match[1];
+    const jobId = extractJobIdFromUrl(href);
+    if (!jobId || seenIds.has(jobId)) continue;
     seenIds.add(jobId);
-    
-    // Try to find context around this link
-    const linkPos = match.index;
-    const startPos = Math.max(0, linkPos - 400);
-    const endPos = Math.min(html.length, linkPos + 600);
-    const context = html.substring(startPos, endPos);
-    
-    // Basic extraction from context
-    const titleMatch = context.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i) || context.match(/title["']:["']([^'"]+)["']/i);
-    const companyMatch = context.match(/<h4[^>]*>([\s\S]*?)<\/h4>/i) || context.match(/companyName["']:["']([^'"]+)["']/i);
-    const locationMatch = context.match(/<span[^>]*class=["'][^'"]*location[^'"]*["'][^>]*>([\s\S]*?)<\/span>/i);
+
+    const cleanUrl = href.split("?")[0];
+    const pos = match.index;
+    const ctx = html.substring(Math.max(0, pos - 600), Math.min(html.length, pos + 800));
+
+    const titleMatch =
+      ctx.match(/<span[^>]*sr-only[^>]*>([\s\S]*?)<\/span>/i) ||
+      ctx.match(/<h3[^>]*>([\s\S]*?)<\/h3>/i);
+    const companyMatch = ctx.match(/<h4[^>]*>([\s\S]*?)<\/h4>/i);
+    const locMatch = ctx.match(/<span[^>]*job-search-card__location[^>]*>([\s\S]*?)<\/span>/i);
 
     snippets.push({
       linkedin_job_id: jobId,
-      title: titleMatch ? titleMatch[1].trim() : "Link Discovery",
-      company: companyMatch ? companyMatch[1].trim() : "Unknown",
-      location: locationMatch ? locationMatch[1].trim() : "Unknown",
-      apply_url: `https://www.linkedin.com/jobs/view/${jobId}`,
-      raw_card_payload: { strategy: 'link-discovery', context: context.substring(0, 500) }
+      title: titleMatch ? stripHtml(titleMatch[1]) : "Link Discovery",
+      company: companyMatch ? stripHtml(companyMatch[1]) : "Unknown",
+      location: locMatch ? stripHtml(locMatch[1]) : "Unknown",
+      apply_url: cleanUrl,
+      raw_card_payload: { strategy: "link-discovery" },
     });
   }
+
   return snippets;
 }
 
+// ─────────────────────────────────────────────
+// Cascade dispatcher
+// ─────────────────────────────────────────────
 export function parseLinkedInJobCards(html: string): LinkedInJobSnippet[] {
-  // Try Strategy 1
+  // 1. Class-based (JobSpy / Scrapy Playbook approach — most accurate)
   let cards = parseStrategyCardBased(html);
-  
-  // If Strategy 1 fails, try Strategy 2
-  if (cards.length === 0) {
-    console.log('[LinkedInSearch] Strategy 1 failed, trying Strategy 2 (Link-based)...');
-    cards = parseStrategyLinkBased(html);
+  if (cards.length > 0) {
+    console.log(`[LinkedInSearch] Strategy 1 (card-based) → ${cards.length} cards`);
+    return cards;
   }
-  
+
+  // 2. URN anchor-based
+  console.log("[LinkedInSearch] Strategy 1 failed → trying Strategy 2 (URN-based)…");
+  cards = parseStrategyUrnBased(html);
+  if (cards.length > 0) {
+    console.log(`[LinkedInSearch] Strategy 2 (urn-based) → ${cards.length} cards`);
+    return cards;
+  }
+
+  // 3. Link-based (last resort)
+  console.log("[LinkedInSearch] Strategy 2 failed → trying Strategy 3 (link-based)…");
+  cards = parseStrategyLinkBased(html);
+  console.log(`[LinkedInSearch] Strategy 3 (link-based) → ${cards.length} cards`);
   return cards;
 }
 
-export async function fetchLinkedInSearch(input: LinkedInSearchInput): Promise<LinkedInJobSnippet[]> {
+// ─────────────────────────────────────────────
+// HTTP fetch
+// ─────────────────────────────────────────────
+export async function fetchLinkedInSearch(
+  input: LinkedInSearchInput
+): Promise<LinkedInJobSnippet[]> {
   const searchUrl = buildLinkedInSearchUrl(input);
-  console.log(`[LinkedInSearch] Final Request URL: ${searchUrl}`);
-  
+  console.log(`[LinkedInSearch] Request URL: ${searchUrl}`);
+
+  // Headers modelled on speedyapply/JobSpy constant.py + Scrapy Playbook settings.py
+  // These mimic a standard Chrome browser request, which reduces bot-detection rejections.
   const response = await fetch(searchUrl, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    }
+      authority: "www.linkedin.com",
+      accept:
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+      "accept-language": "en-US,en;q=0.9",
+      "cache-control": "max-age=0",
+      "upgrade-insecure-requests": "1",
+      "user-agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "none",
+      "sec-fetch-user": "?1",
+    },
   });
-  
+
   console.log(`[LinkedInSearch] HTTP Status: ${response.status}`);
   const html = await response.text();
-  console.log(`[LinkedInSearch] Response HTML Length: ${html.length}`);
-  console.log(`[LinkedInSearch] HTML Snippet: ${html.substring(0, 1500).replace(/\s+/g, ' ')}`);
-  
+  console.log(`[LinkedInSearch] Response size: ${html.length} bytes`);
+  console.log(
+    `[LinkedInSearch] HTML preview: ${html.substring(0, 1500).replace(/\s+/g, " ")}`
+  );
+
   if (!response.ok) {
     if (response.status === 429) throw new Error("LinkedIn_RATE_LIMITED");
-    throw new Error(`LinkedIn search failed with status ${response.status}`);
+    throw new Error(`LinkedIn search failed: HTTP ${response.status}`);
   }
-  
+
   const cards = parseLinkedInJobCards(html);
-  console.log(`[LinkedInSearch] Parsed Card Count: ${cards.length}`);
-  
+  console.log(`[LinkedInSearch] Parsed ${cards.length} job cards`);
+
   if (cards.length === 0) {
-    const indicators = [
-      "sign in", "join now", "captcha", "verify you are human", 
-      "jobs-search__results-list", "base-card", "job-search-card"
-    ];
-    const present = indicators.filter(i => html.toLowerCase().includes(i));
-    console.log(`[LinkedInSearch] Zero results. Present indicators: ${present.join(', ') || 'none'}`);
+    // Diagnostic indicators to help pinpoint failure mode
+    const checks: Record<string, boolean> = {
+      "base-search-card": html.includes("base-search-card"),
+      "base-card__full-link": html.includes("base-card__full-link"),
+      "job-search-card__location": html.includes("job-search-card__location"),
+      "data-entity-urn": html.includes("data-entity-urn"),
+      "jobs-search__results-list": html.includes("jobs-search__results-list"),
+      "sign-in wall": html.toLowerCase().includes("sign in") || html.includes("join now"),
+      captcha: html.toLowerCase().includes("captcha"),
+      "verify human": html.toLowerCase().includes("verify you are human"),
+    };
+    const present = Object.entries(checks)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+    const absent = Object.entries(checks)
+      .filter(([, v]) => !v)
+      .map(([k]) => k);
+    console.log(`[LinkedInSearch] Zero-result diagnosis:`);
+    console.log(`  Present: ${present.join(", ") || "none"}`);
+    console.log(`  Absent:  ${absent.join(", ") || "none"}`);
   }
-  
+
   return cards;
 }

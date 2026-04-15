@@ -2,13 +2,12 @@
 
 export function normalizeLinkedInJob(snippet: any, details?: any): any {
   const isEnriched = !!details;
-  
-  // Calculate source_created_at from relative text if present
+
+  // Calculate source_created_at from relative text or ISO date string
   let sourceCreatedAt = null;
   const dateText = details?.source_created_at || snippet.source_created_at_text;
-  
   if (dateText) {
-    sourceCreatedAt = parseRelativeDate(dateText);
+    sourceCreatedAt = parseJobDate(dateText);
   }
 
   return {
@@ -28,37 +27,58 @@ export function normalizeLinkedInJob(snippet: any, details?: any): any {
     raw_data: {
       snippet,
       details: details || null,
-      source: "linkedin-native"
-    }
+      source: "linkedin-native",
+    },
   };
 }
 
-/** Parse relative time like "3 days ago" into ISO string approximately */
-function parseRelativeDate(text?: string): string | null {
+/**
+ * Parse a LinkedIn date value into an ISO timestamp string.
+ *
+ * Handles three formats:
+ *  1. ISO date from <time datetime="YYYY-MM-DD"> attribute  (JobSpy reference approach)
+ *  2. Full ISO timestamp ("2026-04-15T10:00:00Z")
+ *  3. Relative text ("3 days ago", "2 weeks ago", "just now")
+ */
+function parseJobDate(text?: string): string | null {
   if (!text) return null;
-  const t = text.toLowerCase();
-  
-  // If it's already an ISO string or date-like, return it
-  if (t.includes('t') && t.includes('z') && t.length > 15) return text;
-  
-  const now = new Date();
-  let offsetDays = 0;
-  
-  const m = t.match(/(\d+)/);
-  const val = m ? parseInt(m[1]) : 1;
+  const t = text.trim();
 
-  if (t.includes('minute') || t.includes('hour')) {
-    offsetDays = 0;
-  } else if (t.includes('day')) {
-    offsetDays = val;
-  } else if (t.includes('week')) {
-    offsetDays = val * 7;
-  } else if (t.includes('month')) {
-    offsetDays = val * 30;
+  // ── Format 1: ISO date from datetime attribute e.g. "2026-04-15" ──────────
+  // Reference: JobSpy uses datetime.strptime(datetime_str, "%Y-%m-%d")
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+    return new Date(t + "T00:00:00.000Z").toISOString();
+  }
+
+  // ── Format 2: Full ISO timestamp already ─────────────────────────────────
+  if (/^\d{4}-\d{2}-\d{2}T/.test(t)) {
+    return new Date(t).toISOString();
+  }
+
+  // ── Format 3: Relative text ("3 days ago", "2 weeks ago", etc.) ──────────
+  // Scrapy Playbook extracts time::text which yields human-readable strings
+  const lower = t.toLowerCase();
+  const now = new Date();
+  let offsetMs = 0;
+
+  const numMatch = lower.match(/(\d+)/);
+  const val = numMatch ? parseInt(numMatch[1]) : 1;
+
+  if (lower.includes("second") || lower.includes("just now")) {
+    offsetMs = 0;
+  } else if (lower.includes("minute")) {
+    offsetMs = val * 60 * 1000;
+  } else if (lower.includes("hour")) {
+    offsetMs = val * 60 * 60 * 1000;
+  } else if (lower.includes("day")) {
+    offsetMs = val * 24 * 60 * 60 * 1000;
+  } else if (lower.includes("week")) {
+    offsetMs = val * 7 * 24 * 60 * 60 * 1000;
+  } else if (lower.includes("month")) {
+    offsetMs = val * 30 * 24 * 60 * 60 * 1000;
   } else {
     return null;
   }
-  
-  const d = new Date(now.getTime() - offsetDays * 24 * 60 * 60 * 1000);
-  return d.toISOString();
+
+  return new Date(now.getTime() - offsetMs).toISOString();
 }
