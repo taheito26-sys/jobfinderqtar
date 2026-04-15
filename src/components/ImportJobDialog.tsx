@@ -12,6 +12,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
+import { buildHardlineJobInsert, buildHardlineJobScoreInsert, candidateProfileRowToHardlineProfile, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
+import { DEFAULT_HARDLINE_POLICY } from '@/lib/hardline';
 import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2 } from 'lucide-react';
 
 interface ImportJobDialogProps {
@@ -188,6 +190,13 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
 
     const skipped = selectedJobs.length - deduped.length;
 
+    const { data: candidateProfile } = await (supabase as any)
+      .from('candidate_profile')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
+
     if (deduped.length === 0) {
       toast({ title: 'All duplicates', description: `${skipped} job(s) already exist in your feed.` });
       setImporting(false);
@@ -195,28 +204,35 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       return;
     }
 
-    const insertData = deduped.map(job => ({
-      user_id: user.id,
-      title: job.title,
-      company: job.company,
-      location: job.location,
-      remote_type: job.remote_type,
-      description: job.description,
-      salary_min: job.salary_min,
-      salary_max: job.salary_max,
-      salary_currency: job.salary_currency,
-      employment_type: job.employment_type,
-      seniority_level: job.seniority_level,
-      requirements: job.requirements as any,
-      apply_url: job.apply_url,
-      source_url: job.apply_url,
-      source_created_at: job.source_created_at || null,
-      raw_data: { source: 'linkedin_search', imported_from: url } as any,
+    const insertData = deduped.map(job => buildHardlineJobInsert(user.id, job, {
+      sourceLabel: 'linkedin_search',
+      sourceData: { imported_from: url },
     }));
 
-    const { data, error } = await supabase.from('jobs').insert(insertData).select();
+    await recordHardlineSourceSyncBatch((supabase as any), user.id, 'linkedin_search', 'linkedin', deduped, {
+      baseUrl: url,
+      config: { imported_from: url, source: 'linkedin_search' },
+    });
+
+    const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
 
     if (data) {
+      if (hardlineProfile && candidateProfile?.id) {
+        const scoreRows = data.map((inserted: any, index: number) =>
+          buildHardlineJobScoreInsert(
+            user.id,
+            inserted.id,
+            candidateProfile.id,
+            hardlineProfile,
+            deduped[index],
+            DEFAULT_HARDLINE_POLICY,
+          )
+        );
+        const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRows);
+        if (scoreError) {
+          console.warn('Hardline score insert failed:', scoreError.message);
+        }
+      }
       // Log events
       for (const d of data) {
         await supabase.from('application_events').insert({
@@ -263,26 +279,55 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       return;
     }
 
-    const { data, error } = await supabase.from('jobs').insert({
-      user_id: user.id,
-      title: editedJob.title,
-      company: editedJob.company,
-      location: editedJob.location,
-      remote_type: editedJob.remote_type,
-      description: editedJob.description,
-      salary_min: editedJob.salary_min,
-      salary_max: editedJob.salary_max,
-      salary_currency: editedJob.salary_currency,
-      employment_type: editedJob.employment_type,
-      seniority_level: editedJob.seniority_level,
-      requirements: editedJob.requirements as any,
+    const { data: candidateProfile } = await (supabase as any)
+      .from('candidate_profile')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
+
+    const { data, error } = await (supabase as any).from('jobs').insert(
+      buildHardlineJobInsert(user.id, {
+        ...editedJob,
+        apply_url: editedJob.apply_url || sourceUrl,
+        source_url: sourceUrl,
+        source_created_at: editedJob.source_created_at || null,
+      }, {
+        sourceLabel: isLI ? 'linkedin' : 'web',
+        sourceData: { imported_from: sourceUrl },
+      })
+    ).select().single();
+
+    await recordHardlineSourceSyncBatch((supabase as any), user.id, isLI ? 'linkedin' : 'web', isLI ? 'linkedin' : 'web', [ {
+      ...editedJob,
       apply_url: editedJob.apply_url || sourceUrl,
       source_url: sourceUrl,
       source_created_at: editedJob.source_created_at || null,
-      raw_data: { source: isLI ? 'linkedin' : 'web', imported_from: sourceUrl } as any,
-    }).select().single();
+    } ], {
+      baseUrl: sourceUrl,
+      config: { imported_from: sourceUrl, source: isLI ? 'linkedin' : 'web' },
+    });
 
     if (data) {
+      if (hardlineProfile && candidateProfile?.id) {
+        const scoreRow = buildHardlineJobScoreInsert(
+          user.id,
+          data.id,
+          candidateProfile.id,
+          hardlineProfile,
+          {
+            ...editedJob,
+            apply_url: editedJob.apply_url || sourceUrl,
+            source_url: sourceUrl,
+            source_created_at: editedJob.source_created_at || null,
+          },
+          DEFAULT_HARDLINE_POLICY,
+        );
+        const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRow);
+        if (scoreError) {
+          console.warn('Hardline score insert failed:', scoreError.message);
+        }
+      }
       await supabase.from('application_events').insert({
         user_id: user.id, job_id: data.id, event_type: 'job_imported',
         metadata: { source: isLI ? 'linkedin' : 'web', source_url: sourceUrl } as any,

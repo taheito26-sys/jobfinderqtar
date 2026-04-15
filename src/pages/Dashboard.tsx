@@ -10,7 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import {
   Briefcase, FileText, Send, TrendingUp, Target, Clock, Zap, Plus,
   Search, Upload, ArrowRight, BarChart3, Inbox, CheckCircle2, XCircle,
-  MessageSquare, Timer, Award
+  MessageSquare, Timer, Award, Database, AlertTriangle
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { formatDistanceToNow, subDays, format, startOfWeek, eachWeekOfInterval } from 'date-fns';
@@ -36,6 +36,34 @@ interface SubmissionData {
   response_received_at: string | null;
   follow_up_date: string | null;
   jobs?: { title?: string; company?: string } | null;
+}
+
+interface SourceLedgerRow {
+  id: string;
+  source_name: string;
+  adapter_type: string;
+  base_url: string | null;
+  active_flag?: boolean | null;
+  created_at: string;
+}
+
+interface SourceSyncRunRow {
+  id: string;
+  source_id: string;
+  run_mode: string;
+  started_at: string;
+  completed_at: string | null;
+  status: string;
+  jobs_seen_count: number;
+  jobs_inserted_count: number;
+  jobs_updated_count: number;
+  jobs_invalid_count: number;
+}
+
+interface RawJobRow {
+  id: string;
+  source_id: string;
+  fetched_at: string;
 }
 
 const SCORE_BUCKETS = [
@@ -65,6 +93,9 @@ const Dashboard = () => {
   const [submissions, setSubmissions] = useState<SubmissionData[]>([]);
   const [drafts, setDrafts] = useState<any[]>([]);
   const [weeklyJobs, setWeeklyJobs] = useState<any[]>([]);
+  const [sources, setSources] = useState<SourceLedgerRow[]>([]);
+  const [sourceRuns, setSourceRuns] = useState<SourceSyncRunRow[]>([]);
+  const [rawJobs, setRawJobs] = useState<RawJobRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -73,7 +104,7 @@ const Dashboard = () => {
       const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
       const thirtyDaysAgo = subDays(new Date(), 30).toISOString();
 
-      const [jobs, matchesCount, apps, docs, recentMatchRes, activityRes, allMatchRes, weekJobs, subsRes, draftsRes, recentJobsRes] = await Promise.all([
+      const [jobs, matchesCount, apps, docs, recentMatchRes, activityRes, allMatchRes, weekJobs, subsRes, draftsRes, recentJobsRes, sourcesRes, runsRes, rawJobsRes] = await Promise.all([
         supabase.from('jobs').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
         supabase.from('job_matches').select('id', { count: 'exact', head: true }).eq('user_id', user.id).gte('overall_score', 60),
         supabase.from('application_submissions').select('id', { count: 'exact', head: true }).eq('user_id', user.id),
@@ -87,6 +118,9 @@ const Dashboard = () => {
         supabase.from('application_submissions').select('id, submission_status, submitted_at, response_received_at, follow_up_date, jobs(title, company)').eq('user_id', user.id),
         supabase.from('application_drafts').select('id, status').eq('user_id', user.id),
         supabase.from('jobs').select('id, created_at').eq('user_id', user.id).gte('created_at', thirtyDaysAgo),
+        (supabase as any).from('sources').select('id, source_name, adapter_type, base_url, active_flag, created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
+        (supabase as any).from('source_sync_runs').select('id, source_id, run_mode, started_at, completed_at, status, jobs_seen_count, jobs_inserted_count, jobs_updated_count, jobs_invalid_count').eq('user_id', user.id).order('started_at', { ascending: false }).limit(50),
+        (supabase as any).from('raw_jobs').select('id, source_id, fetched_at').eq('user_id', user.id),
       ]);
 
       const scores = (allMatchRes.data ?? []).map((m: any) => m.overall_score);
@@ -107,6 +141,9 @@ const Dashboard = () => {
       setAllMatches(allMatchRes.data ?? []);
       setSubmissions((subsRes.data as SubmissionData[]) ?? []);
       setDrafts(draftsRes.data ?? []);
+      setSources((sourcesRes.data as SourceLedgerRow[]) ?? []);
+      setSourceRuns((runsRes.data as SourceSyncRunRow[]) ?? []);
+      setRawJobs((rawJobsRes.data as RawJobRow[]) ?? []);
 
       // Build weekly job ingestion data
       const recentJobs = recentJobsRes.data ?? [];
@@ -126,6 +163,39 @@ const Dashboard = () => {
     };
     fetchAll();
   }, [user]);
+
+  const sourceQuality = useMemo(() => {
+    const rawCountMap = new Map<string, number>();
+    rawJobs.forEach((raw) => {
+      rawCountMap.set(raw.source_id, (rawCountMap.get(raw.source_id) ?? 0) + 1);
+    });
+
+    const runsBySource = new Map<string, SourceSyncRunRow[]>();
+    sourceRuns.forEach((run) => {
+      const existing = runsBySource.get(run.source_id) ?? [];
+      existing.push(run);
+      runsBySource.set(run.source_id, existing);
+    });
+
+    return sources.map((source) => {
+      const runs = (runsBySource.get(source.id) ?? []).sort((a, b) => new Date(b.started_at).getTime() - new Date(a.started_at).getTime());
+      const latestRun = runs[0] ?? null;
+      const rawCount = rawCountMap.get(source.id) ?? 0;
+      const invalidCount = runs.reduce((sum, run) => sum + Number(run.jobs_invalid_count ?? 0), 0);
+      const seenCount = runs.reduce((sum, run) => sum + Number(run.jobs_seen_count ?? 0), 0);
+      const insertedCount = runs.reduce((sum, run) => sum + Number(run.jobs_inserted_count ?? 0), 0);
+      return {
+        source,
+        runCount: runs.length,
+        latestRun,
+        rawCount,
+        invalidCount,
+        seenCount,
+        insertedCount,
+        noiseRate: rawCount > 0 ? Math.round((invalidCount / rawCount) * 100) : 0,
+      };
+    }).sort((a, b) => b.rawCount - a.rawCount || b.runCount - a.runCount);
+  }, [sources, sourceRuns, rawJobs]);
 
   // Score distribution for chart
   const scoreDistribution = useMemo(() => {
@@ -273,6 +343,102 @@ const Dashboard = () => {
           ))}
         </div>
       )}
+
+      {/* Source Quality Report */}
+      <Card className="mb-6">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Database className="w-4 h-4 text-muted-foreground" />
+            Source Quality Report
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <p className="text-sm text-muted-foreground py-6 text-center">Loading source ledger...</p>
+          ) : sourceQuality.length === 0 ? (
+            <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-muted/20 px-4 py-4">
+              <AlertTriangle className="w-4 h-4 text-muted-foreground mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">No source ledger yet</p>
+                <p className="text-xs text-muted-foreground">
+                  Run a search or scrape import to start tracking source runs, raw jobs, and invalid counts.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Sources</p>
+                  <p className="text-2xl font-bold text-foreground">{sources.length}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Raw jobs</p>
+                  <p className="text-2xl font-bold text-foreground">{rawJobs.length}</p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Invalid runs</p>
+                  <p className="text-2xl font-bold text-foreground">
+                    {sourceRuns.reduce((sum, run) => sum + Number(run.jobs_invalid_count ?? 0), 0)}
+                  </p>
+                </div>
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <p className="text-xs text-muted-foreground">Tracked runs</p>
+                  <p className="text-2xl font-bold text-foreground">{sourceRuns.length}</p>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-lg border">
+                <div className="grid grid-cols-[2fr,1fr,1fr,1fr,1fr,1.2fr] gap-3 border-b bg-muted/30 px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  <span>Source</span>
+                  <span>Runs</span>
+                  <span>Raw</span>
+                  <span>Invalid</span>
+                  <span>Noise</span>
+                  <span>Latest Run</span>
+                </div>
+                <div className="divide-y">
+                  {sourceQuality.map(({ source, runCount, rawCount, invalidCount, noiseRate, latestRun }) => (
+                    <div key={source.id} className="grid grid-cols-[2fr,1fr,1fr,1fr,1fr,1.2fr] gap-3 px-4 py-3 items-center">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Link to={`/sources/${source.id}`} className="text-sm font-medium text-foreground truncate hover:text-primary transition-colors">
+                            {source.source_name}
+                          </Link>
+                          {source.active_flag === false && (
+                            <Badge variant="secondary" className="text-[10px]">Disabled</Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">{source.adapter_type}{source.base_url ? ` · ${source.base_url}` : ''}</p>
+                      </div>
+                      <span className="text-sm text-foreground">{runCount}</span>
+                      <span className="text-sm text-foreground">{rawCount}</span>
+                      <span className="text-sm text-foreground">{invalidCount}</span>
+                      <span className={`text-sm font-medium ${noiseRate >= 50 ? 'text-destructive' : noiseRate >= 20 ? 'text-warning' : 'text-score-excellent'}`}>
+                        {rawCount > 0 ? `${noiseRate}%` : '—'}
+                      </span>
+                      <div className="min-w-0">
+                        {latestRun ? (
+                          <>
+                            <p className="text-sm text-foreground capitalize">{latestRun.status}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {formatDistanceToNow(new Date(latestRun.started_at), { addSuffix: true })}
+                              {' · '}
+                              seen {latestRun.jobs_seen_count}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No runs yet</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         {/* Application Funnel */}

@@ -21,6 +21,8 @@ const Activity = lazy(() => import("@/pages/Activity"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
 const SubscriptionsPage = lazy(() => import("@/pages/Subscriptions"));
 const InterviewPrep = lazy(() => import("@/pages/InterviewPrep"));
+const Hardline = lazy(() => import("@/pages/HardlineLive"));
+const SourceLedger = lazy(() => import("@/pages/SourceLedger"));
 
 const queryClient = new QueryClient();
 
@@ -64,6 +66,8 @@ const App = () => (
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
               <Route path="/subscriptions" element={<ProtectedRoute><SubscriptionsPage /></ProtectedRoute>} />
               <Route path="/interview-prep" element={<ProtectedRoute><InterviewPrep /></ProtectedRoute>} />
+              <Route path="/hardline" element={<ProtectedRoute><Hardline /></ProtectedRoute>} />
+              <Route path="/sources/:id" element={<ProtectedRoute><SourceLedger /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

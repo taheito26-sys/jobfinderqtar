@@ -4,7 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, User, FileText, Rss, Settings, Send, ClipboardList,
-  LogOut, Menu, X, ChevronLeft, Briefcase, GitCompare, Bell as BellIcon, Inbox, BookOpen
+  LogOut, Menu, X, ChevronLeft, Briefcase, GitCompare, Bell as BellIcon, Inbox, BookOpen, ShieldAlert
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import NotificationBell from '@/components/NotificationBell';
@@ -19,6 +19,7 @@ const navItems = [
   { to: '/applications', icon: Send, label: 'Applications' },
   { to: '/follow-up', icon: Inbox, label: 'Follow-up' },
   { to: '/interview-prep', icon: BookOpen, label: 'Interview Prep' },
+  { to: '/hardline', icon: ShieldAlert, label: 'Hardline' },
   { to: '/activity', icon: ClipboardList, label: 'Activity' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];

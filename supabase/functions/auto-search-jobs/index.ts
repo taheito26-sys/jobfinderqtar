@@ -1,4 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
+import { recordLedgerSync } from '../_shared/hardline-ledger.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -111,6 +112,39 @@ Deno.serve(async (req) => {
 
           const searchData = await searchResponse.json();
           const results = searchData.data || [];
+          const ledgerJobs = results.map((result: any) => {
+            const markdown = result.markdown || '';
+            const rawTitle = result.metadata?.title || result.title || '';
+            const titleParts = rawTitle.split(/\s[-â€“|@]\s/);
+            return {
+              title: titleParts[0]?.trim() || '',
+              company: titleParts[1]?.trim() || '',
+              location,
+              description: (result.metadata?.description || markdown).substring(0, 2000),
+              apply_url: result.url || '',
+              source_url: result.url || '',
+              source_created_at: result.metadata?.publishedDate
+                || result.metadata?.datePublished
+                || result.metadata?.datePosted
+                || null,
+              normalization_status: 'incomplete',
+            };
+          }).filter((job: any) => job.title && job.company);
+
+          try {
+            await recordLedgerSync(supabaseAdmin as any, profile.user_id, 'auto-search-jobs', 'scheduled-search', ledgerJobs, {
+              baseUrl: 'https://api.firecrawl.dev/v1/search',
+              configJson: {
+                search_title: title,
+                search_location: location,
+                remote_preference: remotePreference,
+              },
+              normalizationStatus: 'incomplete',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn(`Ledger sync failed for auto-search "${title}":`, ledgerError);
+          }
 
           for (const result of results) {
             const markdown = result.markdown || '';

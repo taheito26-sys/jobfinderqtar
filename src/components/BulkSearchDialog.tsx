@@ -10,6 +10,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { buildHardlineJobInsert, buildHardlineJobScoreInsert, candidateProfileRowToHardlineProfile, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
+import { DEFAULT_HARDLINE_POLICY } from '@/lib/hardline';
 import { Loader2, Search, MapPin, Building2, Plus, CheckCircle2, User, Briefcase, Sparkles } from 'lucide-react';
 
 interface SearchResult {
@@ -231,39 +233,55 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
 
     const skipped = toImport.length - deduped.length;
 
+    const { data: candidateProfile } = await (supabase as any)
+      .from('candidate_profile')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
+
     if (deduped.length === 0) {
       toast({ title: 'All duplicates', description: `${skipped} job(s) already exist in your feed.` });
       setImporting(false);
       return;
     }
 
-    const insertData = deduped.map(job => ({
-      user_id: user.id,
-      title: job.title,
-      company: job.company,
-      location: job.location,
-      remote_type: job.remote_type,
-      description: job.description,
-      salary_min: job.salary_min,
-      salary_max: job.salary_max,
-      salary_currency: job.salary_currency,
-      employment_type: job.employment_type,
-      seniority_level: job.seniority_level,
-      requirements: job.requirements as any,
-      apply_url: job.apply_url,
-      source_url: job.source_url,
-      source_created_at: (job as any).source_created_at || null,
-      raw_data: {
-        source: 'search',
+    const insertData = deduped.map(job => buildHardlineJobInsert(user.id, job, {
+      sourceLabel: 'search',
+      sourceData: {
         search_mode: searchMode,
         country: getEffectiveCountry() || null,
         query: buildSearchQuery(),
-      } as any,
+      },
     }));
 
-    const { data, error } = await supabase.from('jobs').insert(insertData).select();
+    await recordHardlineSourceSyncBatch((supabase as any), user.id, 'search', 'search', deduped, {
+      config: {
+        search_mode: searchMode,
+        country: getEffectiveCountry() || null,
+        query: buildSearchQuery(),
+      },
+    });
+
+    const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
 
     if (data) {
+      if (hardlineProfile && candidateProfile?.id) {
+        const scoreRows = data.map((inserted: any, index: number) =>
+          buildHardlineJobScoreInsert(
+            user.id,
+            inserted.id,
+            candidateProfile.id,
+            hardlineProfile,
+            deduped[index],
+            DEFAULT_HARDLINE_POLICY,
+          )
+        );
+        const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRows);
+        if (scoreError) {
+          console.warn('Hardline score insert failed:', scoreError.message);
+        }
+      }
       const newImported = new Set(imported);
       results.forEach((_, i) => { if (selected.has(i)) newImported.add(i); });
       setImported(newImported);

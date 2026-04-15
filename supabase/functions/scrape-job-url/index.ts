@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
 import { getPipelineConfig } from '../_shared/ai-pipeline.ts';
+import { recordLedgerSync } from '../_shared/hardline-ledger.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -51,6 +52,12 @@ function isLinkedInSearchUrl(url: string): boolean {
     if (u.searchParams.get('originToLandingJobPostings')) return true;
     return false;
   } catch { return false; }
+}
+
+function markNormalizationStatus(job: any, evidenceLength: number) {
+  const description = String(job?.description || '').trim();
+  const valid = evidenceLength >= 200 && description.length >= 250;
+  return { ...job, normalization_status: valid ? 'valid' : 'incomplete' };
 }
 
 /** Try LinkedIn's guest/public job posting endpoint */
@@ -310,18 +317,42 @@ Deno.serve(async (req) => {
       console.log('Using manually pasted job description');
       const extracted = await extractJobWithAI(manualDescription, url || '', user.id);
       if (extracted.type === 'multiple') {
+        const jobs = extracted.jobs.map((job) => markNormalizationStatus({
+          ...job,
+          description: job.description || manualDescription.substring(0, 5000),
+        }, manualDescription.length));
+        try {
+          await recordLedgerSync(supabaseClient as any, user.id, 'manual-job-description', 'manual', jobs, {
+            baseUrl: url || '',
+            configJson: { source: 'manual_description' },
+            normalizationStatus: manualDescription.length >= 250 ? 'valid' : 'incomplete',
+            runMode: 'collect',
+          });
+        } catch (ledgerError) {
+          console.warn('Ledger sync failed for manual description:', ledgerError);
+        }
         return new Response(JSON.stringify({
           success: true,
           multiple: true,
-          jobs: extracted.jobs,
-          total_found: extracted.jobs.length,
+          jobs,
+          total_found: jobs.length,
           failed_count: 0,
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
-      const job = {
+      const job = markNormalizationStatus({
         ...extracted.job,
         description: extracted.job.description || manualDescription.substring(0, 5000),
-      };
+      }, manualDescription.length);
+      try {
+        await recordLedgerSync(supabaseClient as any, user.id, 'manual-job-description', 'manual', [job], {
+          baseUrl: url || '',
+          configJson: { source: 'manual_description' },
+          normalizationStatus: manualDescription.length >= 250 ? 'valid' : 'incomplete',
+          runMode: 'collect',
+        });
+      } catch (ledgerError) {
+        console.warn('Ledger sync failed for manual description:', ledgerError);
+      }
       return new Response(JSON.stringify({ success: true, job }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -348,9 +379,9 @@ Deno.serve(async (req) => {
       const allJobIds = extractAllLinkedInJobIds(formattedUrl);
       console.log(`LinkedIn search URL detected. Found ${allJobIds.length} job IDs:`, allJobIds);
 
-      if (allJobIds.length > 0) {
-        const jobs: any[] = [];
-        const failedIds: string[] = [];
+        if (allJobIds.length > 0) {
+          const jobs: any[] = [];
+          const failedIds: string[] = [];
 
         // Scrape each job sequentially (to avoid rate limiting)
         for (const jobId of allJobIds) {
@@ -364,11 +395,22 @@ Deno.serve(async (req) => {
         }
 
         if (jobs.length > 0) {
+          const normalizedJobs = jobs.map((job) => markNormalizationStatus(job, 1000));
+          try {
+            await recordLedgerSync(supabaseClient as any, user.id, 'linkedin-search-scrape', 'linkedin', normalizedJobs, {
+              baseUrl: formattedUrl,
+              configJson: { source: 'linkedin_search_url' },
+              normalizationStatus: 'valid',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn('Ledger sync failed for LinkedIn search URL:', ledgerError);
+          }
           console.log(`Successfully extracted ${jobs.length}/${allJobIds.length} jobs from LinkedIn search URL`);
           return new Response(JSON.stringify({
             success: true,
             multiple: true,
-            jobs,
+            jobs: normalizedJobs,
             total_found: allJobIds.length,
             failed_count: failedIds.length,
           }), {
@@ -397,7 +439,7 @@ Deno.serve(async (req) => {
           if (pageText.length > 200) {
             const aiResult = await extractJobWithAI(pageText, formattedUrl, user.id);
             // LinkedIn guest API is always a single job page — take first if multi was returned
-            job = aiResult.type === 'multiple' ? aiResult.jobs[0] : aiResult.job;
+            job = markNormalizationStatus(aiResult.type === 'multiple' ? aiResult.jobs[0] : aiResult.job, pageText.length);
             extracted = true;
             console.log('LinkedIn guest API + AI extracted:', job.title);
           }
@@ -464,10 +506,20 @@ Deno.serve(async (req) => {
 
             if (aiResult.type === 'multiple') {
               // Patch firecrawlDate onto any job that lacks source_created_at
-              const jobs = aiResult.jobs.map(j => ({
+              const jobs = aiResult.jobs.map(j => markNormalizationStatus({
                 ...j,
                 source_created_at: (j.source_created_at as string | null) || firecrawlDate || null,
-              }));
+              }, md.length));
+              try {
+                await recordLedgerSync(supabaseClient as any, user.id, 'firecrawl-search-scrape', 'search', jobs, {
+                  baseUrl: formattedUrl,
+                  configJson: { source: 'firecrawl_scrape', url: formattedUrl },
+                  normalizationStatus: 'valid',
+                  runMode: 'collect',
+                });
+              } catch (ledgerError) {
+                console.warn('Ledger sync failed for Firecrawl multi scrape:', ledgerError);
+              }
               console.log(`Firecrawl + AI extracted ${jobs.length} jobs`);
               return new Response(JSON.stringify({
                 success: true,
@@ -485,6 +537,7 @@ Deno.serve(async (req) => {
               company: (aiResult.job.company as string) || ext.company || 'Unknown Company',
               source_created_at: (aiResult.job.source_created_at as string | null) || firecrawlDate || null,
             };
+            job = markNormalizationStatus(job, md.length);
             extracted = true;
             console.log('Firecrawl + AI extracted:', job.title);
           } else {
@@ -508,16 +561,27 @@ Deno.serve(async (req) => {
         }
         const aiResult = await extractJobWithAI(pageText, formattedUrl, user.id);
         if (aiResult.type === 'multiple') {
-          console.log(`Direct fetch + AI extracted ${aiResult.jobs.length} jobs`);
+          const jobs = aiResult.jobs.map((job) => markNormalizationStatus(job, pageText.length));
+          try {
+            await recordLedgerSync(supabaseClient as any, user.id, 'direct-fetch-scrape', 'web', jobs, {
+              baseUrl: formattedUrl,
+              configJson: { source: 'direct_fetch', url: formattedUrl },
+              normalizationStatus: pageText.length >= 250 ? 'valid' : 'incomplete',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn('Ledger sync failed for direct fetch multi scrape:', ledgerError);
+          }
+          console.log(`Direct fetch + AI extracted ${jobs.length} jobs`);
           return new Response(JSON.stringify({
             success: true,
             multiple: true,
-            jobs: aiResult.jobs,
-            total_found: aiResult.jobs.length,
+            jobs,
+            total_found: jobs.length,
             failed_count: 0,
           }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
-        job = aiResult.job;
+        job = markNormalizationStatus(aiResult.job, pageText.length);
         extracted = true;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -526,6 +590,17 @@ Deno.serve(async (req) => {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+    }
+
+    try {
+      await recordLedgerSync(supabaseClient as any, user.id, 'single-job-scrape', isLinkedin ? 'linkedin' : 'web', [job], {
+        baseUrl: formattedUrl,
+        configJson: { source: 'single_job_scrape', url: formattedUrl },
+        normalizationStatus: job.normalization_status || 'incomplete',
+        runMode: 'collect',
+      });
+    } catch (ledgerError) {
+      console.warn('Ledger sync failed for single scrape:', ledgerError);
     }
 
     return new Response(JSON.stringify({ success: true, job }), {

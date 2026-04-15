@@ -9,6 +9,8 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
+import { buildHardlineJobInsert, buildHardlineJobScoreInsert, candidateProfileRowToHardlineProfile, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
+import { DEFAULT_HARDLINE_POLICY } from '@/lib/hardline';
 import {
   Search, Globe, Linkedin, Loader2, MapPin, Building2,
   Sparkles, CheckCircle2, ClipboardPaste, Link2, ArrowRight,
@@ -188,28 +190,46 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
       return;
     }
 
+    const { data: candidateProfile } = await (supabase as any)
+      .from('candidate_profile')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
+
     const insertData = deduped.map(job => ({
-      user_id: user.id,
-      title: job.title,
-      company: job.company,
-      location: job.location,
-      remote_type: job.remote_type,
-      description: job.description,
-      salary_min: job.salary_min,
-      salary_max: job.salary_max,
-      salary_currency: job.salary_currency,
-      employment_type: job.employment_type,
-      seniority_level: job.seniority_level,
-      requirements: job.requirements as any,
-      apply_url: job.apply_url,
-      source_url: job.source_url || job.apply_url,
-      source_created_at: (job as any).source_created_at || null,
-      raw_data: { source, query: query || importUrl } as any,
+      ...buildHardlineJobInsert(user.id, job, {
+        sourceLabel: source,
+        sourceData: { query: query || importUrl },
+      }),
     }));
 
-    const { data, error } = await supabase.from('jobs').insert(insertData).select();
+    await recordHardlineSourceSyncBatch((supabase as any), user.id, source, 'search', deduped, {
+      config: {
+        query: query || importUrl,
+        search_source: 'job-search-hub',
+      },
+    });
+
+    const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
 
     if (data) {
+      if (hardlineProfile && candidateProfile?.id) {
+        const scoreRows = data.map((inserted: any, index: number) =>
+          buildHardlineJobScoreInsert(
+            user.id,
+            inserted.id,
+            candidateProfile.id,
+            hardlineProfile,
+            deduped[index],
+            DEFAULT_HARDLINE_POLICY,
+          )
+        );
+        const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRows);
+        if (scoreError) {
+          console.warn('Hardline score insert failed:', scoreError.message);
+        }
+      }
       onJobsAdded(data);
       const msg = skipped > 0
         ? `Imported ${data.length} jobs (${skipped} duplicates skipped)`

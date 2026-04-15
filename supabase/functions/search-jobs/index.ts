@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { getPipelineConfig, runPipelineText } from "../_shared/ai-pipeline.ts";
+import { recordLedgerSync } from "../_shared/hardline-ledger.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -34,6 +35,18 @@ function buildResultIdentity(result: any) {
   const title = normalizeText(result?.metadata?.title || result?.title || "");
   const description = normalizeText(result?.metadata?.description || "");
   return `text:${title}|${description}`;
+}
+
+function buildSearchLedgerJobs(results: any[]) {
+  return results.map((result: any) => ({
+    title: result.metadata?.title || result.title || "",
+    company: result.metadata?.company || result.metadata?.siteName || result.title || "Unknown Company",
+    location: "",
+    description: result.metadata?.description || (result.markdown || "").substring(0, 1000),
+    apply_url: result.url || "",
+    source_url: result.url || "",
+    source_created_at: result.metadata?.publishedDate || result.metadata?.datePublished || result.metadata?.datePosted || null,
+  }));
 }
 
 Deno.serve(async (req) => {
@@ -102,6 +115,17 @@ Deno.serve(async (req) => {
       seenIdentities.add(identity);
       return true;
     });
+    const ledgerJobs = buildSearchLedgerJobs(dedupedResults);
+    try {
+      await recordLedgerSync(supabaseClient as any, user.id, "firecrawl-search", "search", ledgerJobs, {
+        baseUrl: "https://api.firecrawl.dev/v1/search",
+        configJson: { query, country: country || null, limit },
+        normalizationStatus: "incomplete",
+        runMode: "collect",
+      });
+    } catch (ledgerError) {
+      console.warn("Ledger sync failed for search-jobs:", ledgerError);
+    }
 
     if (dedupedResults.length > 0) {
       try {
@@ -201,6 +225,7 @@ ${summaries}`,
         employment_type: "full-time", seniority_level: "", requirements: [],
         apply_url: result.url || "", source_url: result.url || "",
         source_created_at: metaDate || null,
+        normalization_status: "incomplete",
       };
     }).filter((j: any) => j.title !== "Untitled Job" || j.company !== "Unknown Company");
 

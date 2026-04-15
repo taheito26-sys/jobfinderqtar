@@ -19,6 +19,7 @@ import EducationModal from '@/components/EducationModal';
 import CertificationModal from '@/components/CertificationModal';
 import ProofPointModal from '@/components/ProofPointModal';
 import ProfileStrengthMeter from '@/components/ProfileStrengthMeter';
+import { syncCandidateProfile } from '@/lib/candidate-profile-sync';
 
 interface ProfileData {
   full_name: string;
@@ -97,6 +98,7 @@ const Profile = () => {
         supabase.from('education_history').delete().eq('user_id', user.id),
         supabase.from('certifications').delete().eq('user_id', user.id),
         supabase.from('proof_points').delete().eq('user_id', user.id),
+        (supabase as any).from('candidate_profile').delete().eq('user_id', user.id),
       ]);
       setProfile({
         full_name: '', headline: '', summary: '', location: '', country: '',
@@ -313,9 +315,16 @@ const Profile = () => {
   const saveProfile = async () => {
     if (!user) return;
     setSaving(true);
-    const { error } = await supabase.from('profiles_v2').upsert({ user_id: user.id, ...profile }, { onConflict: 'user_id' });
-    if (error) toast({ title: 'Error saving profile', description: error.message, variant: 'destructive' });
-    else toast({ title: 'Profile saved' });
+    const [{ error }, candidateResult] = await Promise.all([
+      supabase.from('profiles_v2').upsert({ user_id: user.id, ...profile }, { onConflict: 'user_id' }),
+      syncCandidateProfile(user.id, profile, skills, proofPoints),
+    ]);
+    if (error || candidateResult.error) {
+      const message = error?.message || candidateResult.error?.message || 'Unknown error';
+      toast({ title: 'Error saving profile', description: message, variant: 'destructive' });
+    } else {
+      toast({ title: 'Profile saved', description: 'Legacy and hardline profile records are synced.' });
+    }
     setSaving(false);
   };
 

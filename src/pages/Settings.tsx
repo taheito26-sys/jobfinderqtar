@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Plug, Shield, Bell, Loader2, CheckCircle2, XCircle, Zap, GitBranch } from 'lucide-react';
+import { Plug, Shield, Bell, Loader2, CheckCircle2, XCircle, Zap, GitBranch, ShieldAlert } from 'lucide-react';
 
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
@@ -356,6 +356,68 @@ const SettingsPage = () => {
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Hardline Safety */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4" />
+              Hardline Safety
+            </CardTitle>
+            <CardDescription>Personal guardrails for the collect, draft, and auto-submit workflow.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label>Default mode</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={prefs['hardline_default_mode'] || 'draft'}
+                onChange={e => setPref('hardline_default_mode', e.target.value)}
+              >
+                <option value="collect">Collect</option>
+                <option value="draft">Draft</option>
+                <option value="auto_submit">Auto-submit</option>
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Skip below</Label>
+                <Input type="number" value={prefs['hardline_skip_below'] || '60'} onChange={e => setPref('hardline_skip_below', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Draft min</Label>
+                <Input type="number" value={prefs['hardline_draft_min'] || '80'} onChange={e => setPref('hardline_draft_min', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Auto-submit min</Label>
+                <Input type="number" value={prefs['hardline_auto_submit_min'] || '90'} onChange={e => setPref('hardline_auto_submit_min', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Daily auto cap</Label>
+                <Input type="number" value={prefs['hardline_max_auto_submit_per_day'] || '5'} onChange={e => setPref('hardline_max_auto_submit_per_day', e.target.value)} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Daily draft cap</Label>
+                <Input type="number" value={prefs['hardline_max_drafts_per_day'] || '20'} onChange={e => setPref('hardline_max_drafts_per_day', e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Require verification</Label>
+                <select
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  value={prefs['hardline_require_submission_verification'] ?? 'true'}
+                  onChange={e => setPref('hardline_require_submission_verification', e.target.value)}
+                >
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </select>
+              </div>
+            </div>
           </CardContent>
         </Card>
 

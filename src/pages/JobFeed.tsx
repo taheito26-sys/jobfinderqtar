@@ -47,6 +47,8 @@ import {
   type SavedSearchFilters,
   type SavedSearchPreset,
 } from '@/lib/saved-searches';
+import { buildHardlineJobInsert, buildHardlineJobScoreInsert, candidateProfileRowToHardlineProfile, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
+import { DEFAULT_HARDLINE_POLICY } from '@/lib/hardline';
 
 type ViewMode = 'list' | 'grid';
 type SubTab = 'all' | 'remote' | 'onsite' | string; // string for country names
@@ -347,17 +349,62 @@ const JobFeed = () => {
     const valid = multiJobs.filter(j => j.title.trim() && j.company.trim());
     if (valid.length === 0) return;
     setAddingJobs(true);
+    const { data: candidateProfile } = await (supabase as any)
+      .from('candidate_profile')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
     const inserted: any[] = [];
     for (const newJob of valid) {
-      const { data, error } = await supabase.from('jobs').insert({
-        user_id: user.id,
-        title: newJob.title, company: newJob.company, location: newJob.location,
-        remote_type: newJob.remote_type, description: newJob.description, apply_url: newJob.apply_url,
+      const payload = buildHardlineJobInsert(user.id, {
+        title: newJob.title,
+        company: newJob.company,
+        location: newJob.location,
+        remote_type: newJob.remote_type,
+        description: newJob.description,
+        apply_url: newJob.apply_url,
         salary_min: newJob.salary_min ? Number(newJob.salary_min) : null,
         salary_max: newJob.salary_max ? Number(newJob.salary_max) : null,
-      }).select().single();
+      }, {
+        sourceLabel: 'manual',
+        sourceData: { source: 'manual_add' },
+      });
+      await recordHardlineSourceSyncBatch((supabase as any), user.id, 'manual_add', 'manual', [{
+        title: newJob.title,
+        company: newJob.company,
+        location: newJob.location,
+        remote_type: newJob.remote_type,
+        description: newJob.description,
+        apply_url: newJob.apply_url,
+        salary_min: newJob.salary_min ? Number(newJob.salary_min) : null,
+        salary_max: newJob.salary_max ? Number(newJob.salary_max) : null,
+      }], {
+        config: { source: 'manual_add' },
+      });
+      const { data, error } = await (supabase as any).from('jobs').insert(payload).select().single();
       if (data) inserted.push(data);
       if (error) toast.error(error.message);
+      if (data && hardlineProfile && candidateProfile?.id) {
+        const scoreRow = buildHardlineJobScoreInsert(
+          user.id,
+          data.id,
+          candidateProfile.id,
+          hardlineProfile,
+          {
+            title: newJob.title,
+            company: newJob.company,
+            location: newJob.location,
+            remote_type: newJob.remote_type,
+            description: newJob.description,
+            apply_url: newJob.apply_url,
+            salary_min: newJob.salary_min ? Number(newJob.salary_min) : null,
+            salary_max: newJob.salary_max ? Number(newJob.salary_max) : null,
+          },
+          DEFAULT_HARDLINE_POLICY,
+        );
+        await (supabase as any).from('job_scores').insert(scoreRow);
+      }
     }
     if (inserted.length > 0) {
       setJobs([...inserted, ...jobs]);
