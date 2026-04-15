@@ -65,13 +65,17 @@ export function buildLinkedInSearchUrl(input: LinkedInSearchInput): string {
  */
 function parseStrategyCardBased(html: string): LinkedInJobSnippet[] {
   const snippets: LinkedInJobSnippet[] = [];
-  const cardRegex = /<li[^>]+(data-id|data-entity-id)=["']([^'"]+)["'][^>]*>([\s\S]*?)<\/li>/gi;
+  const cardRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
   let match;
-  
+
   while ((match = cardRegex.exec(html)) !== null) {
-    const rawJobId = match[2];
-    const linkedin_job_id = rawJobId.includes(':') ? rawJobId.split(':').pop()! : rawJobId;
-    const cardContent = match[3];
+    const cardContent = match[1];
+
+    // Extract job ID from data-entity-urn attribute which has format: urn:li:jobPosting:XXXXX
+    const urnMatch = cardContent.match(/data-entity-urn=["']urn:li:jobPosting:(\d+)["']/i);
+    if (!urnMatch) continue; // Skip if no valid job posting URN found
+
+    const linkedin_job_id = urnMatch[1];
     
     const titleMatch = cardContent.match(/<h3[^>]*class=["'][^'"]*(base-search-card__title|result-card__title|job-search-card__title)[^'"]*["'][^>]*>\s*([\s\S]*?)\s*<\/h3>/i);
     const title = titleMatch ? titleMatch[2].trim() : "Untitled";
