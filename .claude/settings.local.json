@@ -6,7 +6,13 @@
       "Bash(grep -r \"const\\\\|function\\\\|export\" /c/Data/GITHUB/jobfinderqtar/src/lib/*.ts)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(supabase migration:*)",
+      "Bash(supabase link:*)",
+      "Bash(supabase db:*)",
+      "Bash(supabase functions:*)",
+      "Bash(xargs head:*)",
+      "Bash(gh auth:*)"
     ]
   }
 }
