@@ -170,145 +170,157 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
   const handleMultiImport = async () => {
     if (!user || multiSelected.size === 0) return;
     setImporting(true);
+    try {
+      // Check for duplicates
+      const { data: existingJobs } = await supabase
+        .from('jobs')
+        .select('id, title, company, apply_url')
+        .eq('user_id', user.id);
 
-    // Check for duplicates
-    const { data: existingJobs } = await supabase
-      .from('jobs')
-      .select('id, title, company, apply_url')
-      .eq('user_id', user.id);
+      const existingUrls = new Set((existingJobs || []).map(j => j.apply_url).filter(Boolean));
+      const existingKeys = new Set((existingJobs || []).map(j => `${j.title?.toLowerCase()}|${j.company?.toLowerCase()}`));
 
-    const existingUrls = new Set((existingJobs || []).map(j => j.apply_url).filter(Boolean));
-    const existingKeys = new Set((existingJobs || []).map(j => `${j.title?.toLowerCase()}|${j.company?.toLowerCase()}`));
+      const selectedJobs = multiJobs.filter((_, i) => multiSelected.has(i));
+      const deduped = selectedJobs.filter(job => {
+        if (job.apply_url && existingUrls.has(job.apply_url)) return false;
+        const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
+        if (existingKeys.has(key)) return false;
+        return true;
+      });
 
-    const selectedJobs = multiJobs.filter((_, i) => multiSelected.has(i));
-    const deduped = selectedJobs.filter(job => {
-      if (job.apply_url && existingUrls.has(job.apply_url)) return false;
-      const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
-      if (existingKeys.has(key)) return false;
-      return true;
-    });
+      const skipped = selectedJobs.length - deduped.length;
 
-    const skipped = selectedJobs.length - deduped.length;
+      const { data: candidateProfile } = await (supabase as any)
+        .from('candidate_profile')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
 
-    const { data: candidateProfile } = await (supabase as any)
-      .from('candidate_profile')
-      .select('*')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
+      if (deduped.length === 0) {
+        toast({ title: 'All duplicates', description: `${skipped} job(s) already exist in your feed.` });
+        setConfirmOpen(false);
+        return;
+      }
 
-    if (deduped.length === 0) {
-      toast({ title: 'All duplicates', description: `${skipped} job(s) already exist in your feed.` });
+      const insertData = deduped.map(job => buildHardlineJobInsert(user.id, job, {
+        sourceLabel: 'linkedin_search',
+        sourceData: { imported_from: url },
+      }));
+
+      const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
+      if (error) throw error;
+
+      try {
+        await recordHardlineSourceSyncBatch((supabase as any), user.id, 'linkedin_search', 'linkedin', deduped, {
+          baseUrl: url,
+          config: { imported_from: url, source: 'linkedin_search' },
+        });
+      } catch (ledgerError) {
+        console.warn('Ledger sync failed for LinkedIn multi import:', ledgerError);
+      }
+
+      if (data) {
+        if (hardlineProfile && candidateProfile?.id) {
+          const scoreRows = data.map((inserted: any, index: number) =>
+            buildHardlineJobScoreInsert(
+              user.id,
+              inserted.id,
+              candidateProfile.id,
+              hardlineProfile,
+              deduped[index],
+              DEFAULT_HARDLINE_POLICY,
+            )
+          );
+          const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRows);
+          if (scoreError) {
+            console.warn('Hardline score insert failed:', scoreError.message);
+          }
+        }
+        for (const d of data) {
+          await supabase.from('application_events').insert({
+            user_id: user.id, job_id: d.id, event_type: 'job_imported',
+            metadata: { source: 'linkedin_search', source_url: url } as any,
+          });
+        }
+        onJobAdded(data);
+        const msg = skipped > 0
+          ? `Imported ${data.length} jobs! (${skipped} duplicates skipped)`
+          : `Imported ${data.length} jobs!`;
+        toast({ title: msg });
+        onOpenChange(false);
+        resetState();
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Import failed',
+        description: err?.message || 'Could not save imported jobs.',
+        variant: 'destructive',
+      });
+    } finally {
       setImporting(false);
       setConfirmOpen(false);
-      return;
     }
-
-    const insertData = deduped.map(job => buildHardlineJobInsert(user.id, job, {
-      sourceLabel: 'linkedin_search',
-      sourceData: { imported_from: url },
-    }));
-
-    await recordHardlineSourceSyncBatch((supabase as any), user.id, 'linkedin_search', 'linkedin', deduped, {
-      baseUrl: url,
-      config: { imported_from: url, source: 'linkedin_search' },
-    });
-
-    const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
-
-    if (data) {
-      if (hardlineProfile && candidateProfile?.id) {
-        const scoreRows = data.map((inserted: any, index: number) =>
-          buildHardlineJobScoreInsert(
-            user.id,
-            inserted.id,
-            candidateProfile.id,
-            hardlineProfile,
-            deduped[index],
-            DEFAULT_HARDLINE_POLICY,
-          )
-        );
-        const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRows);
-        if (scoreError) {
-          console.warn('Hardline score insert failed:', scoreError.message);
-        }
-      }
-      // Log events
-      for (const d of data) {
-        await supabase.from('application_events').insert({
-          user_id: user.id, job_id: d.id, event_type: 'job_imported',
-          metadata: { source: 'linkedin_search', source_url: url } as any,
-        });
-      }
-      onJobAdded(data);
-      const msg = skipped > 0
-        ? `Imported ${data.length} jobs! (${skipped} duplicates skipped)`
-        : `Imported ${data.length} jobs!`;
-      toast({ title: msg });
-      onOpenChange(false);
-      resetState();
-    }
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    }
-
-    setImporting(false);
-    setConfirmOpen(false);
   };
 
   const handleSave = async () => {
     if (!user || !editedJob) return;
     const sourceUrl = url.trim();
     const isLI = isLinkedInUrl(sourceUrl);
+    try {
+      const { data: existingJobs } = await supabase
+        .from('jobs')
+        .select('id, title, company, apply_url')
+        .eq('user_id', user.id);
 
-    const { data: existingJobs } = await supabase
-      .from('jobs')
-      .select('id, title, company, apply_url')
-      .eq('user_id', user.id);
+      const isDuplicate = (existingJobs || []).some(j => {
+        if (sourceUrl && j.apply_url && j.apply_url === sourceUrl) return true;
+        if (editedJob.apply_url && j.apply_url === editedJob.apply_url) return true;
+        if (j.title?.toLowerCase() === editedJob.title.toLowerCase() &&
+            j.company?.toLowerCase() === editedJob.company.toLowerCase()) return true;
+        return false;
+      });
 
-    const isDuplicate = (existingJobs || []).some(j => {
-      if (sourceUrl && j.apply_url && j.apply_url === sourceUrl) return true;
-      if (editedJob.apply_url && j.apply_url === editedJob.apply_url) return true;
-      if (j.title?.toLowerCase() === editedJob.title.toLowerCase() &&
-          j.company?.toLowerCase() === editedJob.company.toLowerCase()) return true;
-      return false;
-    });
+      if (isDuplicate) {
+        toast({ title: 'Duplicate job', description: 'This job already exists in your feed.', variant: 'destructive' });
+        return;
+      }
 
-    if (isDuplicate) {
-      toast({ title: 'Duplicate job', description: 'This job already exists in your feed.', variant: 'destructive' });
-      return;
-    }
+      const { data: candidateProfile } = await (supabase as any)
+        .from('candidate_profile')
+        .select('*')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
 
-    const { data: candidateProfile } = await (supabase as any)
-      .from('candidate_profile')
-      .select('*')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
+      const { data, error } = await (supabase as any).from('jobs').insert(
+        buildHardlineJobInsert(user.id, {
+          ...editedJob,
+          apply_url: editedJob.apply_url || sourceUrl,
+          source_url: sourceUrl,
+          source_created_at: editedJob.source_created_at || null,
+        }, {
+          sourceLabel: isLI ? 'linkedin' : 'web',
+          sourceData: { imported_from: sourceUrl },
+        })
+      ).select().single();
 
-    const { data, error } = await (supabase as any).from('jobs').insert(
-      buildHardlineJobInsert(user.id, {
-        ...editedJob,
-        apply_url: editedJob.apply_url || sourceUrl,
-        source_url: sourceUrl,
-        source_created_at: editedJob.source_created_at || null,
-      }, {
-        sourceLabel: isLI ? 'linkedin' : 'web',
-        sourceData: { imported_from: sourceUrl },
-      })
-    ).select().single();
+      if (error) throw error;
 
-    await recordHardlineSourceSyncBatch((supabase as any), user.id, isLI ? 'linkedin' : 'web', isLI ? 'linkedin' : 'web', [ {
-      ...editedJob,
-      apply_url: editedJob.apply_url || sourceUrl,
-      source_url: sourceUrl,
-      source_created_at: editedJob.source_created_at || null,
-    } ], {
-      baseUrl: sourceUrl,
-      config: { imported_from: sourceUrl, source: isLI ? 'linkedin' : 'web' },
-    });
+      try {
+        await recordHardlineSourceSyncBatch((supabase as any), user.id, isLI ? 'linkedin' : 'web', isLI ? 'linkedin' : 'web', [{
+          ...editedJob,
+          apply_url: editedJob.apply_url || sourceUrl,
+          source_url: sourceUrl,
+          source_created_at: editedJob.source_created_at || null,
+        }], {
+          baseUrl: sourceUrl,
+          config: { imported_from: sourceUrl, source: isLI ? 'linkedin' : 'web' },
+        });
+      } catch (ledgerError) {
+        console.warn('Ledger sync failed for single job import:', ledgerError);
+      }
 
-    if (data) {
       if (hardlineProfile && candidateProfile?.id) {
         const scoreRow = buildHardlineJobScoreInsert(
           user.id,
@@ -336,9 +348,12 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       onOpenChange(false);
       resetState();
       toast({ title: isLI ? 'LinkedIn job imported!' : 'Job imported!' });
-    }
-    if (error) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    } catch (err: any) {
+      toast({
+        title: 'Error',
+        description: err?.message || 'Could not save imported job.',
+        variant: 'destructive',
+      });
     }
   };
 
