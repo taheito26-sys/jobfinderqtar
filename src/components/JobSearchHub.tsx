@@ -9,7 +9,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { buildHardlineJobInsert, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
+import { buildHardlineJobInsert } from '@/lib/hardline-import';
 import {
   Search, Globe, Linkedin, Loader2, MapPin, Building2,
   Sparkles, CheckCircle2, ClipboardPaste, Link2, ArrowRight,
@@ -195,13 +195,6 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
         sourceData: { query: query || importUrl },
       }),
     }));
-
-    await recordHardlineSourceSyncBatch((supabase as any), user.id, source, 'search', deduped, {
-      config: {
-        query: query || importUrl,
-        search_source: 'job-search-hub',
-      },
-    });
 
     const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
 

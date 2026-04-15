@@ -12,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
-import { buildHardlineJobInsert, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
+import { buildHardlineJobInsert } from '@/lib/hardline-import';
 import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2 } from 'lucide-react';
 
 interface ImportJobDialogProps {
@@ -203,15 +203,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
       if (error) throw error;
 
-      try {
-        await recordHardlineSourceSyncBatch((supabase as any), user.id, 'linkedin_search', 'linkedin', deduped, {
-          baseUrl: url,
-          config: { imported_from: url, source: 'linkedin_search' },
-        });
-      } catch (ledgerError) {
-        console.warn('Ledger sync failed for LinkedIn multi import:', ledgerError);
-      }
-
       if (data) {
         for (const d of data) {
           await supabase.from('application_events').insert({
@@ -275,20 +266,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       ).select().single();
 
       if (error) throw error;
-
-      try {
-        await recordHardlineSourceSyncBatch((supabase as any), user.id, isLI ? 'linkedin' : 'web', isLI ? 'linkedin' : 'web', [{
-          ...editedJob,
-          apply_url: editedJob.apply_url || sourceUrl,
-          source_url: sourceUrl,
-          source_created_at: editedJob.source_created_at || null,
-        }], {
-          baseUrl: sourceUrl,
-          config: { imported_from: sourceUrl, source: isLI ? 'linkedin' : 'web' },
-        });
-      } catch (ledgerError) {
-        console.warn('Ledger sync failed for single job import:', ledgerError);
-      }
 
       await supabase.from('application_events').insert({
         user_id: user.id, job_id: data.id, event_type: 'job_imported',

@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { buildHardlineJobInsert, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
+import { buildHardlineJobInsert } from '@/lib/hardline-import';
 import { Loader2, Search, MapPin, Building2, Plus, CheckCircle2, User, Briefcase, Sparkles } from 'lucide-react';
 
 interface SearchResult {
@@ -246,14 +246,6 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
         query: buildSearchQuery(),
       },
     }));
-
-    await recordHardlineSourceSyncBatch((supabase as any), user.id, 'search', 'search', deduped, {
-      config: {
-        search_mode: searchMode,
-        country: getEffectiveCountry() || null,
-        query: buildSearchQuery(),
-      },
-    });
 
     const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
 
