@@ -1,33 +1,31 @@
-// LinkedIn Search Module
-// Handles building LinkedIn Guest Search URLs and extracting job card data.
+// LinkedIn Native Search logic
+// Based on logic from:
+// 1. linkedin-jobs-api-py (Python reference)
+// 2. felipfr/linkedin-mcpserver (MCP/Service reference)
 
-export interface LinkedInSearchConfig {
-  keywords: string[];
+export interface LinkedInSearchInput {
+  keywords: string;
   location?: string;
-  remote_preference?: "remote" | "onsite" | "hybrid" | "flexible";
-  posted_within?: "24h" | "week" | "month" | "any";
-  page_limit?: number;
-  results_per_page?: number;
+  pageNum?: number;
+  limit?: number;
+  postedWithin?: "24h" | "week" | "month" | "any";
+  remotePreference?: "remote" | "onsite" | "hybrid" | "flexible";
 }
 
-export interface LinkedInJobCard {
+export interface LinkedInJobSnippet {
   linkedin_job_id: string;
   title: string;
   company: string;
   location: string;
-  listed_at_text?: string;
   apply_url: string;
-  search_url: string;
-  search_keyword: string;
-  search_location: string;
-  page_number: number;
+  source_created_at_text?: string;
   raw_card_payload: any;
 }
 
 /**
  * Maps readable time filters to LinkedIn f_TPR values
  */
-export function mapPostedWithinToLinkedIn(postedWithin?: string): string {
+function mapPostedWithinToLinkedIn(postedWithin?: string): string {
   switch (postedWithin) {
     case "24h": return "r86400";
     case "week": return "r604800";
@@ -40,7 +38,7 @@ export function mapPostedWithinToLinkedIn(postedWithin?: string): string {
  * Maps remote preference to LinkedIn f_WT values
  * 1: On-site, 2: Remote, 3: Hybrid
  */
-export function mapRemotePreferenceToLinkedIn(remotePref?: string): string {
+function mapRemotePreferenceToLinkedIn(remotePref?: string): string {
   switch (remotePref) {
     case "remote": return "2";
     case "onsite": return "1";
@@ -52,26 +50,22 @@ export function mapRemotePreferenceToLinkedIn(remotePref?: string): string {
 /**
  * Builds a LinkedIn guest job search URL
  */
-export function buildLinkedInSearchUrl(
-  keyword: string, 
-  location: string = "", 
-  filters: Partial<LinkedInSearchConfig> = {}, 
-  pageNum: number = 0
-): string {
+export function buildLinkedInSearchUrl(input: LinkedInSearchInput): string {
+  const { keywords, location, pageNum = 0, limit = 25, postedWithin, remotePreference } = input;
   const baseUrl = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search";
   const params = new URLSearchParams();
   
-  params.append("keywords", keyword);
+  params.append("keywords", keywords);
   if (location) params.append("location", location);
   
-  const f_TPR = mapPostedWithinToLinkedIn(filters.posted_within);
+  const f_TPR = mapPostedWithinToLinkedIn(postedWithin);
   if (f_TPR) params.append("f_TPR", f_TPR);
   
-  const f_WT = mapRemotePreferenceToLinkedIn(filters.remote_preference);
+  const f_WT = mapRemotePreferenceToLinkedIn(remotePreference);
   if (f_WT) params.append("f_WT", f_WT);
   
   // LinkedIn uses "start" for pagination (usually multiples of 25)
-  const start = pageNum * (filters.results_per_page || 25);
+  const start = pageNum * limit;
   params.append("start", start.toString());
   
   return `${baseUrl}?${params.toString()}`;
@@ -79,19 +73,11 @@ export function buildLinkedInSearchUrl(
 
 /**
  * Extracts job cards from LinkedIn Guest Search API HTML
- * Note: Guest Search API returns a list of <li> elements directly
  */
-export function extractJobCardsFromHtml(
-  html: string, 
-  searchUrl: string, 
-  keyword: string, 
-  location: string, 
-  pageNum: number
-): LinkedInJobCard[] {
-  const cards: LinkedInJobCard[] = [];
+export function parseLinkedInJobCards(html: string): LinkedInJobSnippet[] {
+  const snippets: LinkedInJobSnippet[] = [];
   
   // Regex to find <li> tags that represent job cards
-  // LinkedIn guest search li usually looks like: <li data-id="123456789">...</li>
   const cardRegex = /<li[^>]+data-id=["'](\d+)["'][^>]*>([\s\S]*?)<\/li>/gi;
   let match;
   
@@ -110,45 +96,36 @@ export function extractJobCardsFromHtml(
     
     // Extract location
     const locationMatch = cardContent.match(/<span[^>]*class=["'][^'"]*job-search-card__location[^'"]*["'][^>]*>\s*([\s\S]*?)\s*<\/span>/i);
-    const loc = locationMatch ? locationMatch[1].trim() : location;
+    const location = locationMatch ? locationMatch[1].trim() : "Unknown Location";
     
     // Extract date text
     const dateMatch = cardContent.match(/<time[^>]*class=["'][^'"]*job-search-card__listdate[^'"]*["'][^>]*>\s*([\s\S]*?)\s*<\/time>/i);
-    const listed_at_text = dateMatch ? dateMatch[1].trim() : undefined;
+    const source_created_at_text = dateMatch ? dateMatch[1].trim() : undefined;
     
     // Extract link
     const linkMatch = cardContent.match(/<a[^>]*class=["'][^'"]*base-card__full-link[^'"]*["'][^>]*href=["']([^'"]+)["']/i);
     const apply_url = linkMatch ? linkMatch[1].split('?')[0] : `https://www.linkedin.com/jobs/view/${linkedin_job_id}`;
 
-    cards.push({
+    snippets.push({
       linkedin_job_id,
       title,
       company,
-      location: loc,
-      listed_at_text,
+      location,
       apply_url,
-      search_url: searchUrl,
-      search_keyword: keyword,
-      search_location: location,
-      page_number: pageNum,
+      source_created_at_text,
       raw_card_payload: { html: cardContent }
     });
   }
   
-  return cards;
+  return snippets;
 }
 
 /**
- * Fetches a search page and extracts cards
+ * Fetches search results from LinkedIn
  */
-export async function fetchLinkedInSearchPage(
-  keyword: string, 
-  location: string, 
-  filters: Partial<LinkedInSearchConfig>, 
-  pageNum: number
-): Promise<LinkedInJobCard[]> {
-  const searchUrl = buildLinkedInSearchUrl(keyword, location, filters, pageNum);
-  console.log(`Fetching LinkedIn Search Page: ${searchUrl}`);
+export async function fetchLinkedInSearch(input: LinkedInSearchInput): Promise<LinkedInJobSnippet[]> {
+  const searchUrl = buildLinkedInSearchUrl(input);
+  console.log(`[LinkedInSearch] Fetching: ${searchUrl}`);
   
   const response = await fetch(searchUrl, {
     headers: {
@@ -157,13 +134,10 @@ export async function fetchLinkedInSearchPage(
   });
   
   if (!response.ok) {
-    if (response.status === 429) {
-      console.warn("LinkedIn search rate limited (429)");
-      throw new Error("LinkedIn rate limited");
-    }
+    if (response.status === 429) throw new Error("LinkedIn_RATE_LIMITED");
     throw new Error(`LinkedIn search failed with status ${response.status}`);
   }
   
   const html = await response.text();
-  return extractJobCardsFromHtml(html, searchUrl, keyword, location, pageNum);
+  return parseLinkedInJobCards(html);
 }

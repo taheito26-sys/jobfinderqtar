@@ -7,13 +7,8 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-function normalizeText(value: string | null | undefined) {
-  return (value || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
 function normalizeUrl(value: string | null | undefined) {
   if (!value) return "";
-
   try {
     const url = new URL(value);
     url.hash = "";
@@ -26,27 +21,6 @@ function normalizeUrl(value: string | null | undefined) {
   } catch {
     return value.trim().toLowerCase();
   }
-}
-
-function buildResultIdentity(result: any) {
-  const urlKey = normalizeUrl(result?.url);
-  if (urlKey) return `url:${urlKey}`;
-
-  const title = normalizeText(result?.metadata?.title || result?.title || "");
-  const description = normalizeText(result?.metadata?.description || "");
-  return `text:${title}|${description}`;
-}
-
-function buildSearchLedgerJobs(results: any[]) {
-  return results.map((result: any) => ({
-    title: result.metadata?.title || result.title || "",
-    company: result.metadata?.company || result.metadata?.siteName || result.title || "Unknown Company",
-    location: "",
-    description: result.metadata?.description || (result.markdown || "").substring(0, 1000),
-    apply_url: result.url || "",
-    source_url: result.url || "",
-    source_created_at: result.metadata?.publishedDate || result.metadata?.datePublished || result.metadata?.datePosted || null,
-  }));
 }
 
 Deno.serve(async (req) => {
@@ -79,19 +53,63 @@ Deno.serve(async (req) => {
       });
     }
 
-    const apiKey = Deno.env.get("FIRECRAWL_API_KEY");
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: "Firecrawl not configured" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
     const pipelineConfig = await getPipelineConfig(user.id);
     console.log(`[search-jobs] Pipeline: ${pipelineConfig.enabled ? "ON" : "OFF"}, providers: ${pipelineConfig.providers.map(p => p.name).join(" → ")}`);
 
-    const searchQuery = country ? `${query} ${country} job listing` : `${query} job listing`;
-    console.log("Searching jobs:", searchQuery, "limit:", limit);
+    // --- LinkedIn Native Search ---
+    const { linkedinProvider } = await import("../_shared/linkedin-provider.ts");
+    const searchResult = await linkedinProvider.searchJobs({
+      keywords: query,
+      location: country || "",
+      limit: Math.min(limit, 25),
+    });
 
+    if (searchResult.success && searchResult.jobs && searchResult.jobs.length > 0) {
+      const jobs = searchResult.jobs;
+      
+      // Record in ledger
+      try {
+        await recordLedgerSync(supabaseClient as any, user.id, "linkedin-native-search", "search", jobs, {
+          baseUrl: "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search",
+          configJson: { query, country: country || null, limit },
+          normalizationStatus: "incomplete",
+          runMode: "collect",
+        });
+      } catch (ledgerError) {
+        console.warn("Ledger sync failed for search-jobs:", ledgerError);
+      }
+
+      return new Response(JSON.stringify({ success: true, jobs, provider: "linkedin-native" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // If LinkedIn fails or returns nothing, we checked the mission requirement:
+    // "Remove Firecrawl as the primary search backend for LinkedIn job discovery"
+    // "Firecrawl may remain optional fallback for non-LinkedIn general web search only"
+    
+    // If it was explicitly a LinkedIn search and failed, return error
+    if (!searchResult.success && (query.toLowerCase().includes("linkedin") || searchResult.error_type === "RATE_LIMIT")) {
+      return new Response(JSON.stringify({ 
+        success: false, 
+        error: searchResult.error,
+        error_type: searchResult.error_type || "PROVIDER_ERROR"
+      }), {
+        status: searchResult.error_type === "RATE_LIMIT" ? 429 : 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // --- Fallback to Firecrawl for non-LinkedIn or as secondary fallback ---
+    const apiKey = Deno.env.get("FIRECRAWL_API_KEY");
+    if (!apiKey) {
+      return new Response(JSON.stringify({ error: searchResult.error || "No results found and Firecrawl not configured" }), {
+        status: searchResult.success ? 200 : 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const searchQuery = country ? `${query} ${country} job listing` : `${query} job listing`;
     const searchResponse = await fetch("https://api.firecrawl.dev/v1/search", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -100,138 +118,26 @@ Deno.serve(async (req) => {
 
     const searchData = await searchResponse.json();
     if (!searchResponse.ok) {
-      console.error("Firecrawl search error:", searchData);
       return new Response(JSON.stringify({ error: searchData.error || "Search failed" }), {
         status: searchResponse.status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const rawResults = searchData.data || [];
-    const seenIdentities = new Set<string>();
-    const dedupedResults = rawResults.filter((result: any) => {
-      const identity = buildResultIdentity(result);
-      if (!identity) return false;
-      if (seenIdentities.has(identity)) return false;
-      seenIdentities.add(identity);
-      return true;
-    });
-    const ledgerJobs = buildSearchLedgerJobs(dedupedResults);
-    try {
-      await recordLedgerSync(supabaseClient as any, user.id, "firecrawl-search", "search", ledgerJobs, {
-        baseUrl: "https://api.firecrawl.dev/v1/search",
-        configJson: { query, country: country || null, limit },
-        normalizationStatus: "incomplete",
-        runMode: "collect",
-      });
-    } catch (ledgerError) {
-      console.warn("Ledger sync failed for search-jobs:", ledgerError);
-    }
+    const results = (searchData.data || []).map((r: any) => ({
+      title: (r.metadata?.title || r.title || "Untitled Job").split(/\s[-–|@]\s/)[0]?.trim(),
+      company: (r.metadata?.title || r.title || "").split(/\s[-–|@]\s/)[1]?.trim() || "Unknown Company",
+      location: country || "",
+      description: r.metadata?.description || (r.markdown || "").substring(0, 500),
+      apply_url: r.url || "",
+      source_url: r.url || "",
+      source_created_at: r.metadata?.publishedDate || null,
+      normalization_status: "incomplete"
+    }));
 
-    if (dedupedResults.length > 0) {
-      try {
-        const summaries = dedupedResults.map((r: any, i: number) => {
-          const title = r.metadata?.title || r.title || "";
-          const desc = r.metadata?.description || "";
-          const markdown = (r.markdown || "").substring(0, 800);
-          return `[${i}] URL: ${r.url}\nTitle: ${title}\nDescription: ${desc}\nContent: ${markdown}`;
-        }).join("\n---\n");
-
-        const { result: raw, providerChain } = await runPipelineText({
-          config: pipelineConfig,
-          systemPrompt: "You extract structured job listing data. Return ONLY valid JSON array. No markdown wrapping.",
-          userPrompt: `Extract job details from these search results. Return a JSON array of objects.
-
-IMPORTANT: Some search result pages list MULTIPLE distinct job positions (e.g. a company careers page). If a page at index [N] contains multiple different roles, emit one object per role — all with the same index value. Do NOT merge different roles into one entry.
-
-Each object must have these fields:
-- index (number matching [N] above — repeat the same index for multiple jobs from the same page)
-- title (job title only, not company name)
-- company (company name)
-- location (city/country)
-- remote_type ("remote"|"hybrid"|"onsite"|"unknown") — if a job has a physical city and does NOT say "remote" or "work from home", use "onsite"
-- employment_type ("full-time"|"part-time"|"contract"|"internship")
-- seniority_level ("Senior"|"Mid"|"Junior"|"Lead"|"Executive"|"")
-- salary_min (number or null)
-- salary_max (number or null)
-- salary_currency ("USD"|"QAR"|etc. or null)
-- requirements (array of key requirements, max 5 per job)
-- description (the description for THIS specific role only, not all roles combined)
-- source_created_at (ISO 8601 string only if the content explicitly states the original posting date, e.g. "Posted 2 days ago" or "Posted Jan 15 2025". null otherwise. Never invent a date.)
-
-Skip entries that are not actual job postings.
-
-Results:
-${summaries}`,
-          reviewInstruction: "Verify extracted job data is accurate. Ensure titles don't include company names. Check that indices match source results. Each role from a multi-job page must be its own separate entry. Remove non-job-posting entries.",
-        });
-
-        console.log(`[search-jobs] Pipeline chain: ${providerChain.join(" → ")}`);
-
-        const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-        const parsed = JSON.parse(cleaned);
-        if (Array.isArray(parsed)) {
-          const enriched = parsed.map((p: any) => {
-            const source = dedupedResults[p.index];
-            if (!source) return null;
-            // Prefer AI-extracted date; fall back to Firecrawl metadata fields if present
-            const metaDate = source.metadata?.publishedDate
-              || source.metadata?.datePublished
-              || source.metadata?.datePosted
-              || null;
-            return {
-              title: p.title || "Untitled Job",
-              company: p.company || "Unknown Company",
-              location: p.location || "",
-              remote_type: p.remote_type || "unknown",
-              description: p.description || source.metadata?.description || (source.markdown || "").substring(0, 1000),
-              salary_min: p.salary_min || null,
-              salary_max: p.salary_max || null,
-              salary_currency: p.salary_currency || null,
-              employment_type: p.employment_type || "full-time",
-              seniority_level: p.seniority_level || "",
-              requirements: Array.isArray(p.requirements) ? p.requirements : [],
-              apply_url: source.url || "",
-              source_url: source.url || "",
-              source_created_at: p.source_created_at || metaDate || null,
-            };
-          }).filter(Boolean);
-
-          if (enriched.length > 0) {
-            console.log(`AI extracted ${enriched.length} structured jobs`);
-            return new Response(JSON.stringify({ success: true, jobs: enriched, ai_chain: providerChain }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
-        }
-      } catch (e) {
-        console.error("AI extraction failed, falling back:", e);
-      }
-    }
-
-    // Fallback: basic extraction without AI
-    const results = dedupedResults.map((result: any) => {
-      const title = result.metadata?.title || result.title || "";
-      const description = result.metadata?.description || (result.markdown || "").substring(0, 1000);
-      const titleParts = title.split(/\s[-–|@]\s/);
-      const metaDate = result.metadata?.publishedDate
-        || result.metadata?.datePublished
-        || result.metadata?.datePosted
-        || null;
-      return {
-        title: titleParts[0]?.trim() || "Untitled Job",
-        company: titleParts[1]?.trim() || "Unknown Company",
-        location: "", remote_type: "unknown", description,
-        salary_min: null, salary_max: null, salary_currency: null,
-        employment_type: "full-time", seniority_level: "", requirements: [],
-        apply_url: result.url || "", source_url: result.url || "",
-        source_created_at: metaDate || null,
-        normalization_status: "incomplete",
-      };
-    }).filter((j: any) => j.title !== "Untitled Job" || j.company !== "Unknown Company");
-
-    return new Response(JSON.stringify({ success: true, jobs: results }), {
+    return new Response(JSON.stringify({ success: true, jobs: results, provider: "firecrawl-fallback" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
+
   } catch (error: any) {
     console.error("Error:", error);
     return new Response(JSON.stringify({ error: error.message || "Search failed" }), {

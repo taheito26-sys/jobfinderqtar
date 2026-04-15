@@ -7,9 +7,7 @@ const corsHeaders = {
 };
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
     const supabaseAdmin = createClient(
@@ -17,28 +15,14 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     );
 
-    const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'Firecrawl not configured' }), {
-        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
     // Get all users with desired_titles set
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from('profiles_v2')
       .select('user_id, desired_titles, location, country, remote_preference')
       .not('desired_titles', 'eq', '[]');
 
-    if (profilesError) {
-      console.error('Error fetching profiles:', profilesError);
-      return new Response(JSON.stringify({ error: 'Failed to fetch profiles' }), {
-        status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
+    if (profilesError) throw profilesError;
     if (!profiles || profiles.length === 0) {
-      console.log('No profiles with desired titles found');
       return new Response(JSON.stringify({ message: 'No profiles to process', jobs_found: 0 }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
@@ -48,16 +32,18 @@ Deno.serve(async (req) => {
     const { data: preferences } = await supabaseAdmin
       .from('user_preferences')
       .select('user_id, key, value')
-      .in('user_id', userIds)
-      .in('key', ['auto_search_enabled', 'auto_search_max_titles', 'auto_notify_new']);
+      .in('user_id', userIds);
 
     const preferenceMap = new Map<string, Record<string, string>>();
-    (preferences || []).forEach((preference) => {
-      const existing = preferenceMap.get(preference.user_id) ?? {};
-      existing[preference.key] = preference.value;
-      preferenceMap.set(preference.user_id, existing);
+    (preferences || []).forEach((p) => {
+      const existing = preferenceMap.get(p.user_id) ?? {};
+      existing[p.key] = p.value;
+      preferenceMap.set(p.user_id, existing);
     });
-    // Get enabled LinkedIn sources
+
+    let totalNewJobs = 0;
+
+    // --- Part 1: Process LinkedIn Specific Sources (from previous Turn) ---
     const { data: linkedinSources } = await supabaseAdmin
       .from('job_sources')
       .select('*')
@@ -65,210 +51,131 @@ Deno.serve(async (req) => {
       .or('source_name.ilike.%linkedin%,source_type.ilike.%linkedin%');
 
     const sourcesByUser = new Map<string, any[]>();
-    (linkedinSources || []).forEach(source => {
-      const list = sourcesByUser.get(source.user_id) || [];
-      list.push(source);
-      sourcesByUser.set(source.user_id, list);
+    (linkedinSources || []).forEach(s => {
+      const list = sourcesByUser.get(s.user_id) || [];
+      list.push(s);
+      sourcesByUser.set(s.user_id, list);
     });
 
-    let totalNewJobs = 0;
-    
-    // Process LinkedIn Sources first
     for (const userId of userIds) {
       const sources = sourcesByUser.get(userId) || [];
       for (const source of sources) {
         try {
-          console.log(`Routing LinkedIn source ${source.id} for user ${userId} to pipeline`);
           const pipelineRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/linkedin-sync-pipeline`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
               'Content-Type': 'application/json'
             },
-            body: JSON.stringify({
-              user_id: userId,
-              source_id: source.id,
-              run_mode: 'scheduled'
-            })
+            body: JSON.stringify({ user_id: userId, source_id: source.id, run_mode: 'scheduled' })
           });
-          
           if (pipelineRes.ok) {
-            const pipelineData = await pipelineRes.json();
-            totalNewJobs += (pipelineData.new_stage_count || 0);
+            const data = await pipelineRes.json();
+            totalNewJobs += (data.new_stage_count || 0);
           }
         } catch (err) {
-          console.error(`LinkedIn pipeline failed for source ${source.id}: ${err.message}`);
+          console.error(`LinkedIn pipeline failed for source ${source.id}:`, err.message);
         }
       }
     }
 
+    // --- Part 2: Process Profile-driven Auto-Discovery ---
+    const { linkedinProvider } = await import("../_shared/linkedin-provider.ts");
 
     for (const profile of profiles) {
       const userPrefs = preferenceMap.get(profile.user_id) ?? {};
       if (userPrefs.auto_search_enabled !== 'true') continue;
 
       const titles = (profile.desired_titles as string[]) || [];
-      if (titles.length === 0) continue;
-
       const location = profile.location || profile.country || '';
       const remotePreference = profile.remote_preference || 'flexible';
-      const maxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '3', 10) || 3, titles.length));
-      const shouldNotify = userPrefs.auto_notify_new !== 'false';
-
-      // Get existing job URLs for this user to deduplicate
-      const { data: existingJobs } = await supabaseAdmin
-        .from('jobs')
-        .select('apply_url, title, company')
-        .eq('user_id', profile.user_id);
-
-      const existingUrls = new Set((existingJobs || []).map(j => j.apply_url).filter(Boolean));
-      const existingKeys = new Set((existingJobs || []).map(j => `${j.title?.toLowerCase()}|${j.company?.toLowerCase()}`));
-
+      const maxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '1', 10) || 1, titles.length));
+      
       for (const title of titles.slice(0, maxTitles)) {
-        const queryParts = [title];
-        if (remotePreference === 'remote') queryParts.push('remote');
-        if (location) queryParts.push(location);
-        queryParts.push('job listing');
-        const searchQuery = queryParts.join(' ');
-        console.log(`Searching for user ${profile.user_id}: "${searchQuery}"`);
-
+        console.log(`Auto-discovery for user ${profile.user_id}: "${title}" in "${location}"`);
+        
         try {
-          const searchResponse = await fetch('https://api.firecrawl.dev/v1/search', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${apiKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              query: searchQuery,
-              limit: 5,
-              scrapeOptions: {
-                formats: ['markdown'],
-              },
-            }),
+          const searchResult = await linkedinProvider.searchJobs({
+            keywords: title,
+            location,
+            remotePreference: remotePreference === 'remote' ? 'remote' : 'flexible',
+            limit: 5,
           });
 
-          if (!searchResponse.ok) {
-            console.error(`Search failed for "${title}":`, await searchResponse.text());
+          if (!searchResult.success || !searchResult.jobs) {
+            console.error(`Auto-discovery failed for "${title}":`, searchResult.error);
             continue;
           }
 
-          const searchData = await searchResponse.json();
-          const results = searchData.data || [];
-          const ledgerJobs = results.map((result: any) => {
-            const markdown = result.markdown || '';
-            const rawTitle = result.metadata?.title || result.title || '';
-            const titleParts = rawTitle.split(/\s[-â€“|@]\s/);
-            return {
-              title: titleParts[0]?.trim() || '',
-              company: titleParts[1]?.trim() || '',
-              location,
-              description: (result.metadata?.description || markdown).substring(0, 2000),
-              apply_url: result.url || '',
-              source_url: result.url || '',
-              source_created_at: result.metadata?.publishedDate
-                || result.metadata?.datePublished
-                || result.metadata?.datePosted
-                || null,
-              normalization_status: 'incomplete',
-            };
-          }).filter((job: any) => job.title && job.company);
-
+          // Record in ledger
           try {
-            await recordLedgerSync(supabaseAdmin as any, profile.user_id, 'auto-search-jobs', 'scheduled-search', ledgerJobs, {
-              baseUrl: 'https://api.firecrawl.dev/v1/search',
-              configJson: {
-                search_title: title,
-                search_location: location,
-                remote_preference: remotePreference,
-              },
+            await recordLedgerSync(supabaseAdmin as any, profile.user_id, 'auto-search-jobs', 'scheduled-search', searchResult.jobs, {
+              baseUrl: 'linkedin-native',
+              configJson: { title, location, remotePreference },
               normalizationStatus: 'incomplete',
               runMode: 'collect',
             });
-          } catch (ledgerError) {
-            console.warn(`Ledger sync failed for auto-search "${title}":`, ledgerError);
+          } catch (e) {
+            console.warn(`Ledger sync failed for "${title}":`, e);
           }
 
-          for (const result of results) {
-            const markdown = result.markdown || '';
-            const rawTitle = result.metadata?.title || result.title || '';
-            const titleParts = rawTitle.split(/\s[-–|@]\s/);
-            const jobTitle = titleParts[0]?.trim() || '';
-            const company = titleParts[1]?.trim() || '';
-            const applyUrl = result.url || '';
+          for (const job of searchResult.jobs) {
+            // Check for existing job
+            const { data: existing } = await supabaseAdmin
+              .from('jobs')
+              .select('id')
+              .eq('user_id', profile.user_id)
+              .eq('linkedin_job_id', job.linkedin_job_id)
+              .maybeSingle();
 
-            // Skip if no meaningful data
-            if (!jobTitle || !company) continue;
-
-            // Deduplicate by URL
-            if (applyUrl && existingUrls.has(applyUrl)) continue;
-
-            // Deduplicate by title+company
-            const key = `${jobTitle.toLowerCase()}|${company.toLowerCase()}`;
-            if (existingKeys.has(key)) continue;
+            if (existing) continue;
 
             // Insert new job
-            const { data: newJob, error: insertError } = await supabaseAdmin.from('jobs').insert({
+            const { data: newJob, error: insErr } = await supabaseAdmin.from('jobs').insert({
               user_id: profile.user_id,
-              title: jobTitle,
-              company,
-              location,
-              remote_type: remotePreference === 'remote' ? 'remote' : 'unknown',
-              description: (result.metadata?.description || markdown).substring(0, 2000),
-              salary_min: null,
-              salary_max: null,
-              salary_currency: null,
-              employment_type: 'full-time',
-              seniority_level: '',
-              requirements: [],
-              apply_url: applyUrl,
-              source_url: applyUrl,
-              raw_data: {
-                source: 'auto_search',
-                search_title: title,
-                search_location: location,
-                remote_preference: remotePreference,
-              } as any,
-            }).select('id, title, company').single();
+              linkedin_job_id: job.linkedin_job_id,
+              source_platform: 'linkedin',
+              title: job.title,
+              company: job.company,
+              location: job.location,
+              remote_type: job.remote_type,
+              description: job.description,
+              apply_url: job.apply_url,
+              source_url: job.source_url,
+              source_created_at: job.source_created_at,
+              raw_source_card: job.raw_data?.snippet?.raw_card_payload || null,
+            }).select('id').single();
 
-            if (insertError) {
-              console.error('Insert error:', insertError.message);
+            if (insErr) {
+              console.error('Job insertion failed:', insErr.message);
               continue;
             }
 
-            // Add to dedup sets
-            if (applyUrl) existingUrls.add(applyUrl);
-            existingKeys.add(key);
-
             // Create notification
-            if (shouldNotify) {
+            if (userPrefs.auto_notify_new !== 'false') {
               await supabaseAdmin.from('notifications').insert({
                 user_id: profile.user_id,
                 title: 'New job found!',
-                message: `${jobTitle} at ${company}`,
+                message: `${job.title} at ${job.company}`,
                 type: 'new_job',
-                entity_id: newJob?.id || null,
+                entity_id: newJob.id,
               });
             }
 
             totalNewJobs++;
-            console.log(`New job added: ${jobTitle} at ${company}`);
           }
-        } catch (searchErr) {
-          console.error(`Search error for "${title}":`, searchErr);
+        } catch (err) {
+          console.error(`Error in discovery loop for "${title}":`, err.message);
         }
       }
     }
 
-    console.log(`Auto-search complete. Total new jobs: ${totalNewJobs}`);
-
     return new Response(JSON.stringify({ success: true, jobs_found: totalNewJobs }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
-  } catch (error: unknown) {
+  } catch (error: any) {
     console.error('Auto-search error:', error);
-    const msg = error instanceof Error ? error.message : 'Auto-search failed';
-    return new Response(JSON.stringify({ error: msg }), {
+    return new Response(JSON.stringify({ error: error.message || 'Auto-search failed' }), {
       status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
