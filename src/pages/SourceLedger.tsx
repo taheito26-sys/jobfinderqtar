@@ -14,11 +14,11 @@ import { AlertTriangle, ArrowLeft, FileJson, PauseCircle, PlayCircle, ShieldAler
 type SourceRow = {
   id: string;
   source_name: string;
-  adapter_type: string;
-  base_url: string | null;
-  auth_mode: string | null;
-  config_json: Record<string, unknown> | null;
-  active_flag: boolean | null;
+  source_type: string;
+  config: Record<string, unknown> | null;
+  enabled: boolean | null;
+  supports_auto_submit?: boolean | null;
+  last_synced_at?: string | null;
   created_at: string;
   updated_at?: string | null;
 };
@@ -64,7 +64,7 @@ const SourceLedger = () => {
     const load = async () => {
       setLoading(true);
       const [sourceRes, runsRes, rawRes] = await Promise.all([
-        (supabase as any).from('sources').select('*').eq('id', id).eq('user_id', user.id).maybeSingle(),
+        (supabase as any).from('job_sources').select('*').eq('id', id).eq('user_id', user.id).maybeSingle(),
         (supabase as any).from('source_sync_runs').select('*').eq('source_id', id).eq('user_id', user.id).order('started_at', { ascending: false }).limit(50),
         (supabase as any).from('raw_jobs').select('*').eq('source_id', id).eq('user_id', user.id).order('fetched_at', { ascending: false }).limit(25),
       ]);
@@ -105,17 +105,10 @@ const SourceLedger = () => {
     if (!user || !source) return;
     setSaving(true);
     try {
-      const [ledgerUpdate, sourceUpdate] = await Promise.all([
-        (supabase as any).from('sources').update({ active_flag: false }).eq('id', source.id).eq('user_id', user.id),
-        (supabase as any).from('job_sources').update({ enabled: false }).eq('user_id', user.id).eq('source_name', source.source_name),
-      ]);
+      const { error } = await (supabase as any).from('job_sources').update({ enabled: false }).eq('id', source.id).eq('user_id', user.id);
+      if (error) throw error;
 
-      if (ledgerUpdate.error) throw ledgerUpdate.error;
-      if (sourceUpdate.error) {
-        console.warn('Failed to disable matching job_sources row:', sourceUpdate.error);
-      }
-
-      setSource({ ...source, active_flag: false });
+      setSource({ ...source, enabled: false });
       toast({
         title: 'Source disabled',
         description: `${source.source_name} will no longer be recorded or auto-discovered.`,
@@ -162,11 +155,11 @@ const SourceLedger = () => {
           </Link>
         </Button>
         <div className="flex items-center gap-2">
-          <Badge variant={source.active_flag === false ? 'secondary' : 'default'} className="gap-1">
-            {source.active_flag === false ? <PauseCircle className="w-3 h-3" /> : <PlayCircle className="w-3 h-3" />}
-            {source.active_flag === false ? 'Disabled' : 'Active'}
+          <Badge variant={source.enabled === false ? 'secondary' : 'default'} className="gap-1">
+            {source.enabled === false ? <PauseCircle className="w-3 h-3" /> : <PlayCircle className="w-3 h-3" />}
+            {source.enabled === false ? 'Disabled' : 'Active'}
           </Badge>
-          <Badge variant="outline" className="capitalize">{source.adapter_type}</Badge>
+          <Badge variant="outline" className="capitalize">{source.source_type}</Badge>
         </div>
       </div>
 
@@ -215,7 +208,7 @@ const SourceLedger = () => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div className="space-y-1">
               <p className="text-muted-foreground">Adapter</p>
-              <p className="text-foreground">{source.adapter_type}</p>
+              <p className="text-foreground">{source.source_type}</p>
             </div>
             <div className="space-y-1">
               <p className="text-muted-foreground">Base URL</p>
@@ -264,7 +257,7 @@ const SourceLedger = () => {
               <AlertDialogTrigger asChild>
                 <Button
                   variant="destructive"
-                  disabled={saving || source.active_flag === false || !summary.persistentNoise}
+                  disabled={saving || source.enabled === false || !summary.persistentNoise}
                   className="gap-2"
                 >
                   <ShieldAlert className="w-4 h-4" />

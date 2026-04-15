@@ -41,9 +41,10 @@ interface SubmissionData {
 interface SourceLedgerRow {
   id: string;
   source_name: string;
-  adapter_type: string;
-  base_url: string | null;
-  active_flag?: boolean | null;
+  source_type: string;
+  config: Record<string, unknown> | null;
+  enabled?: boolean | null;
+  last_synced_at?: string | null;
   created_at: string;
 }
 
@@ -118,7 +119,7 @@ const Dashboard = () => {
         supabase.from('application_submissions').select('id, submission_status, submitted_at, response_received_at, follow_up_date, jobs(title, company)').eq('user_id', user.id),
         supabase.from('application_drafts').select('id, status').eq('user_id', user.id),
         supabase.from('jobs').select('id, created_at').eq('user_id', user.id).gte('created_at', thirtyDaysAgo),
-        (supabase as any).from('sources').select('id, source_name, adapter_type, base_url, active_flag, created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
+        (supabase as any).from('job_sources').select('id, source_name, source_type, config, enabled, last_synced_at, created_at').eq('user_id', user.id).order('created_at', { ascending: false }),
         (supabase as any).from('source_sync_runs').select('id, source_id, run_mode, started_at, completed_at, status, jobs_seen_count, jobs_inserted_count, jobs_updated_count, jobs_invalid_count').eq('user_id', user.id).order('started_at', { ascending: false }).limit(50),
         (supabase as any).from('raw_jobs').select('id, source_id, fetched_at').eq('user_id', user.id),
       ]);
@@ -405,11 +406,14 @@ const Dashboard = () => {
                           <Link to={`/sources/${source.id}`} className="text-sm font-medium text-foreground truncate hover:text-primary transition-colors">
                             {source.source_name}
                           </Link>
-                          {source.active_flag === false && (
+                          {source.enabled === false && (
                             <Badge variant="secondary" className="text-[10px]">Disabled</Badge>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground truncate">{source.adapter_type}{source.base_url ? ` · ${source.base_url}` : ''}</p>
+          <p className="text-xs text-muted-foreground truncate">{source.source_type}{(() => {
+            const baseUrl = source.config?.base_url;
+            return baseUrl ? ` · ${String(baseUrl)}` : '';
+          })()}</p>
                       </div>
                       <span className="text-sm text-foreground">{runCount}</span>
                       <span className="text-sm text-foreground">{rawCount}</span>

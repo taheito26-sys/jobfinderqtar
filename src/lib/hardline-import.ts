@@ -241,7 +241,7 @@ export async function ensureHardlineSource(
   config: Record<string, unknown> = {},
 ) {
   const existing = await supabaseClient
-    .from('sources')
+    .from('job_sources')
     .select('id')
     .eq('user_id', userId)
     .eq('source_name', sourceName)
@@ -252,15 +252,17 @@ export async function ensureHardlineSource(
   }
 
   const { data, error } = await supabaseClient
-    .from('sources')
+    .from('job_sources')
     .insert({
       user_id: userId,
       source_name: sourceName,
-      adapter_type: sourceType,
-      base_url: baseUrl,
-      active_flag: true,
-      auth_mode: 'none',
-      config_json: config,
+      source_type: sourceType,
+      config: {
+        base_url: baseUrl,
+        ...config,
+      },
+      enabled: true,
+      supports_auto_submit: false,
     })
     .select('id')
     .single();
