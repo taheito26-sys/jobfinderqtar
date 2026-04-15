@@ -132,13 +132,15 @@ async function fetchPageText(url: string): Promise<string> {
 }
 
 /**
- * Shape returned from AI extraction — either a single job or multiple.
+ * Shape returned from AI extraction — single job, multiple jobs, or listing page.
  * type === 'single'   → job field is populated
  * type === 'multiple' → jobs array is populated (each distinct role on the page)
+ * type === 'listing'  → jobs array with individual URLs + total_count from page
  */
 type ExtractionResult =
   | { type: 'single'; job: Record<string, unknown> }
-  | { type: 'multiple'; jobs: Record<string, unknown>[] };
+  | { type: 'multiple'; jobs: Record<string, unknown>[] }
+  | { type: 'listing'; jobs: Record<string, unknown>[]; total_count: number };
 
 /** Normalise a raw extracted job object into a clean, consistently shaped record */
 function normaliseJob(raw: Record<string, unknown>, fallbackUrl: string): Record<string, unknown> {
@@ -160,37 +162,45 @@ function normaliseJob(raw: Record<string, unknown>, fallbackUrl: string): Record
 }
 
 /** Use AI to extract structured job data from raw text.
- *  Returns a single job or multiple individual jobs when the page lists many distinct positions. */
+ *  Returns a single job, multiple individual jobs, or a listing page with many job cards. */
 async function extractJobWithAI(text: string, sourceUrl: string, userId: string): Promise<ExtractionResult> {
-  const prompt = `Analyse the text below and determine whether it contains ONE job listing or MULTIPLE DISTINCT job listings (different titles or roles).
+  const today = new Date().toISOString().split('T')[0];
+  const prompt = `Analyse this web page content from: ${sourceUrl}
+Today's date: ${today}
 
-RULES:
-- If the page is a single job posting: return {"type":"single","job":{...}}
-- If the page lists 2 or more different positions: return {"type":"multiple","jobs":[{...},{...},...]}
-- Never combine two different roles into one record — each distinct title must be its own object.
-- For remote_type: if a job has a physical city/country and does NOT explicitly say "remote" or "work from home", use "onsite".
-- For source_created_at: ISO 8601 string only if the posting explicitly states the original publish date (e.g. "Posted 3 days ago", "Posted Jan 15 2025"). Otherwise null. Never invent a date.
+DETERMINE PAGE TYPE:
+• SINGLE_JOB  — One specific role with complete description + requirements
+• MULTI_JOB   — 2-10 complete, distinct job postings on one page (each has full description)
+• LISTING_PAGE — A search-results or aggregator showing many job CARDS that each link to individual job pages
+  (Signs: "N jobs found" / "N results", pagination, minimal card info, no full descriptions per entry)
 
-Fields for each job object:
+Return ONLY valid JSON (no markdown, no explanation):
+
+SINGLE_JOB  → {"type":"single","job":{fields}}
+MULTI_JOB   → {"type":"multiple","jobs":[{fields},...]}
+LISTING_PAGE → {"type":"listing","total_count":N,"jobs":[{fields},...]}
+  where total_count = the total number shown on page (e.g. "487 Jobs" → 487)
+
+Fields per job object:
 {
   "title": string,
   "company": string,
   "location": string,
   "remote_type": "remote"|"hybrid"|"onsite"|"unknown",
-  "description": string (full description for THIS specific role only),
+  "description": string  // full text for SINGLE/MULTI; empty "" for LISTING cards
   "salary_min": number|null,
   "salary_max": number|null,
   "salary_currency": string|null,
   "employment_type": "full-time"|"part-time"|"contract"|"internship",
-  "seniority_level": "junior"|"mid"|"senior"|"lead"|"executive"|"",
-  "requirements": string[],
-  "apply_url": "${sourceUrl}",
-  "source_created_at": string|null
+  "seniority_level": "Junior"|"Mid"|"Senior"|"Lead"|"Executive"|"",
+  "requirements": string[]  // max 5 for SINGLE/MULTI; [] for LISTING cards
+  "apply_url": string,     // individual job URL from the card link; fallback to "${sourceUrl}"
+  "source_created_at": string|null  // ISO 8601; convert "3 days ago" using today's date; null if no date
 }
 
-Return ONLY valid JSON — no markdown, no explanation.
+For LISTING_PAGE: extract ALL visible job cards; find each card's link (href) and use as apply_url.
 
-TEXT:
+PAGE CONTENT:
 ${text}`;
 
   const lovableKey = Deno.env.get('LOVABLE_API_KEY');
@@ -266,6 +276,11 @@ ${text}`;
         const jobs = parsed.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
         console.log(`AI extraction (${prov.name}): ${jobs.length} jobs (bare array)`);
         return jobs.length === 1 ? { type: 'single', job: jobs[0] } : { type: 'multiple', jobs };
+      }
+      if (parsed.type === 'listing' && Array.isArray(parsed.jobs)) {
+        const jobs = parsed.jobs.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
+        console.log(`AI extraction (${prov.name}): ${jobs.length} listing cards (total on page: ${parsed.total_count})`);
+        return { type: 'listing', jobs, total_count: Number(parsed.total_count) || jobs.length };
       }
       if (parsed.type === 'multiple' && Array.isArray(parsed.jobs)) {
         const jobs = parsed.jobs.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
@@ -519,11 +534,39 @@ Deno.serve(async (req) => {
               || scrapeData.data?.metadata?.datePosted
               || null;
 
-            // Always run through AI extraction on the full markdown so we can detect multiple jobs.
+            // Always run through AI extraction on the full markdown so we can detect multiple jobs or listing pages.
             // The Firecrawl JSON schema result (ext) is only used as a seed title/company fallback.
             const ext = scrapeData.data?.json || scrapeData.json || {};
             const aiText = md.length >= 200 ? md.substring(0, 12000) : JSON.stringify(ext);
             const aiResult = await extractJobWithAI(aiText, formattedUrl, user.id);
+
+            if (aiResult.type === 'listing') {
+              // Listing page with individual job URLs
+              const jobs = aiResult.jobs.map(j => markNormalizationStatus({
+                ...j,
+                source_created_at: (j.source_created_at as string | null) || firecrawlDate || null,
+              }, md.length));
+              try {
+                await recordLedgerSync(supabaseClient as any, user.id, 'firecrawl-listing-scrape', 'search', jobs, {
+                  baseUrl: formattedUrl,
+                  configJson: { source: 'firecrawl_listing', url: formattedUrl, total_count: aiResult.total_count },
+                  normalizationStatus: 'valid',
+                  runMode: 'collect',
+                });
+              } catch (ledgerError) {
+                console.warn('Ledger sync failed for Firecrawl listing scrape:', ledgerError);
+              }
+              console.log(`Firecrawl + AI extracted ${jobs.length} listing cards (total: ${aiResult.total_count})`);
+              return new Response(JSON.stringify({
+                success: true,
+                multiple: true,
+                listing: true,
+                total_count: aiResult.total_count,
+                jobs,
+                total_found: jobs.length,
+                failed_count: 0,
+              }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
 
             if (aiResult.type === 'multiple') {
               // Patch firecrawlDate onto any job that lacks source_created_at
@@ -581,6 +624,29 @@ Deno.serve(async (req) => {
           });
         }
         const aiResult = await extractJobWithAI(pageText, formattedUrl, user.id);
+        if (aiResult.type === 'listing') {
+          const jobs = aiResult.jobs.map((job) => markNormalizationStatus(job, pageText.length));
+          try {
+            await recordLedgerSync(supabaseClient as any, user.id, 'direct-fetch-listing-scrape', 'web', jobs, {
+              baseUrl: formattedUrl,
+              configJson: { source: 'direct_fetch_listing', url: formattedUrl, total_count: aiResult.total_count },
+              normalizationStatus: pageText.length >= 250 ? 'valid' : 'incomplete',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn('Ledger sync failed for direct fetch listing scrape:', ledgerError);
+          }
+          console.log(`Direct fetch + AI extracted ${jobs.length} listing cards (total: ${aiResult.total_count})`);
+          return new Response(JSON.stringify({
+            success: true,
+            multiple: true,
+            listing: true,
+            total_count: aiResult.total_count,
+            jobs,
+            total_found: jobs.length,
+            failed_count: 0,
+          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
         if (aiResult.type === 'multiple') {
           const jobs = aiResult.jobs.map((job) => markNormalizationStatus(job, pageText.length));
           try {
