@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/Data/GITHUB/jobfinderqtar/supabase/migrations/*.sql)",
+      "Bash(grep -l \"export\" /c/Data/GITHUB/jobfinderqtar/src/components/*.tsx)",
+      "Bash(grep -r \"const\\\\|function\\\\|export\" /c/Data/GITHUB/jobfinderqtar/src/lib/*.ts)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(npx tsc:*)"
+    ]
+  }
+}
