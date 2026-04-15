@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
@@ -13,12 +13,20 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
-import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2 } from 'lucide-react';
+import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2, Search, SlidersHorizontal, Calendar } from 'lucide-react';
 
 interface ImportJobDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onJobAdded: (job: any) => void;
+}
+
+interface ListingFilters {
+  search: string;
+  dateRange: 'all' | '7d' | '30d' | '60d' | '180d';
+  employmentType: 'all' | string;
+  remoteType: 'all' | string;
+  seniority: 'all' | string;
 }
 
 const QATAR_JOB_BOARDS = [
@@ -29,6 +37,22 @@ const QATAR_JOB_BOARDS = [
   { name: 'LinkedIn', url: 'https://www.linkedin.com/jobs' },
   { name: 'Tanqeeb', url: 'https://www.tanqeeb.com' },
 ];
+
+function formatDatePosted(iso: string | null): string | null {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diffMs = now.getTime() - d.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return '1d ago';
+    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  } catch { return null; }
+}
 
 function isLinkedInUrl(url: string): boolean {
   try { return new URL(url).hostname.includes('linkedin.com'); } catch { return false; }
@@ -60,6 +84,8 @@ async function scrapeOrParse(url: string, manualDescription?: string): Promise<{
   job?: ScrapedJob;
   jobs?: ScrapedJob[];
   multiple?: boolean;
+  listing?: boolean;
+  total_count?: number;
   total_found?: number;
   failed_count?: number;
   error?: string;
@@ -78,11 +104,13 @@ async function scrapeOrParse(url: string, manualDescription?: string): Promise<{
   if (data?.error) {
     return { success: false, error: data.error };
   }
-  // Multiple jobs from LinkedIn search URL
+  // Multiple jobs or listing page
   if (data?.multiple && Array.isArray(data?.jobs)) {
     return {
       success: true,
       multiple: true,
+      listing: data.listing || false,
+      total_count: data.total_count,
       jobs: data.jobs,
       total_found: data.total_found,
       failed_count: data.failed_count,
@@ -100,9 +128,12 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
   const [scraped, setScraped] = useState<ScrapedJob | null>(null);
   const [editMode, setEditMode] = useState(false);
   const [editedJob, setEditedJob] = useState<ScrapedJob | null>(null);
-  // Multi-job mode
+  // Multi-job / listing mode
   const [multiJobs, setMultiJobs] = useState<ScrapedJob[]>([]);
   const [multiSelected, setMultiSelected] = useState<Set<number>>(new Set());
+  const [isListingMode, setIsListingMode] = useState(false);
+  const [totalOnPage, setTotalOnPage] = useState<number | null>(null);
+  const [filters, setFilters] = useState<ListingFilters>({ search: '', dateRange: 'all', employmentType: 'all', remoteType: 'all', seniority: 'all' });
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [importing, setImporting] = useState(false);
 
@@ -112,12 +143,31 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
   const isLinkedin = isLinkedInUrl(url);
   const isMultiMode = multiJobs.length > 0;
 
+  const indexedFilteredJobs = useMemo(() => {
+    const cutoffDays: Record<string, number> = { '7d': 7, '30d': 30, '60d': 60, '180d': 180 };
+    const cutoff = filters.dateRange !== 'all' ? new Date(Date.now() - cutoffDays[filters.dateRange] * 86400000) : null;
+    return multiJobs.map((job, idx) => ({ job, idx })).filter(({ job }) => {
+      if (filters.search) {
+        const q = filters.search.toLowerCase();
+        if (!job.title.toLowerCase().includes(q) && !job.company.toLowerCase().includes(q)) return false;
+      }
+      if (cutoff && job.source_created_at && new Date(job.source_created_at) < cutoff) return false;
+      if (filters.employmentType !== 'all' && job.employment_type !== filters.employmentType) return false;
+      if (filters.remoteType !== 'all' && job.remote_type !== filters.remoteType) return false;
+      if (filters.seniority !== 'all' && job.seniority_level?.toLowerCase() !== filters.seniority.toLowerCase()) return false;
+      return true;
+    });
+  }, [multiJobs, filters]);
+
   const handleScrape = async () => {
     if (!url.trim()) return;
     setScraping(true);
     setScraped(null);
     setMultiJobs([]);
     setMultiSelected(new Set());
+    setIsListingMode(false);
+    setTotalOnPage(null);
+    setFilters({ search: '', dateRange: 'all', employmentType: 'all', remoteType: 'all', seniority: 'all' });
 
     const normalizedUrl = normalizeLinkedInJobUrl(url.trim());
     const result = await scrapeOrParse(normalizedUrl);
@@ -126,11 +176,14 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       setActiveTab('paste');
       toast({ title: 'LinkedIn login required', description: 'Paste the job description below instead.', variant: 'destructive' });
     } else if (result.multiple && result.jobs && result.jobs.length > 0) {
-      // Multi-job result from LinkedIn search URL
+      // Multi-job result from listing page or LinkedIn search URL
       setMultiJobs(result.jobs);
       setMultiSelected(new Set(result.jobs.map((_, i) => i)));
+      setIsListingMode(result.listing || false);
+      setTotalOnPage(result.total_count || null);
       const failedMsg = result.failed_count ? ` (${result.failed_count} could not be extracted)` : '';
-      toast({ title: `Found ${result.jobs.length} jobs!`, description: `Select which jobs to import${failedMsg}` });
+      const listingMsg = result.listing ? ` from listing page` : '';
+      toast({ title: `Found ${result.jobs.length} jobs${listingMsg}!`, description: `Select which jobs to import${failedMsg}` });
     } else if (result.success && result.job) {
       setScraped(result.job);
       setEditedJob(result.job);
@@ -307,7 +360,7 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) resetState(); }}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className={`${isMultiMode ? 'max-w-2xl' : 'max-w-lg'} max-h-[90vh] overflow-y-auto`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Globe className="w-5 h-5" />
