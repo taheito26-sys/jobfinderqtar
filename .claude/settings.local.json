@@ -16,7 +16,11 @@
       "Bash(git add:*)",
       "Bash(git commit -m 'Add listing page detection to scrape-job-url:*)",
       "Bash(git commit -m 'Add listing page filter UI skeleton \\(WIP\\):*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(curl -s \"https://api.github.com/search/repositories?q=linkedin+jobs+scraper+language:javascript&sort=stars&per_page=5\")",
+      "Bash(deno run:*)",
+      "Bash(node test-linkedin-parsing.js)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }
