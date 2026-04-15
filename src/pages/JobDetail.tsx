@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, ExternalLink, MapPin, Building2, AlertTriangle, CheckCircle2, XCircle,
   Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare, RefreshCw, Settings, Bot, Archive,
-  Search, ShieldCheck, ShieldAlert, ShieldX, ChevronDown, ChevronUp, BookOpen
+  Search, ShieldCheck, ShieldAlert, ShieldX, ChevronDown, ChevronUp, BookOpen, Calendar
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -366,6 +366,14 @@ const JobDetail = () => {
                       {job.salary_currency} {job.salary_min?.toLocaleString()}{job.salary_max ? ` – ${job.salary_max.toLocaleString()}` : ''}
                     </p>
                   )}
+                  <p className="flex items-center gap-1.5 text-sm text-muted-foreground mt-1">
+                    <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="font-medium text-foreground">Original Job Posted Date:</span>
+                    {job.source_created_at
+                      ? new Date(job.source_created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+                      : <span className="italic">Not provided by source</span>
+                    }
+                  </p>
                 </div>
                 {match && <ScoreBadge score={match.overall_score} size="lg" showLabel />}
               </div>

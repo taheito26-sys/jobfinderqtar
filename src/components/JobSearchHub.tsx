@@ -203,6 +203,7 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
       requirements: job.requirements as any,
       apply_url: job.apply_url,
       source_url: job.source_url || job.apply_url,
+      source_created_at: (job as any).source_created_at || null,
       raw_data: { source, query: query || importUrl } as any,
     }));
 

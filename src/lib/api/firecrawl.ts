@@ -13,6 +13,8 @@ export type ScrapedJob = {
   seniority_level: string;
   requirements: string[];
   apply_url: string;
+  /** ISO 8601 date string from the source website, null if not exposed by source */
+  source_created_at: string | null;
 };
 
 export const scrapeJobUrl = async (url: string): Promise<{ success: boolean; job?: ScrapedJob; error?: string }> => {

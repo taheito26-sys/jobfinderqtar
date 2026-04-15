@@ -210,6 +210,7 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       requirements: job.requirements as any,
       apply_url: job.apply_url,
       source_url: job.apply_url,
+      source_created_at: job.source_created_at || null,
       raw_data: { source: 'linkedin_search', imported_from: url } as any,
     }));
 
@@ -277,6 +278,7 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       requirements: editedJob.requirements as any,
       apply_url: editedJob.apply_url || sourceUrl,
       source_url: sourceUrl,
+      source_created_at: editedJob.source_created_at || null,
       raw_data: { source: isLI ? 'linkedin' : 'web', imported_from: sourceUrl } as any,
     }).select().single();
 

@@ -127,6 +127,7 @@ Deno.serve(async (req) => {
 - salary_max (number or null)
 - salary_currency (e.g. "USD","QAR" or null)
 - requirements (array of key requirements, max 5)
+- source_created_at (ISO 8601 string if the result content explicitly states when the job was originally posted, e.g. "Posted 2 days ago", "Posted on Jan 15 2025". Set to null if no posting date is mentioned. Do NOT invent or guess a date.)
 
 Skip entries that are not actual job postings.
 
@@ -143,6 +144,11 @@ ${summaries}`,
           const enriched = parsed.map((p: any) => {
             const source = dedupedResults[p.index];
             if (!source) return null;
+            // Prefer AI-extracted date; fall back to Firecrawl metadata fields if present
+            const metaDate = source.metadata?.publishedDate
+              || source.metadata?.datePublished
+              || source.metadata?.datePosted
+              || null;
             return {
               title: p.title || "Untitled Job",
               company: p.company || "Unknown Company",
@@ -157,6 +163,7 @@ ${summaries}`,
               requirements: Array.isArray(p.requirements) ? p.requirements : [],
               apply_url: source.url || "",
               source_url: source.url || "",
+              source_created_at: p.source_created_at || metaDate || null,
             };
           }).filter(Boolean);
 
@@ -177,6 +184,10 @@ ${summaries}`,
       const title = result.metadata?.title || result.title || "";
       const description = result.metadata?.description || (result.markdown || "").substring(0, 1000);
       const titleParts = title.split(/\s[-–|@]\s/);
+      const metaDate = result.metadata?.publishedDate
+        || result.metadata?.datePublished
+        || result.metadata?.datePosted
+        || null;
       return {
         title: titleParts[0]?.trim() || "Untitled Job",
         company: titleParts[1]?.trim() || "Unknown Company",
@@ -184,6 +195,7 @@ ${summaries}`,
         salary_min: null, salary_max: null, salary_currency: null,
         employment_type: "full-time", seniority_level: "", requirements: [],
         apply_url: result.url || "", source_url: result.url || "",
+        source_created_at: metaDate || null,
       };
     }).filter((j: any) => j.title !== "Untitled Job" || j.company !== "Unknown Company");
 

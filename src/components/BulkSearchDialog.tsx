@@ -252,6 +252,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
       requirements: job.requirements as any,
       apply_url: job.apply_url,
       source_url: job.source_url,
+      source_created_at: (job as any).source_created_at || null,
       raw_data: {
         source: 'search',
         search_mode: searchMode,

@@ -118,7 +118,8 @@ async function extractJobWithAI(text: string, sourceUrl: string, userId: string)
   "employment_type": "full-time|part-time|contract|internship",
   "seniority_level": "junior|mid|senior|lead|executive",
   "requirements": ["requirement 1", "requirement 2"],
-  "apply_url": "${sourceUrl}"
+  "apply_url": "${sourceUrl}",
+  "source_created_at": null (ISO 8601 date string if the posting explicitly states when the job was ORIGINALLY POSTED, e.g. "Posted 3 days ago" → compute from context, "Posted on 2025-01-15" → "2025-01-15T00:00:00Z". Set to null if the source does NOT explicitly provide the original posting date. Do NOT use the scrape time or current date.)
 }
 
 TEXT:
@@ -225,6 +226,7 @@ async function scrapeSingleLinkedInJob(jobId: string, userId: string): Promise<a
       seniority_level: data.seniority_level || '',
       requirements: data.requirements || [],
       apply_url: data.apply_url || jobUrl,
+      source_created_at: data.source_created_at || null,
     };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -277,6 +279,7 @@ Deno.serve(async (req) => {
         seniority_level: extracted.seniority_level || '',
         requirements: extracted.requirements || [],
         apply_url: extracted.apply_url || url || '',
+        source_created_at: extracted.source_created_at || null,
       };
       return new Response(JSON.stringify({ success: true, job }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -365,6 +368,7 @@ Deno.serve(async (req) => {
               seniority_level: data.seniority_level || '',
               requirements: data.requirements || [],
               apply_url: data.apply_url || formattedUrl,
+              source_created_at: data.source_created_at || null,
             };
             extracted = true;
             console.log('LinkedIn guest API + AI extracted:', job.title);
@@ -419,6 +423,11 @@ Deno.serve(async (req) => {
             const scrapeData = await scrapeResponse.json();
             const ext = scrapeData.data?.json || scrapeData.json || {};
             const md = scrapeData.data?.markdown || scrapeData.markdown || '';
+            // Firecrawl may surface a publishedDate in metadata
+            const firecrawlDate = scrapeData.data?.metadata?.publishedDate
+              || scrapeData.data?.metadata?.datePublished
+              || scrapeData.data?.metadata?.datePosted
+              || null;
             job = {
               title: ext.title || 'Untitled Job', company: ext.company || 'Unknown Company',
               location: ext.location || '', remote_type: ext.remote_type || 'unknown',
@@ -427,6 +436,7 @@ Deno.serve(async (req) => {
               salary_currency: ext.salary_currency || null, employment_type: ext.employment_type || 'full-time',
               seniority_level: ext.seniority_level || '', requirements: ext.requirements || [],
               apply_url: ext.apply_url || formattedUrl,
+              source_created_at: ext.source_created_at || firecrawlDate || null,
             };
             extracted = true;
             console.log('Firecrawl extracted:', job.title);
@@ -457,6 +467,7 @@ Deno.serve(async (req) => {
           salary_currency: data.salary_currency || null, employment_type: data.employment_type || 'full-time',
           seniority_level: data.seniority_level || '', requirements: data.requirements || [],
           apply_url: data.apply_url || formattedUrl,
+          source_created_at: data.source_created_at || null,
         };
         extracted = true;
       } catch (e: unknown) {
