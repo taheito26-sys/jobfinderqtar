@@ -13,7 +13,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import {
   ArrowLeft, ExternalLink, MapPin, Building2, AlertTriangle, CheckCircle2, XCircle,
-  Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare, RefreshCw, Settings, Bot, Archive
+  Zap, FileText, Send, Loader2, Mail, Linkedin, CheckSquare, RefreshCw, Settings, Bot, Archive,
+  Search, ShieldCheck, ShieldAlert, ShieldX, ChevronDown, ChevronUp, BookOpen
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
@@ -58,6 +59,11 @@ const JobDetail = () => {
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [markedApplied, setMarkedApplied] = useState(false);
 
+  // Deep research state
+  const [research, setResearch] = useState<any>(null);
+  const [researching, setResearching] = useState(false);
+  const [researchExpanded, setResearchExpanded] = useState(false);
+
   // AI provider state
   const [currentProvider, setCurrentProvider] = useState('lovable');
   const [pipelineEnabled, setPipelineEnabled] = useState(false);
@@ -86,12 +92,14 @@ const JobDetail = () => {
   useEffect(() => {
     if (!user || !id) return;
     const load = async () => {
-      const [jobRes, matchRes] = await Promise.all([
+      const [jobRes, matchRes, researchRes] = await Promise.all([
         supabase.from('jobs').select('*').eq('id', id).eq('user_id', user.id).single(),
         supabase.from('job_matches').select('*').eq('job_id', id).eq('user_id', user.id).maybeSingle(),
+        supabase.from('company_research').select('*').eq('job_id', id).eq('user_id', user.id).maybeSingle(),
       ]);
       setJob(jobRes.data);
       setMatch(matchRes.data);
+      setResearch(researchRes.data);
       setLoading(false);
     };
     load();
@@ -160,6 +168,22 @@ const JobDetail = () => {
       toast({ title: 'Scoring failed', description: err.message, variant: 'destructive' });
     }
     setScoring(false);
+  };
+
+  const runDeepResearch = async () => {
+    if (!user || !id) return;
+    setResearching(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('deep-company-research', { body: { job_id: id } });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setResearch(data);
+      setResearchExpanded(true);
+      toast({ title: 'Deep research complete', description: `${job?.company} analysed across 6 axes.` });
+    } catch (err: any) {
+      toast({ title: 'Research failed', description: err.message, variant: 'destructive' });
+    }
+    setResearching(false);
   };
 
   const tailorDocument = async (docType: 'cv' | 'cover_letter') => {
@@ -525,6 +549,9 @@ const JobDetail = () => {
               <Button className="w-full" onClick={scoreJob} disabled={scoring}>
                 {scoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Scoring...</> : <><Zap className="w-4 h-4 mr-2" />{match ? 'Re-score Job' : '1. Score Job'}</>}
               </Button>
+              <Button variant="outline" className="w-full" onClick={runDeepResearch} disabled={researching}>
+                {researching ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Researching...</> : <><Search className="w-4 h-4 mr-2" />{research ? 'Re-run Deep Research' : '1b. Deep Research'}</>}
+              </Button>
               <Button variant="outline" className="w-full" onClick={() => tailorDocument('cv')} disabled={tailoring}>
                 {tailoring ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Tailoring...</> : <><FileText className="w-4 h-4 mr-2" />2. Tailor CV</>}
               </Button>
@@ -665,9 +692,14 @@ const JobDetail = () => {
                         </ul>
                       </div>
                     )}
-                    <p className="text-[10px] text-muted-foreground pt-1 border-t border-border/50">
-                      Research {job.company}'s recent news and culture before your interview.
-                    </p>
+                    <div className="pt-1 border-t border-border/50 flex items-center justify-between">
+                      <p className="text-[10px] text-muted-foreground">
+                        Build STAR+R stories in your story bank to answer these with confidence.
+                      </p>
+                      <Link to="/interview-prep" className="text-[10px] text-primary hover:underline whitespace-nowrap ml-2">
+                        Story Bank →
+                      </Link>
+                    </div>
                   </CardContent>
                 </Card>
               )}
@@ -693,6 +725,71 @@ const JobDetail = () => {
                 </Card>
               )}
 
+              {/* Block G — Posting Legitimacy */}
+              {match.legitimacy_tier && match.legitimacy_tier !== 'unknown' && (
+                <Card className={
+                  match.legitimacy_tier === 'high_confidence'
+                    ? 'border-green-300 dark:border-green-700'
+                    : match.legitimacy_tier === 'suspicious'
+                    ? 'border-destructive/40'
+                    : 'border-amber-300 dark:border-amber-700'
+                }>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      {match.legitimacy_tier === 'high_confidence' ? (
+                        <ShieldCheck className="w-4 h-4 text-green-600 dark:text-green-400" />
+                      ) : match.legitimacy_tier === 'suspicious' ? (
+                        <ShieldX className="w-4 h-4 text-destructive" />
+                      ) : (
+                        <ShieldAlert className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                      )}
+                      Posting Legitimacy
+                      <Badge variant="outline" className={`ml-auto text-xs capitalize ${
+                        match.legitimacy_tier === 'high_confidence'
+                          ? 'text-green-700 border-green-300 dark:text-green-300 dark:border-green-700'
+                          : match.legitimacy_tier === 'suspicious'
+                          ? 'text-destructive border-destructive/30'
+                          : 'text-amber-700 border-amber-300 dark:text-amber-300 dark:border-amber-700'
+                      }`}>
+                        {match.legitimacy_tier === 'high_confidence' ? 'High Confidence' : match.legitimacy_tier === 'suspicious' ? 'Suspicious' : 'Proceed with Caution'}
+                      </Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    {match.legitimacy_score !== null && (
+                      <div>
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-muted-foreground">Legitimacy Score</span>
+                          <span className="font-mono text-foreground">{match.legitimacy_score}/100</span>
+                        </div>
+                        <Progress value={match.legitimacy_score} className="h-1.5" />
+                      </div>
+                    )}
+                    {(match.legitimacy_reasons as string[] || []).length > 0 && (
+                      <ul className="space-y-1 pt-1">
+                        {(match.legitimacy_reasons as string[]).map((r: string, i: number) => (
+                          <li key={i} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                            <CheckCircle2 className="w-3 h-3 text-muted-foreground mt-0.5 flex-shrink-0" />{r}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(match.legitimacy_flags as string[] || []).length > 0 && (
+                      <div className="pt-1">
+                        <p className="text-xs font-medium text-destructive mb-1">Red Flags</p>
+                        <ul className="space-y-1">
+                          {(match.legitimacy_flags as string[]).map((f: string, i: number) => (
+                            <li key={i} className="text-xs text-destructive flex items-start gap-1.5">
+                              <AlertTriangle className="w-3 h-3 mt-0.5 flex-shrink-0" />{f}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {match.recommendation && (
                 <Card>
                   <CardContent className="pt-6 text-center">
@@ -713,6 +810,63 @@ const JobDetail = () => {
           )}
         </div>
       </div>
+
+      {/* Deep Research Panel */}
+      {research && (
+        <div className="mt-6">
+          <Card className="border-primary/30">
+            <CardHeader className="pb-2 cursor-pointer" onClick={() => setResearchExpanded(v => !v)}>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Search className="w-4 h-4 text-primary" />
+                Deep Company Research — {research.company}
+                <span className="ml-auto text-xs text-muted-foreground font-normal">
+                  {new Date(research.researched_at).toLocaleDateString()}
+                </span>
+                {researchExpanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+              </CardTitle>
+            </CardHeader>
+            {researchExpanded && (
+              <CardContent className="space-y-5">
+                {research.summary && (
+                  <div className="p-3 rounded-lg bg-muted/50 border border-border">
+                    <p className="text-sm text-foreground leading-relaxed">{research.summary}</p>
+                  </div>
+                )}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { key: 'ai_strategy', label: 'AI & Tech Strategy', icon: Zap },
+                    { key: 'recent_movements', label: 'Recent Movements', icon: RefreshCw },
+                    { key: 'engineering_culture', label: 'Engineering Culture', icon: Settings },
+                    { key: 'probable_challenges', label: 'Probable Challenges', icon: AlertTriangle },
+                    { key: 'competitive_positioning', label: 'Competitive Positioning', icon: Building2 },
+                  ].map(({ key, label, icon: Icon }) => research[key] && (
+                    <div key={key} className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                        <Icon className="w-3 h-3" />{label}
+                      </p>
+                      <p className="text-sm text-foreground leading-relaxed">{research[key]}</p>
+                    </div>
+                  ))}
+                </div>
+                {research.candidate_angle && (
+                  <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 space-y-1">
+                    <p className="text-xs font-medium text-primary uppercase tracking-wide flex items-center gap-1.5">
+                      <BookOpen className="w-3 h-3" />Your Angle
+                    </p>
+                    <p className="text-sm text-foreground leading-relaxed">{research.candidate_angle}</p>
+                  </div>
+                )}
+                <div className="flex items-center justify-between pt-2 border-t border-border">
+                  <p className="text-[10px] text-muted-foreground">Use this in your interview to demonstrate proactive understanding of their challenges.</p>
+                  <Button variant="ghost" size="sm" className="text-xs h-7" onClick={runDeepResearch} disabled={researching}>
+                    <RefreshCw className="w-3 h-3 mr-1" />Refresh
+                  </Button>
+                </div>
+              </CardContent>
+            )}
+          </Card>
+        </div>
+      )}
 
       <Dialog open={draftModal} onOpenChange={setDraftModal}>
         <DialogContent>

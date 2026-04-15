@@ -20,6 +20,7 @@ const FollowUpInbox = lazy(() => import("@/pages/FollowUpInbox"));
 const Activity = lazy(() => import("@/pages/Activity"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
 const SubscriptionsPage = lazy(() => import("@/pages/Subscriptions"));
+const InterviewPrep = lazy(() => import("@/pages/InterviewPrep"));
 
 const queryClient = new QueryClient();
 
@@ -62,6 +63,7 @@ const App = () => (
               <Route path="/activity" element={<ProtectedRoute><Activity /></ProtectedRoute>} />
               <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
               <Route path="/subscriptions" element={<ProtectedRoute><SubscriptionsPage /></ProtectedRoute>} />
+              <Route path="/interview-prep" element={<ProtectedRoute><InterviewPrep /></ProtectedRoute>} />
               <Route path="*" element={<NotFound />} />
             </Routes>
           </Suspense>

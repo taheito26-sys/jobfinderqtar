@@ -72,6 +72,8 @@ Nice to have: ${JSON.stringify(job.nice_to_haves || [])}
 
     const systemPrompt = `You are a job matching scoring engine. Score a candidate profile against a job listing.
 Return a JSON object with exactly these fields:
+
+CANDIDATE FIT SCORING:
 - overall_score: 0-100
 - hard_requirements_score: 0-100
 - skill_overlap_score: 0-100
@@ -87,6 +89,17 @@ Return a JSON object with exactly these fields:
 - blockers: string[] (dealbreakers like visa issues, missing critical certs)
 - recommendation: "apply" | "review" | "skip"
 
+BLOCK G — POSTING LEGITIMACY (independent of candidate fit):
+- legitimacy_tier: "high_confidence" | "proceed_with_caution" | "suspicious"
+- legitimacy_score: 0-100 (100 = definitely legitimate, 0 = definitely fake/ghost)
+- legitimacy_reasons: string[] (2-4 specific observations about legitimacy)
+- legitimacy_flags: string[] (specific red flags, empty array if none)
+
+Legitimacy scoring rules:
+- high_confidence (80-100): Clear company info, specific role details, realistic requirements, active/recent posting, proper JD structure
+- proceed_with_caution (40-79): Vague company details, very generic description, salary range missing, unusual requirements, role may be evergreen/always-open
+- suspicious (0-39): No company info, unrealistic promises, duplicate-looking JD, excessive keyword stuffing, no clear hiring manager context, ghost job indicators (posted long ago, reposted multiple times), legal red flags
+
 The overall_score should be a weighted average:
 - hard_requirements: 25%, skill_overlap: 20%, title_relevance: 10%, seniority_fit: 10%
 - industry_fit: 8%, location_fit: 10%, compensation_fit: 7%, language_fit: 5%, work_auth_fit: 5%
@@ -97,7 +110,7 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
       type: "function",
       function: {
         name: "score_job_match",
-        description: "Return the structured job match score",
+        description: "Return the structured job match score including Block G legitimacy assessment",
         parameters: {
           type: "object",
           properties: {
@@ -115,8 +128,18 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
             missing_requirements: { type: "array", items: { type: "string" } },
             blockers: { type: "array", items: { type: "string" } },
             recommendation: { type: "string", enum: ["apply", "review", "skip"] },
+            legitimacy_tier: { type: "string", enum: ["high_confidence", "proceed_with_caution", "suspicious"] },
+            legitimacy_score: { type: "integer", minimum: 0, maximum: 100 },
+            legitimacy_reasons: { type: "array", items: { type: "string" } },
+            legitimacy_flags: { type: "array", items: { type: "string" } },
           },
-          required: ["overall_score", "hard_requirements_score", "skill_overlap_score", "title_relevance_score", "seniority_fit_score", "industry_fit_score", "location_fit_score", "compensation_fit_score", "language_fit_score", "work_auth_fit_score", "match_reasons", "missing_requirements", "blockers", "recommendation"],
+          required: [
+            "overall_score", "hard_requirements_score", "skill_overlap_score", "title_relevance_score",
+            "seniority_fit_score", "industry_fit_score", "location_fit_score", "compensation_fit_score",
+            "language_fit_score", "work_auth_fit_score", "match_reasons", "missing_requirements",
+            "blockers", "recommendation",
+            "legitimacy_tier", "legitimacy_score", "legitimacy_reasons", "legitimacy_flags",
+          ],
         },
       },
     }];
@@ -154,6 +177,10 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
       user_id: user.id, job_id, ...scores,
       semantic_similarity: semanticSimilarity,
       scored_at: new Date().toISOString(),
+      legitimacy_tier: scores.legitimacy_tier || "unknown",
+      legitimacy_score: scores.legitimacy_score ?? null,
+      legitimacy_reasons: scores.legitimacy_reasons || [],
+      legitimacy_flags: scores.legitimacy_flags || [],
     }, { onConflict: "user_id,job_id" }).select().single();
 
     if (matchError) throw matchError;
