@@ -57,8 +57,51 @@ Deno.serve(async (req) => {
       existing[preference.key] = preference.value;
       preferenceMap.set(preference.user_id, existing);
     });
+    // Get enabled LinkedIn sources
+    const { data: linkedinSources } = await supabaseAdmin
+      .from('job_sources')
+      .select('*')
+      .eq('enabled', true)
+      .or('source_name.ilike.%linkedin%,source_type.ilike.%linkedin%');
+
+    const sourcesByUser = new Map<string, any[]>();
+    (linkedinSources || []).forEach(source => {
+      const list = sourcesByUser.get(source.user_id) || [];
+      list.push(source);
+      sourcesByUser.set(source.user_id, list);
+    });
 
     let totalNewJobs = 0;
+    
+    // Process LinkedIn Sources first
+    for (const userId of userIds) {
+      const sources = sourcesByUser.get(userId) || [];
+      for (const source of sources) {
+        try {
+          console.log(`Routing LinkedIn source ${source.id} for user ${userId} to pipeline`);
+          const pipelineRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/linkedin-sync-pipeline`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              user_id: userId,
+              source_id: source.id,
+              run_mode: 'scheduled'
+            })
+          });
+          
+          if (pipelineRes.ok) {
+            const pipelineData = await pipelineRes.json();
+            totalNewJobs += (pipelineData.new_stage_count || 0);
+          }
+        } catch (err) {
+          console.error(`LinkedIn pipeline failed for source ${source.id}: ${err.message}`);
+        }
+      }
+    }
+
 
     for (const profile of profiles) {
       const userPrefs = preferenceMap.get(profile.user_id) ?? {};

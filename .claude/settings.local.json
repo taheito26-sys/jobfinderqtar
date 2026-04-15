@@ -12,7 +12,11 @@
       "Bash(supabase db:*)",
       "Bash(supabase functions:*)",
       "Bash(xargs head:*)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m 'Add listing page detection to scrape-job-url:*)",
+      "Bash(git commit -m 'Add listing page filter UI skeleton \\(WIP\\):*)",
+      "Bash(git push:*)"
     ]
   }
 }

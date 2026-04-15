@@ -32,47 +32,17 @@ function unwrapLinkedInSafetyUrl(url: string): string {
   }
 }
 
+import { 
+  extractLinkedInJobId as sharedExtractId, 
+  fetchLinkedInJobHtml, 
+  enrichLinkedInJob, 
+  normaliseJobFields,
+  extractAllLinkedInJobIds,
+  isLinkedInSearchUrl
+} from '../_shared/linkedin-job.ts';
+
 function extractLinkedInJobId(url: string): string | null {
-  const match = url.match(/\/jobs\/view\/(\d+)/) || url.match(/currentJobId=(\d+)/);
-  return match ? match[1] : null;
-}
-
-/** Extract ALL job IDs from a LinkedIn search/collection URL */
-function extractAllLinkedInJobIds(url: string): string[] {
-  const ids = new Set<string>();
-
-  // currentJobId param
-  const currentMatch = url.match(/currentJobId=(\d+)/);
-  if (currentMatch) ids.add(currentMatch[1]);
-
-  // originToLandingJobPostings param (comma-separated IDs)
-  const landingMatch = url.match(/originToLandingJobPostings=([^&]+)/);
-  if (landingMatch) {
-    const decoded = decodeURIComponent(landingMatch[1]);
-    decoded.split(/[,%2C]+/).forEach(id => {
-      const trimmed = id.trim();
-      if (/^\d+$/.test(trimmed)) ids.add(trimmed);
-    });
-  }
-
-  // /jobs/view/ID pattern
-  const viewMatch = url.match(/\/jobs\/view\/(\d+)/);
-  if (viewMatch) ids.add(viewMatch[1]);
-
-  return [...ids];
-}
-
-/** Check if this is a LinkedIn search/collection page (not a single job view) */
-function isLinkedInSearchUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    const path = u.pathname;
-    // Search pages, collections, alerts
-    if (path.includes('/jobs/search') || path.includes('/jobs/collections')) return true;
-    // Has multiple job IDs
-    if (u.searchParams.get('originToLandingJobPostings')) return true;
-    return false;
-  } catch { return false; }
+  return sharedExtractId(url);
 }
 
 function markNormalizationStatus(job: any, evidenceLength: number) {
@@ -83,33 +53,10 @@ function markNormalizationStatus(job: any, evidenceLength: number) {
 
 /** Try LinkedIn's guest/public job posting endpoint */
 async function fetchLinkedInJob(jobId: string): Promise<string> {
-  const guestUrl = `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`;
-  console.log('Trying LinkedIn guest API:', guestUrl);
-  
-  const res = await fetch(guestUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-  
-  if (!res.ok) throw new Error(`LinkedIn guest API returned ${res.status}`);
-  const html = await res.text();
-  
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#\d+;/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .substring(0, 15000);
+  return await fetchLinkedInJobHtml(jobId);
 }
+
+
 
 /** Fetch raw HTML from a URL and extract text */
 async function fetchPageText(url: string): Promise<string> {

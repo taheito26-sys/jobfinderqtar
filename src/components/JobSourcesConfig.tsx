@@ -41,6 +41,15 @@ type SourceConfig = {
   max_results_per_run?: number;
   auto_score?: boolean;
   last_error?: string;
+  // LinkedIn Pipeline extras
+  platform?: string;
+  remote_preference?: string;
+  posted_within?: string;
+  page_limit?: number;
+  results_per_page?: number;
+  enable_continuous_discovery?: boolean;
+  enable_auto_enrichment?: boolean;
+  enable_auto_notify?: boolean;
 };
 
 type JobSource = {
@@ -706,6 +715,16 @@ const EditSourceForm = ({
   const [maxResults, setMaxResults] = useState(String(config.max_results_per_run || 10));
   const [autoScore, setAutoScore] = useState(config.auto_score !== false);
   const [autoSubmit, setAutoSubmit] = useState(source.supports_auto_submit);
+  
+  // LinkedIn specific
+  const isLinkedIn = source.source_name.toLowerCase().includes('linkedin') || config.platform === 'linkedin';
+  const [remotePref, setRemotePref] = useState(config.remote_preference || 'flexible');
+  const [postedWithin, setPostedWithin] = useState(config.posted_within || 'any');
+  const [pageLimit, setPageLimit] = useState(String(config.page_limit || 1));
+  const [resultsPerPage, setResultsPerPage] = useState(String(config.results_per_page || 25));
+  const [contDiscovery, setContDiscovery] = useState(config.enable_continuous_discovery !== false);
+  const [autoEnrich, setAutoEnrich] = useState(config.enable_auto_enrichment !== false);
+  const [autoNotify, setAutoNotify] = useState(config.enable_auto_notify !== false);
 
   const handleSave = () => {
     const updatedConfig: SourceConfig = {
@@ -715,6 +734,17 @@ const EditSourceForm = ({
       scrape_frequency: frequency,
       max_results_per_run: parseInt(maxResults) || 10,
       auto_score: autoScore,
+      // LinkedIn specific
+      ...(isLinkedIn ? {
+        platform: 'linkedin',
+        remote_preference: remotePref,
+        posted_within: postedWithin,
+        page_limit: parseInt(pageLimit) || 1,
+        results_per_page: parseInt(resultsPerPage) || 25,
+        enable_continuous_discovery: contDiscovery,
+        enable_auto_enrichment: autoEnrich,
+        enable_auto_notify: autoNotify,
+      } : {})
     };
 
     onSave({
@@ -796,6 +826,72 @@ const EditSourceForm = ({
         </div>
         <Switch checked={autoSubmit} onCheckedChange={setAutoSubmit} />
       </div>
+
+      {isLinkedIn && (
+        <Collapsible className="border rounded-lg p-3 space-y-3 bg-primary/5">
+          <CollapsibleTrigger className="flex items-center justify-between w-full text-sm font-medium">
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-primary" />
+              Advanced LinkedIn Pipeline
+            </div>
+            <ChevronDown className="w-4 h-4" />
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-4 pt-3 border-t mt-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="text-xs">Remote Pref</Label>
+                <Select value={remotePref} onValueChange={setRemotePref}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="flexible">Flexible</SelectItem>
+                    <SelectItem value="remote">Remote</SelectItem>
+                    <SelectItem value="onsite">On-site</SelectItem>
+                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Posted Within</Label>
+                <Select value={postedWithin} onValueChange={setPostedWithin}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="any">Any time</SelectItem>
+                    <SelectItem value="24h">Past 24h</SelectItem>
+                    <SelectItem value="week">Past week</SelectItem>
+                    <SelectItem value="month">Past month</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label className="text-xs">Page Limit</Label>
+                <Input type="number" value={pageLimit} onChange={e => setPageLimit(e.target.value)} className="h-8 text-xs" />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-xs">Results per Page</Label>
+                <Input type="number" value={resultsPerPage} onChange={e => setResultsPerPage(e.target.value)} className="h-8 text-xs" />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Continuous Discovery</Label>
+                <Switch checked={contDiscovery} onCheckedChange={setContDiscovery} className="scale-75" />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Auto Enrichment</Label>
+                <Switch checked={autoEnrich} onCheckedChange={setAutoEnrich} className="scale-75" />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Auto Notify</Label>
+                <Switch checked={autoNotify} onCheckedChange={setAutoNotify} className="scale-75" />
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       <div className="flex gap-2">
         <Button variant="outline" onClick={onCancel} className="flex-1">Cancel</Button>
