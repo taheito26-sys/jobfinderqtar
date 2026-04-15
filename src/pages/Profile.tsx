@@ -98,7 +98,6 @@ const Profile = () => {
         supabase.from('education_history').delete().eq('user_id', user.id),
         supabase.from('certifications').delete().eq('user_id', user.id),
         supabase.from('proof_points').delete().eq('user_id', user.id),
-        (supabase as any).from('candidate_profile').delete().eq('user_id', user.id),
       ]);
       setProfile({
         full_name: '', headline: '', summary: '', location: '', country: '',
@@ -323,7 +322,7 @@ const Profile = () => {
       const message = error?.message || candidateResult.error?.message || 'Unknown error';
       toast({ title: 'Error saving profile', description: message, variant: 'destructive' });
     } else {
-      toast({ title: 'Profile saved', description: 'Legacy and hardline profile records are synced.' });
+      toast({ title: 'Profile saved', description: 'Your profile changes were saved.' });
     }
     setSaving(false);
   };

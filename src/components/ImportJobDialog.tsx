@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,8 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
-import { buildHardlineJobInsert, buildHardlineJobScoreInsert, candidateProfileRowToHardlineProfile, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
-import { DEFAULT_HARDLINE_POLICY } from '@/lib/hardline';
+import { buildHardlineJobInsert, recordHardlineSourceSyncBatch } from '@/lib/hardline-import';
 import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2 } from 'lucide-react';
 
 interface ImportJobDialogProps {
@@ -190,13 +189,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
 
       const skipped = selectedJobs.length - deduped.length;
 
-      const { data: candidateProfile } = await (supabase as any)
-        .from('candidate_profile')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
-
       if (deduped.length === 0) {
         toast({ title: 'All duplicates', description: `${skipped} job(s) already exist in your feed.` });
         setConfirmOpen(false);
@@ -221,22 +213,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
       }
 
       if (data) {
-        if (hardlineProfile && candidateProfile?.id) {
-          const scoreRows = data.map((inserted: any, index: number) =>
-            buildHardlineJobScoreInsert(
-              user.id,
-              inserted.id,
-              candidateProfile.id,
-              hardlineProfile,
-              deduped[index],
-              DEFAULT_HARDLINE_POLICY,
-            )
-          );
-          const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRows);
-          if (scoreError) {
-            console.warn('Hardline score insert failed:', scoreError.message);
-          }
-        }
         for (const d of data) {
           await supabase.from('application_events').insert({
             user_id: user.id, job_id: d.id, event_type: 'job_imported',
@@ -286,13 +262,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
         return;
       }
 
-      const { data: candidateProfile } = await (supabase as any)
-        .from('candidate_profile')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-      const hardlineProfile = candidateProfileRowToHardlineProfile(candidateProfile as any);
-
       const { data, error } = await (supabase as any).from('jobs').insert(
         buildHardlineJobInsert(user.id, {
           ...editedJob,
@@ -321,25 +290,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
         console.warn('Ledger sync failed for single job import:', ledgerError);
       }
 
-      if (hardlineProfile && candidateProfile?.id) {
-        const scoreRow = buildHardlineJobScoreInsert(
-          user.id,
-          data.id,
-          candidateProfile.id,
-          hardlineProfile,
-          {
-            ...editedJob,
-            apply_url: editedJob.apply_url || sourceUrl,
-            source_url: sourceUrl,
-            source_created_at: editedJob.source_created_at || null,
-          },
-          DEFAULT_HARDLINE_POLICY,
-        );
-        const { error: scoreError } = await (supabase as any).from('job_scores').insert(scoreRow);
-        if (scoreError) {
-          console.warn('Hardline score insert failed:', scoreError.message);
-        }
-      }
       await supabase.from('application_events').insert({
         user_id: user.id, job_id: data.id, event_type: 'job_imported',
         metadata: { source: isLI ? 'linkedin' : 'web', source_url: sourceUrl } as any,
@@ -377,6 +327,9 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
             <Globe className="w-5 h-5" />
             Import Job
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Import a job listing from a URL or paste a description for structured saving.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

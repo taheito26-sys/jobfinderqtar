@@ -59,10 +59,12 @@ describe('hardline import helpers', () => {
       sourceData: { query: 'cloud architect qatar' },
     });
 
-    expect(payload.company_name).toBe('Northwind');
-    expect(payload.normalization_status).toBe('incomplete');
-    expect(payload.duplicate_group_key).toContain('url:jobs.example.com/cloud-architect');
-    expect(payload.required_skills_json).toEqual(['AWS', 'Terraform']);
+    expect(payload.company).toBe('Northwind');
+    expect(payload.apply_url).toBe('https://jobs.example.com/cloud-architect');
+    expect(payload.normalized).toBe(false);
+    expect(payload.status).toBe('active');
+    expect(payload.raw_data?.source).toBe('search');
+    expect(payload.raw_data?.job?.title).toBe('Senior Cloud Architect');
   });
 
   it('builds a conservative score snapshot', () => {

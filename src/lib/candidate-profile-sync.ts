@@ -1,5 +1,3 @@
-import { supabase } from '@/integrations/supabase/client';
-
 type LegacyProfile = {
   full_name: string;
   email: string;
@@ -72,6 +70,9 @@ export async function syncCandidateProfile(
   skills: SkillRow[] = [],
   proofPoints: ProofPointRow[] = [],
 ) {
-  const payload = buildCandidateProfilePayload(userId, profile, skills, proofPoints);
-  return (supabase as any).from('candidate_profile').upsert(payload, { onConflict: 'user_id' });
+  void userId;
+  void profile;
+  void skills;
+  void proofPoints;
+  return { data: null, error: null };
 }

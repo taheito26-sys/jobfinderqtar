@@ -137,6 +137,40 @@ export function buildCandidateProfileFromCandidateProfileRow(
   };
 }
 
+export async function loadHardlineCandidateProfile(
+  supabaseClient: any,
+  userId: string,
+): Promise<{ profile: CandidateProfile | null; hardlineProfileId: string | null }> {
+  const [profileRes, skillsRes, proofRes] = await Promise.all([
+    supabaseClient
+      .from('profiles_v2')
+      .select('full_name, email, phone, location, country, visa_status, work_authorization, remote_preference, desired_salary_min, desired_salary_currency, desired_titles, linkedin_url, github_url, portfolio_url')
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabaseClient
+      .from('profile_skills')
+      .select('skill_name, years_experience, is_primary')
+      .eq('user_id', userId)
+      .order('is_primary', { ascending: false }),
+    supabaseClient
+      .from('proof_points')
+      .select('statement, metric_value, category')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false }),
+  ]);
+
+  const profile = buildCandidateProfileFromRows(
+    profileRes.data as any,
+    (skillsRes.data ?? []) as any[],
+    (proofRes.data ?? []) as any[],
+  );
+
+  return {
+    profile,
+    hardlineProfileId: null,
+  };
+}
+
 export function buildHardlinePreferenceDefaults(prefs: Record<string, string>) {
   return {
     defaultMode: prefs.hardline_default_mode || 'draft',

@@ -137,39 +137,24 @@ export function buildHardlineJobInsert(
   job: ImportedJobLike,
   options: JobInsertOptions,
 ) {
-  const canonicalUrl = normalizeCanonicalUrl(job.apply_url || job.source_url || '');
-  const location = splitLocation(job.location);
   const normalizationStatus = options.normalizationStatus || inferNormalizationStatus(job);
-  const sourceJobId = options.sourceJobId || buildSourceJobId(job);
 
   return {
     user_id: userId,
     source_id: options.sourceId ?? null,
-    source_job_id: sourceJobId,
     title: normalizeText(job.title),
     company: normalizeText(job.company),
-    company_name: normalizeText(job.company),
-    company_normalized: normalizeCompany(job.company),
     location: normalizeText(job.location),
-    location_text: normalizeText(job.location),
-    country: location.country || '',
-    city: location.city || '',
     remote_type: normalizeText(job.remote_type) || 'unknown',
     description: normalizeText(job.description),
-    description_text: normalizeText(job.description),
     salary_min: job.salary_min === '' || job.salary_min === null || job.salary_min === undefined ? null : Number(job.salary_min),
     salary_max: job.salary_max === '' || job.salary_max === null || job.salary_max === undefined ? null : Number(job.salary_max),
     salary_currency: normalizeText(job.salary_currency) || null,
     employment_type: normalizeText(job.employment_type) || 'full-time',
     seniority_level: normalizeText(job.seniority_level) || '',
-    seniority: normalizeText(job.seniority_level) || '',
     requirements: (job.requirements ?? []) as any,
-    required_skills_json: toArray(job.requirements),
-    preferred_skills_json: toArray(job.nice_to_haves),
-    screening_questions_detected_json: [],
     apply_url: normalizeText(job.apply_url) || null,
     source_url: normalizeText(job.source_url) || normalizeText(job.apply_url) || null,
-    canonical_url: canonicalUrl || null,
     raw_data: {
       source: options.sourceLabel,
       source_id: options.sourceId ?? null,
@@ -178,19 +163,6 @@ export function buildHardlineJobInsert(
     } as any,
     normalized: normalizationStatus === 'valid',
     status: 'active',
-    easy_apply_flag: Boolean(normalizeText(job.apply_url)?.toLowerCase().includes('easy apply')),
-    external_apply_flag: Boolean(normalizeText(job.apply_url) || normalizeText(job.source_url)),
-    visa_sponsorship_text: '',
-    normalization_status: normalizationStatus,
-    duplicate_group_key: buildDuplicateGroupKey({
-      canonical_url: canonicalUrl,
-      title: normalizeText(job.title),
-      company_name: normalizeText(job.company),
-      city: location.city,
-      location_text: normalizeText(job.location),
-    }),
-    archived_flag: false,
-    discovered_at: normalizeText(job.source_created_at) || new Date().toISOString(),
   };
 }
 
@@ -205,7 +177,6 @@ export function buildHardlineJobScoreInsert(
   const normalizedJob: NormalizedJob = {
     id: jobId,
     source_id: null,
-    source_job_id: '',
     canonical_url: normalizeCanonicalUrl(job.apply_url || job.source_url || ''),
     title: normalizeText(job.title),
     company_name: normalizeText(job.company),
