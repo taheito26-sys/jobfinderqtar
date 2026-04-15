@@ -103,39 +103,76 @@ async function fetchPageText(url: string): Promise<string> {
     .substring(0, 12000);
 }
 
-/** Use AI to extract structured job data from raw text */
-async function extractJobWithAI(text: string, sourceUrl: string, userId: string): Promise<any> {
-  const prompt = `Extract structured job posting data from the following text. Return ONLY a valid JSON object with these fields:
-{
-  "title": "Job title",
-  "company": "Company name",
-  "location": "Job location",
-  "remote_type": "remote|hybrid|onsite|unknown" (IMPORTANT: If the job has a physical location like a city/country and does NOT explicitly say 'remote' or 'work from home', set this to 'onsite'. Only use 'remote' if the posting explicitly states remote work. A job in 'Doha, Qatar' is 'onsite' unless it says otherwise.),
-  "description": "Full job description",
-  "salary_min": null,
-  "salary_max": null,
-  "salary_currency": null,
-  "employment_type": "full-time|part-time|contract|internship",
-  "seniority_level": "junior|mid|senior|lead|executive",
-  "requirements": ["requirement 1", "requirement 2"],
-  "apply_url": "${sourceUrl}",
-  "source_created_at": null (ISO 8601 date string if the posting explicitly states when the job was ORIGINALLY POSTED, e.g. "Posted 3 days ago" → compute from context, "Posted on 2025-01-15" → "2025-01-15T00:00:00Z". Set to null if the source does NOT explicitly provide the original posting date. Do NOT use the scrape time or current date.)
+/**
+ * Shape returned from AI extraction — either a single job or multiple.
+ * type === 'single'   → job field is populated
+ * type === 'multiple' → jobs array is populated (each distinct role on the page)
+ */
+type ExtractionResult =
+  | { type: 'single'; job: Record<string, unknown> }
+  | { type: 'multiple'; jobs: Record<string, unknown>[] };
+
+/** Normalise a raw extracted job object into a clean, consistently shaped record */
+function normaliseJob(raw: Record<string, unknown>, fallbackUrl: string): Record<string, unknown> {
+  return {
+    title: raw.title || 'Untitled Job',
+    company: raw.company || 'Unknown Company',
+    location: raw.location || '',
+    remote_type: raw.remote_type || 'unknown',
+    description: raw.description || '',
+    salary_min: raw.salary_min || null,
+    salary_max: raw.salary_max || null,
+    salary_currency: raw.salary_currency || null,
+    employment_type: raw.employment_type || 'full-time',
+    seniority_level: raw.seniority_level || '',
+    requirements: Array.isArray(raw.requirements) ? raw.requirements : [],
+    apply_url: (raw.apply_url as string) || fallbackUrl,
+    source_created_at: (raw.source_created_at as string | null) || null,
+  };
 }
+
+/** Use AI to extract structured job data from raw text.
+ *  Returns a single job or multiple individual jobs when the page lists many distinct positions. */
+async function extractJobWithAI(text: string, sourceUrl: string, userId: string): Promise<ExtractionResult> {
+  const prompt = `Analyse the text below and determine whether it contains ONE job listing or MULTIPLE DISTINCT job listings (different titles or roles).
+
+RULES:
+- If the page is a single job posting: return {"type":"single","job":{...}}
+- If the page lists 2 or more different positions: return {"type":"multiple","jobs":[{...},{...},...]}
+- Never combine two different roles into one record — each distinct title must be its own object.
+- For remote_type: if a job has a physical city/country and does NOT explicitly say "remote" or "work from home", use "onsite".
+- For source_created_at: ISO 8601 string only if the posting explicitly states the original publish date (e.g. "Posted 3 days ago", "Posted Jan 15 2025"). Otherwise null. Never invent a date.
+
+Fields for each job object:
+{
+  "title": string,
+  "company": string,
+  "location": string,
+  "remote_type": "remote"|"hybrid"|"onsite"|"unknown",
+  "description": string (full description for THIS specific role only),
+  "salary_min": number|null,
+  "salary_max": number|null,
+  "salary_currency": string|null,
+  "employment_type": "full-time"|"part-time"|"contract"|"internship",
+  "seniority_level": "junior"|"mid"|"senior"|"lead"|"executive"|"",
+  "requirements": string[],
+  "apply_url": "${sourceUrl}",
+  "source_created_at": string|null
+}
+
+Return ONLY valid JSON — no markdown, no explanation.
 
 TEXT:
 ${text}`;
 
   const lovableKey = Deno.env.get('LOVABLE_API_KEY');
   const providers: Array<{name: string; url: string; headers: Record<string,string>; body: any; extractContent: (d:any)=>string}> = [];
-  
+
   if (lovableKey) {
     providers.push({
       name: 'Lovable AI',
       url: 'https://ai.gateway.lovable.dev/v1/chat/completions',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${lovableKey}`,
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${lovableKey}` },
       body: { model: 'google/gemini-3-flash-preview', messages: [{ role: 'user', content: prompt }], temperature: 0.1 },
       extractContent: (data: any) => data.choices?.[0]?.message?.content || '',
     });
@@ -150,7 +187,7 @@ ${text}`;
           name: p.name,
           url: p.url,
           headers: { 'Content-Type': 'application/json', 'x-api-key': p.apiKey, 'anthropic-version': '2023-06-01' },
-          body: { model: p.model, max_tokens: 2000, messages: [{ role: 'user', content: prompt }] },
+          body: { model: p.model, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] },
           extractContent: (data: any) => data.content?.[0]?.text || '',
         });
       } else {
@@ -185,15 +222,33 @@ ${text}`;
       }
       const data = await res.json();
       const content = prov.extractContent(data);
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
+
+      // Parse the outermost JSON object or array
+      const jsonMatch = content.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
       if (!jsonMatch) {
         console.warn(`${prov.name} did not return valid JSON`);
         lastError = `${prov.name}: no JSON in response`;
         continue;
       }
       const parsed = JSON.parse(jsonMatch[0]);
-      console.log(`AI extraction succeeded with ${prov.name}`);
-      return parsed;
+
+      // Handle response shapes
+      if (Array.isArray(parsed)) {
+        // Bare array of jobs
+        const jobs = parsed.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
+        console.log(`AI extraction (${prov.name}): ${jobs.length} jobs (bare array)`);
+        return jobs.length === 1 ? { type: 'single', job: jobs[0] } : { type: 'multiple', jobs };
+      }
+      if (parsed.type === 'multiple' && Array.isArray(parsed.jobs)) {
+        const jobs = parsed.jobs.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
+        console.log(`AI extraction (${prov.name}): ${jobs.length} jobs (multiple)`);
+        return jobs.length === 1 ? { type: 'single', job: jobs[0] } : { type: 'multiple', jobs };
+      }
+      // Single-job response (either {type:'single',job:{}} or bare job object)
+      const rawJob = parsed.type === 'single' && parsed.job ? parsed.job as Record<string, unknown> : parsed as Record<string, unknown>;
+      console.log(`AI extraction (${prov.name}): 1 job (single)`);
+      return { type: 'single', job: normaliseJob(rawJob, sourceUrl) };
+
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn(`${prov.name} error: ${msg}`);
@@ -204,7 +259,7 @@ ${text}`;
 }
 
 /** Scrape a single LinkedIn job by ID, return structured job or null */
-async function scrapeSingleLinkedInJob(jobId: string, userId: string): Promise<any | null> {
+async function scrapeSingleLinkedInJob(jobId: string, userId: string): Promise<Record<string, unknown> | null> {
   try {
     const pageText = await fetchLinkedInJob(jobId);
     if (pageText.length < 200) {
@@ -212,22 +267,10 @@ async function scrapeSingleLinkedInJob(jobId: string, userId: string): Promise<a
       return null;
     }
     const jobUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
-    const data = await extractJobWithAI(pageText, jobUrl, userId);
-    return {
-      title: data.title || 'Untitled Job',
-      company: data.company || 'Unknown Company',
-      location: data.location || '',
-      remote_type: data.remote_type || 'unknown',
-      description: data.description || '',
-      salary_min: data.salary_min || null,
-      salary_max: data.salary_max || null,
-      salary_currency: data.salary_currency || null,
-      employment_type: data.employment_type || 'full-time',
-      seniority_level: data.seniority_level || '',
-      requirements: data.requirements || [],
-      apply_url: data.apply_url || jobUrl,
-      source_created_at: data.source_created_at || null,
-    };
+    const result = await extractJobWithAI(pageText, jobUrl, userId);
+    // LinkedIn guest API always returns a single job page — take the first if multi detected
+    const job = result.type === 'multiple' ? result.jobs[0] : result.job;
+    return job ?? null;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`Failed to scrape LinkedIn job ${jobId}:`, msg);
@@ -266,20 +309,18 @@ Deno.serve(async (req) => {
     if (manualDescription) {
       console.log('Using manually pasted job description');
       const extracted = await extractJobWithAI(manualDescription, url || '', user.id);
+      if (extracted.type === 'multiple') {
+        return new Response(JSON.stringify({
+          success: true,
+          multiple: true,
+          jobs: extracted.jobs,
+          total_found: extracted.jobs.length,
+          failed_count: 0,
+        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
       const job = {
-        title: extracted.title || 'Untitled Job',
-        company: extracted.company || 'Unknown Company',
-        location: extracted.location || '',
-        remote_type: extracted.remote_type || 'unknown',
-        description: extracted.description || manualDescription.substring(0, 5000),
-        salary_min: extracted.salary_min || null,
-        salary_max: extracted.salary_max || null,
-        salary_currency: extracted.salary_currency || null,
-        employment_type: extracted.employment_type || 'full-time',
-        seniority_level: extracted.seniority_level || '',
-        requirements: extracted.requirements || [],
-        apply_url: extracted.apply_url || url || '',
-        source_created_at: extracted.source_created_at || null,
+        ...extracted.job,
+        description: extracted.job.description || manualDescription.substring(0, 5000),
       };
       return new Response(JSON.stringify({ success: true, job }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -354,22 +395,9 @@ Deno.serve(async (req) => {
         try {
           const pageText = await fetchLinkedInJob(jobId);
           if (pageText.length > 200) {
-            const data = await extractJobWithAI(pageText, formattedUrl, user.id);
-            job = {
-              title: data.title || 'Untitled Job',
-              company: data.company || 'Unknown Company',
-              location: data.location || '',
-              remote_type: data.remote_type || 'unknown',
-              description: data.description || '',
-              salary_min: data.salary_min || null,
-              salary_max: data.salary_max || null,
-              salary_currency: data.salary_currency || null,
-              employment_type: data.employment_type || 'full-time',
-              seniority_level: data.seniority_level || '',
-              requirements: data.requirements || [],
-              apply_url: data.apply_url || formattedUrl,
-              source_created_at: data.source_created_at || null,
-            };
+            const aiResult = await extractJobWithAI(pageText, formattedUrl, user.id);
+            // LinkedIn guest API is always a single job page — take first if multi was returned
+            job = aiResult.type === 'multiple' ? aiResult.jobs[0] : aiResult.job;
             extracted = true;
             console.log('LinkedIn guest API + AI extracted:', job.title);
           }
@@ -421,25 +449,44 @@ Deno.serve(async (req) => {
 
           if (scrapeResponse.ok) {
             const scrapeData = await scrapeResponse.json();
-            const ext = scrapeData.data?.json || scrapeData.json || {};
             const md = scrapeData.data?.markdown || scrapeData.markdown || '';
             // Firecrawl may surface a publishedDate in metadata
             const firecrawlDate = scrapeData.data?.metadata?.publishedDate
               || scrapeData.data?.metadata?.datePublished
               || scrapeData.data?.metadata?.datePosted
               || null;
+
+            // Always run through AI extraction on the full markdown so we can detect multiple jobs.
+            // The Firecrawl JSON schema result (ext) is only used as a seed title/company fallback.
+            const ext = scrapeData.data?.json || scrapeData.json || {};
+            const aiText = md.length >= 200 ? md.substring(0, 12000) : JSON.stringify(ext);
+            const aiResult = await extractJobWithAI(aiText, formattedUrl, user.id);
+
+            if (aiResult.type === 'multiple') {
+              // Patch firecrawlDate onto any job that lacks source_created_at
+              const jobs = aiResult.jobs.map(j => ({
+                ...j,
+                source_created_at: (j.source_created_at as string | null) || firecrawlDate || null,
+              }));
+              console.log(`Firecrawl + AI extracted ${jobs.length} jobs`);
+              return new Response(JSON.stringify({
+                success: true,
+                multiple: true,
+                jobs,
+                total_found: jobs.length,
+                failed_count: 0,
+              }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
             job = {
-              title: ext.title || 'Untitled Job', company: ext.company || 'Unknown Company',
-              location: ext.location || '', remote_type: ext.remote_type || 'unknown',
-              description: ext.description || md.substring(0, 5000),
-              salary_min: ext.salary_min || null, salary_max: ext.salary_max || null,
-              salary_currency: ext.salary_currency || null, employment_type: ext.employment_type || 'full-time',
-              seniority_level: ext.seniority_level || '', requirements: ext.requirements || [],
-              apply_url: ext.apply_url || formattedUrl,
-              source_created_at: ext.source_created_at || firecrawlDate || null,
+              ...aiResult.job,
+              // Fall back to Firecrawl schema values if AI left these empty
+              title: (aiResult.job.title as string) || ext.title || 'Untitled Job',
+              company: (aiResult.job.company as string) || ext.company || 'Unknown Company',
+              source_created_at: (aiResult.job.source_created_at as string | null) || firecrawlDate || null,
             };
             extracted = true;
-            console.log('Firecrawl extracted:', job.title);
+            console.log('Firecrawl + AI extracted:', job.title);
           } else {
             console.warn('Firecrawl failed, trying direct fetch fallback');
           }
@@ -459,16 +506,18 @@ Deno.serve(async (req) => {
             status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
-        const data = await extractJobWithAI(pageText, formattedUrl, user.id);
-        job = {
-          title: data.title || 'Untitled Job', company: data.company || 'Unknown Company',
-          location: data.location || '', remote_type: data.remote_type || 'unknown',
-          description: data.description || '', salary_min: data.salary_min || null, salary_max: data.salary_max || null,
-          salary_currency: data.salary_currency || null, employment_type: data.employment_type || 'full-time',
-          seniority_level: data.seniority_level || '', requirements: data.requirements || [],
-          apply_url: data.apply_url || formattedUrl,
-          source_created_at: data.source_created_at || null,
-        };
+        const aiResult = await extractJobWithAI(pageText, formattedUrl, user.id);
+        if (aiResult.type === 'multiple') {
+          console.log(`Direct fetch + AI extracted ${aiResult.jobs.length} jobs`);
+          return new Response(JSON.stringify({
+            success: true,
+            multiple: true,
+            jobs: aiResult.jobs,
+            total_found: aiResult.jobs.length,
+            failed_count: 0,
+          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        job = aiResult.job;
         extracted = true;
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);

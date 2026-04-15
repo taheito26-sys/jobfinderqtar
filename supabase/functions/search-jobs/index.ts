@@ -115,25 +115,30 @@ Deno.serve(async (req) => {
         const { result: raw, providerChain } = await runPipelineText({
           config: pipelineConfig,
           systemPrompt: "You extract structured job listing data. Return ONLY valid JSON array. No markdown wrapping.",
-          userPrompt: `Extract job details from these search results. Return a JSON array of objects with these fields:
-- index (number matching [N] above)
-- title (job title only, not company)
+          userPrompt: `Extract job details from these search results. Return a JSON array of objects.
+
+IMPORTANT: Some search result pages list MULTIPLE distinct job positions (e.g. a company careers page). If a page at index [N] contains multiple different roles, emit one object per role — all with the same index value. Do NOT merge different roles into one entry.
+
+Each object must have these fields:
+- index (number matching [N] above — repeat the same index for multiple jobs from the same page)
+- title (job title only, not company name)
 - company (company name)
 - location (city/country)
-- remote_type ("remote"|"hybrid"|"onsite"|"unknown") IMPORTANT: If a job has a physical location (city/country) and does NOT explicitly say "remote" or "work from home", set to "onsite". Only use "remote" if explicitly stated. A job in "Doha, Qatar" is "onsite" unless it says otherwise.
+- remote_type ("remote"|"hybrid"|"onsite"|"unknown") — if a job has a physical city and does NOT say "remote" or "work from home", use "onsite"
 - employment_type ("full-time"|"part-time"|"contract"|"internship")
-- seniority_level (e.g. "Senior", "Mid", "Junior", "")
+- seniority_level ("Senior"|"Mid"|"Junior"|"Lead"|"Executive"|"")
 - salary_min (number or null)
 - salary_max (number or null)
-- salary_currency (e.g. "USD","QAR" or null)
-- requirements (array of key requirements, max 5)
-- source_created_at (ISO 8601 string if the result content explicitly states when the job was originally posted, e.g. "Posted 2 days ago", "Posted on Jan 15 2025". Set to null if no posting date is mentioned. Do NOT invent or guess a date.)
+- salary_currency ("USD"|"QAR"|etc. or null)
+- requirements (array of key requirements, max 5 per job)
+- description (the description for THIS specific role only, not all roles combined)
+- source_created_at (ISO 8601 string only if the content explicitly states the original posting date, e.g. "Posted 2 days ago" or "Posted Jan 15 2025". null otherwise. Never invent a date.)
 
 Skip entries that are not actual job postings.
 
 Results:
 ${summaries}`,
-          reviewInstruction: "Verify extracted job data is accurate. Ensure titles don't include company names. Check that indices match the source results. Remove any entries that aren't real job postings. Fix formatting issues.",
+          reviewInstruction: "Verify extracted job data is accurate. Ensure titles don't include company names. Check that indices match source results. Each role from a multi-job page must be its own separate entry. Remove non-job-posting entries.",
         });
 
         console.log(`[search-jobs] Pipeline chain: ${providerChain.join(" → ")}`);
@@ -154,7 +159,7 @@ ${summaries}`,
               company: p.company || "Unknown Company",
               location: p.location || "",
               remote_type: p.remote_type || "unknown",
-              description: source.metadata?.description || (source.markdown || "").substring(0, 1000),
+              description: p.description || source.metadata?.description || (source.markdown || "").substring(0, 1000),
               salary_min: p.salary_min || null,
               salary_max: p.salary_max || null,
               salary_currency: p.salary_currency || null,

@@ -389,23 +389,31 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
             </TabsContent>
           </Tabs>
 
-          {/* Multi-job results (LinkedIn search) */}
+          {/* Multi-job results */}
           {isMultiMode && (
             <div className="space-y-3 border border-border rounded-lg p-4 bg-muted/30">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-score-excellent" />
                   <span className="text-sm font-medium">{multiJobs.length} Jobs Found</span>
-                  <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800">
-                    <Linkedin className="w-3 h-3 mr-1" /> LinkedIn
-                  </Badge>
+                  {isLinkedin ? (
+                    <Badge variant="outline" className="text-xs bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800">
+                      <Linkedin className="w-3 h-3 mr-1" /> LinkedIn
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs">Multiple roles detected</Badge>
+                  )}
                 </div>
                 <Button variant="ghost" size="sm" onClick={toggleAllMulti}>
                   {multiSelected.size === multiJobs.length ? 'Deselect All' : 'Select All'}
                 </Button>
               </div>
 
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              <p className="text-xs text-muted-foreground">
+                Each job below is a separate position — select the ones you want to add individually to your feed.
+              </p>
+
+              <div className="space-y-2 max-h-[320px] overflow-y-auto">
                 {multiJobs.map((job, idx) => (
                   <div key={idx}
                     className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
@@ -423,12 +431,15 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
                     <div className="flex-1 min-w-0">
                       <h4 className="font-medium text-sm text-foreground truncate">{job.title}</h4>
                       <p className="text-xs text-muted-foreground truncate">{job.company} • {job.location || 'No location'}</p>
-                      <div className="flex gap-1 mt-1">
+                      <div className="flex gap-1 mt-1 flex-wrap">
                         {job.remote_type !== 'unknown' && (
                           <Badge variant="outline" className="text-xs capitalize">{job.remote_type}</Badge>
                         )}
                         {job.employment_type && (
                           <Badge variant="secondary" className="text-xs capitalize">{job.employment_type}</Badge>
+                        )}
+                        {job.seniority_level && (
+                          <Badge variant="outline" className="text-xs capitalize">{job.seniority_level}</Badge>
                         )}
                       </div>
                     </div>
