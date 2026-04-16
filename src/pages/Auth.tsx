@@ -41,9 +41,18 @@ const Auth = () => {
       }
     } catch (error: any) {
       console.error('Auth error:', error);
+      const isExistingAccountSignup =
+        !isLogin && (error?.message === 'Database error saving new user' || error?.status === 500);
+
+      if (isExistingAccountSignup) {
+        setIsLogin(true);
+      }
+
       const description =
         isLogin && (error?.message === 'Invalid login credentials' || error?.status === 400)
           ? 'That password does not match this account. If this account was created with LinkedIn, use Continue with LinkedIn. Otherwise, request a password reset.'
+          : isExistingAccountSignup
+            ? 'That email is already registered. Switch to Sign in and use your password instead.'
           : error?.message ?? 'Something went wrong.';
 
       toast({ title: 'Error', description, variant: 'destructive' });
