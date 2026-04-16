@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import AppLayout from "@/components/AppLayout";
 import Auth from "@/pages/Auth";
+import ResetPassword from "@/pages/ResetPassword";
 import NotFound from "@/pages/NotFound";
 
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
@@ -54,6 +55,7 @@ const App = () => (
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/auth" element={<AuthRoute><Auth /></AuthRoute>} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
               <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
               <Route path="/cv-library" element={<ProtectedRoute><CVLibrary /></ProtectedRoute>} />
