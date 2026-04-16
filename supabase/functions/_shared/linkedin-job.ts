@@ -44,8 +44,8 @@ export function isLinkedInSearchUrl(url: string): boolean {
 
 /** Extract LinkedIn Job ID from various URL patterns */
 export function extractLinkedInJobId(url: string): string | null {
-  const match = url.match(/\/jobs\/view\/(\d+)/) || 
-                url.match(/currentJobId=(\d+)/) || 
+  const match = url.match(/\/jobs\/view\/(?:[^\/]*-)?(\d+)\/?/) ||
+                url.match(/currentJobId=(\d+)/) ||
                 url.match(/\/jobs\/search\/\?.*jobId=(\d+)/);
   return match ? match[1] : null;
 }
