@@ -31,6 +31,8 @@ interface ListingJob {
   description?: string;
   requirements?: string[];
   linkedin_job_id?: string;
+  /** Which pipeline this job came from */
+  _source?: 'linkedin' | 'listing' | 'unknown';
 }
 
 interface UserProfile {
@@ -159,6 +161,7 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
   const [remoteType, setRemoteType] = useState('all');
   const [seniority, setSeniority] = useState('all');
   const [matchFilter, setMatchFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState('all'); // 'all' | 'linkedin' | 'listing'
 
   // Load user profile
   useEffect(() => {
@@ -179,17 +182,37 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
   }, [user]);
 
   /**
-   * Load jobs via LinkedIn native search (search-jobs edge function).
-   * Uses cleaned keywords + location extracted from the listing title/location field.
+   * Deduplicate a combined list of jobs by normalised URL and title+company key.
+   * Jobs that appear in both sources are kept once (listing-page version preferred
+   * as it may carry richer metadata like description).
+   */
+  function deduplicateJobs(allJobs: ListingJob[]): ListingJob[] {
+    const seenUrls = new Set<string>();
+    const seenTitleCompany = new Set<string>();
+    return allJobs.filter(job => {
+      const urlKey = job.apply_url ? job.apply_url.split('?')[0].toLowerCase() : null;
+      const tcKey = `${job.title.trim().toLowerCase()}|${job.company.trim().toLowerCase()}`;
+      if (urlKey && seenUrls.has(urlKey)) return false;
+      if (seenTitleCompany.has(tcKey)) return false;
+      if (urlKey) seenUrls.add(urlKey);
+      seenTitleCompany.add(tcKey);
+      return true;
+    });
+  }
+
+  /**
+   * Fetch from both sources in parallel:
+   *   1. LinkedIn native search   → search-jobs edge function
+   *   2. Original listing page    → scrape-job-url edge function (Firecrawl + AI)
+   *
+   * Results are merged and deduplicated. Either source may fail gracefully —
+   * the other's results are still shown.
    */
   const loadJobs = useCallback(async () => {
     setLoading(true);
     setError(null);
 
-    // Clean keywords: strip "Jobs in Doha, Qatar" suffix from titles like
-    // "Principal Architect Jobs in Doha, Qatar"
     const cleanedKeywords = cleanKeywords(keywords);
-    // Derive location: prefer explicit prop, then extract from title
     const searchLocation = location || extractLocationFromTitle(keywords) || '';
 
     if (!cleanedKeywords) {
@@ -198,32 +221,49 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
       return;
     }
 
-    console.log(`[ListingJobsBrowser] Searching LinkedIn: "${cleanedKeywords}" in "${searchLocation}"`);
+    console.log(`[ListingJobsBrowser] Fetching dual-source: LinkedIn "${cleanedKeywords}" + listing "${sourceUrl}"`);
 
-    try {
-      const { data, error: fnError } = await supabase.functions.invoke('search-jobs', {
-        body: {
-          query: cleanedKeywords,
-          country: searchLocation,
-          limit: 25,
-        },
-      });
+    // ── Source 1: LinkedIn native search ──────────────────────────────────────
+    const linkedInFetch = supabase.functions.invoke('search-jobs', {
+      body: { query: cleanedKeywords, country: searchLocation, limit: 25 },
+    }).then(({ data, error: fnError }) => {
+      if (fnError || data?.error) return [] as ListingJob[];
+      return ((data?.jobs || []) as ListingJob[]).map(j => ({ ...j, _source: 'linkedin' as const }));
+    }).catch(() => [] as ListingJob[]);
 
-      if (fnError) throw new Error(fnError.message);
-      if (data?.error) throw new Error(data.error);
+    // ── Source 2: Original listing page scrape (non-LinkedIn) ─────────────────
+    const listingFetch: Promise<ListingJob[]> = sourceUrl
+      ? supabase.functions.invoke('scrape-job-url', {
+          body: { url: sourceUrl },
+        }).then(({ data, error: fnError }) => {
+          if (fnError || data?.error) return [] as ListingJob[];
+          // Listing response may be { multiple: true, jobs: [...] } or { job: {...} }
+          const raw: any[] = data?.jobs || (data?.job ? [data.job] : []);
+          return raw.map(j => ({ ...j, _source: 'listing' as const }));
+        }).catch(() => [] as ListingJob[])
+      : Promise.resolve([] as ListingJob[]);
 
-      const extracted: ListingJob[] = data?.jobs || [];
-      setJobs(extracted);
-      setLoaded(true);
+    // ── Merge ─────────────────────────────────────────────────────────────────
+    const [linkedInJobs, listingJobs] = await Promise.all([linkedInFetch, listingFetch]);
 
-      if (extracted.length === 0) {
-        setError(`No jobs found on LinkedIn for "${cleanedKeywords}"${searchLocation ? ` in ${searchLocation}` : ''}. LinkedIn may be rate-limiting — try again in a moment.`);
-      }
-    } catch (err: any) {
-      setError(err.message || 'Failed to load jobs from LinkedIn search.');
+    // Listing-page jobs first (richer data), LinkedIn jobs appended after
+    const merged = deduplicateJobs([...listingJobs, ...linkedInJobs]);
+
+    setJobs(merged);
+    setLoaded(true);
+
+    if (merged.length === 0) {
+      setError(
+        linkedInJobs.length === 0 && listingJobs.length === 0
+          ? `No jobs found. LinkedIn may be rate-limiting — try again in a moment.`
+          : `No jobs matched your filters.`
+      );
+    } else {
+      console.log(`[ListingJobsBrowser] Total: ${merged.length} jobs (${linkedInJobs.length} LinkedIn + ${listingJobs.length} listing, after dedup)`);
     }
+
     setLoading(false);
-  }, [keywords, location]);
+  }, [keywords, location, sourceUrl]);
 
   // Auto-load on mount
   useEffect(() => {
@@ -262,6 +302,7 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
         if (seniority !== 'all' && job.seniority_level?.toLowerCase() !== seniority) return false;
         if (matchFilter === 'good' && matchScore < 40) return false;
         if (matchFilter === 'great' && matchScore < 70) return false;
+        if (sourceFilter !== 'all' && (job._source ?? 'unknown') !== sourceFilter) return false;
         return true;
       })
       .sort((a, b) => {
@@ -271,7 +312,7 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
         const bDate = b.job.source_created_at ? new Date(b.job.source_created_at).getTime() : 0;
         return bDate - aDate;
       });
-  }, [jobs, search, dateRange, employmentType, remoteType, seniority, matchFilter, userProfile]);
+  }, [jobs, search, dateRange, employmentType, remoteType, seniority, matchFilter, sourceFilter, userProfile]);
 
   // Strip tracking query params so the same job reached via different URLs
   // (e.g. ?refId=..., ?trackingId=...) doesn't generate a duplicate key.
@@ -320,11 +361,12 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
     setRemoteType('all');
     setSeniority('all');
     setMatchFilter('all');
+    setSourceFilter('all');
   };
 
   const hasActiveFilters =
     search || dateRange !== '60d' || employmentType !== 'all' ||
-    remoteType !== 'all' || seniority !== 'all' || matchFilter !== 'all';
+    remoteType !== 'all' || seniority !== 'all' || matchFilter !== 'all' || sourceFilter !== 'all';
 
   const cleanedKeywordsDisplay = cleanKeywords(keywords);
   const locationDisplay = location || extractLocationFromTitle(keywords) || '';
@@ -341,7 +383,10 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
               <CardTitle className="text-base flex items-center gap-2 flex-wrap">
                 Jobs in this Listing
                 <Badge variant="outline" className="text-[10px] bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800 font-normal gap-1">
-                  <Linkedin className="w-2.5 h-2.5" /> LinkedIn Search
+                  <Linkedin className="w-2.5 h-2.5" /> LinkedIn
+                </Badge>
+                <Badge variant="outline" className="text-[10px] bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800 font-normal">
+                  + Web Sources
                 </Badge>
               </CardTitle>
               <p className="text-xs text-muted-foreground mt-0.5 truncate">
@@ -365,7 +410,7 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
         {loading && (
           <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-3">
             <Loader2 className="w-7 h-7 animate-spin text-primary" />
-            <p className="text-sm">Searching LinkedIn for related jobs…</p>
+            <p className="text-sm">Searching LinkedIn &amp; web sources for related jobs…</p>
             <p className="text-xs text-muted-foreground">"{cleanedKeywordsDisplay}"{locationDisplay ? ` in ${locationDisplay}` : ''}</p>
           </div>
         )}
@@ -476,6 +521,23 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
                   </Select>
                 </div>
 
+                {/* Source */}
+                <div className="col-span-2">
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">Source</p>
+                  <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                    <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All sources</SelectItem>
+                      <SelectItem value="linkedin">
+                        <span className="flex items-center gap-1.5">
+                          <Linkedin className="w-3 h-3 text-sky-600" /> LinkedIn only
+                        </span>
+                      </SelectItem>
+                      <SelectItem value="listing">Web sources only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
                 {/* Seniority */}
                 {seniorityLevels.length > 0 && (
                   <div className="col-span-2">
@@ -553,6 +615,16 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
                             <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
                               <Calendar className="w-2.5 h-2.5" /> {dateLabel}
                             </span>
+                          )}
+                          {job._source === 'linkedin' && (
+                            <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950 dark:text-sky-300 dark:border-sky-800 gap-0.5">
+                              <Linkedin className="w-2 h-2" /> LinkedIn
+                            </Badge>
+                          )}
+                          {job._source === 'listing' && (
+                            <Badge variant="outline" className="text-[10px] h-4 px-1.5 bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800">
+                              Web
+                            </Badge>
                           )}
                           {job.remote_type && job.remote_type !== 'unknown' && (
                             <Badge variant="outline" className="text-[10px] h-4 px-1.5 capitalize">{job.remote_type}</Badge>
