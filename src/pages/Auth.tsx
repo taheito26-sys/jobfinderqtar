@@ -15,6 +15,7 @@ const Auth = () => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [linkedinLoading, setLinkedinLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
 
@@ -23,13 +24,15 @@ const Auth = () => {
     setLoading(true);
 
     try {
+      const normalizedEmail = email.trim().toLowerCase();
+
       if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
         if (error) throw error;
         navigate('/');
       } else {
         const { error } = await supabase.auth.signUp({
-          email,
+          email: normalizedEmail,
           password,
           options: { emailRedirectTo: window.location.origin },
         });
@@ -37,9 +40,39 @@ const Auth = () => {
         toast({ title: 'Account created', description: 'Check your email to confirm your account.' });
       }
     } catch (error: any) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+      const description =
+        isLogin && error?.message === 'Invalid login credentials'
+          ? 'That password does not match this account. If this account was created with LinkedIn, use Continue with LinkedIn. Otherwise, request a password reset.'
+          : error?.message ?? 'Something went wrong.';
+
+      toast({ title: 'Error', description, variant: 'destructive' });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) {
+      toast({ title: 'Enter your email first', description: 'We need the account email to send a reset link.', variant: 'destructive' });
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo: `${window.location.origin}/auth`,
+      });
+      if (error) throw error;
+
+      toast({
+        title: 'Reset link sent',
+        description: 'Check your email for the password reset link and then come back here to sign in.',
+      });
+    } catch (error: any) {
+      toast({ title: 'Reset failed', description: error?.message ?? 'Could not send the reset link.', variant: 'destructive' });
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -124,6 +157,14 @@ const Auth = () => {
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             </form>
+            {isLogin && (
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <p className="text-muted-foreground">If this account came from LinkedIn, password login will not work.</p>
+                <Button type="button" variant="link" className="px-0" onClick={handlePasswordReset} disabled={resetLoading}>
+                  {resetLoading ? 'Sending...' : 'Forgot password?'}
+                </Button>
+              </div>
+            )}
             <div className="text-center">
               <button
                 onClick={() => setIsLogin(!isLogin)}
