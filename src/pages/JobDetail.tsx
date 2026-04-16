@@ -362,7 +362,7 @@ const JobDetail = () => {
 
   // Detect listing page and extract metadata for the browser
   const { isListing, totalCount: listingTotalCount } = detectListingPage(job);
-  const listingUrl = job?.source_url || job?.apply_url || '';
+  const listingSourceUrl = job?.source_url || job?.apply_url || '';
 
   return (
     <div className="animate-fade-in">
@@ -441,10 +441,12 @@ const JobDetail = () => {
           )}
 
           {/* Listing page browser — shown instead of description for aggregate listing pages */}
-          {isListing && listingUrl && (
+          {isListing && (
             <ListingJobsBrowser
-              listingUrl={listingUrl}
+              keywords={job?.title || ''}
+              location={job?.location || ''}
               totalCount={listingTotalCount}
+              sourceUrl={listingSourceUrl}
             />
           )}
 
