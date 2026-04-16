@@ -1,0 +1,567 @@
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/hooks/useAuth';
+import { buildHardlineJobInsert } from '@/lib/hardline-import';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useToast } from '@/hooks/use-toast';
+import {
+  Search, Loader2, Plus, CheckCircle2, Building2,
+  MapPin, Calendar, ListFilter, RefreshCw, Briefcase, Star
+} from 'lucide-react';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface ListingJob {
+  title: string;
+  company: string;
+  location?: string;
+  apply_url?: string;
+  source_url?: string;
+  employment_type?: string;
+  remote_type?: string;
+  seniority_level?: string;
+  source_created_at?: string | null;
+  description?: string;
+  requirements?: string[];
+  linkedin_job_id?: string;
+}
+
+interface UserProfile {
+  desiredTitle?: string;
+  desiredSkills?: string[];
+  preferredLocation?: string;
+}
+
+interface ListingJobsBrowserProps {
+  /** The listing page URL to scrape individual jobs from */
+  listingUrl: string;
+  /** Total count shown on the listing page (if known) */
+  totalCount?: number | null;
+}
+
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const DATE_RANGES: Record<string, { label: string; days: number }> = {
+  '7d':   { label: 'Last 7 days',    days: 7 },
+  '30d':  { label: 'Last month',     days: 30 },
+  '60d':  { label: 'Last 2 months',  days: 60 },
+  '90d':  { label: 'Last 3 months',  days: 90 },
+  '180d': { label: 'Last 6 months',  days: 180 },
+  'all':  { label: 'Any time',       days: 0 },
+};
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatDatePosted(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  try {
+    const d = new Date(iso);
+    const diffDays = Math.floor((Date.now() - d.getTime()) / 86400000);
+    if (diffDays === 0) return 'Today';
+    if (diffDays === 1) return '1d ago';
+    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
+    if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+  } catch { return null; }
+}
+
+/**
+ * Score a job against a user profile using simple keyword matching.
+ * Returns 0-100. Higher = better profile match.
+ */
+function profileMatchScore(job: ListingJob, profile: UserProfile): number {
+  if (!profile.desiredTitle && !profile.desiredSkills?.length) return 50; // neutral
+  let score = 0;
+  const jobText = `${job.title} ${job.description ?? ''} ${(job.requirements ?? []).join(' ')}`.toLowerCase();
+
+  // Title keyword match
+  if (profile.desiredTitle) {
+    const keywords = profile.desiredTitle.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const titleWords = job.title.toLowerCase().split(/\s+/);
+    const matchedTitle = keywords.filter(k => titleWords.some(w => w.includes(k)));
+    score += (matchedTitle.length / Math.max(keywords.length, 1)) * 50;
+  }
+
+  // Skill keyword match
+  if (profile.desiredSkills?.length) {
+    const matched = profile.desiredSkills.filter(s => jobText.includes(s.toLowerCase()));
+    score += (matched.length / Math.max(profile.desiredSkills.length, 1)) * 40;
+  }
+
+  // Location match bonus
+  if (profile.preferredLocation && job.location?.toLowerCase().includes(profile.preferredLocation.toLowerCase())) {
+    score += 10;
+  }
+
+  return Math.min(100, Math.round(score));
+}
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
+const ListingJobsBrowser = ({ listingUrl, totalCount }: ListingJobsBrowserProps) => {
+  const { user } = useAuth();
+  const { toast } = useToast();
+
+  // Data state
+  const [jobs, setJobs] = useState<ListingJob[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // User profile for matching
+  const [userProfile, setUserProfile] = useState<UserProfile>({});
+
+  // Import tracking
+  const [importingKey, setImportingKey] = useState<string | null>(null);
+  const [importedKeys, setImportedKeys] = useState<Set<string>>(new Set());
+
+  // Filters — default to "last 2 months" as requested
+  const [search, setSearch] = useState('');
+  const [dateRange, setDateRange] = useState('60d');
+  const [employmentType, setEmploymentType] = useState('all');
+  const [remoteType, setRemoteType] = useState('all');
+  const [seniority, setSeniority] = useState('all');
+  const [matchFilter, setMatchFilter] = useState('all'); // 'all' | 'good' | 'great'
+
+  // Load user profile for matching
+  useEffect(() => {
+    if (!user) return;
+    Promise.all([
+      supabase.from('candidate_profiles').select('desired_job_titles, skills').eq('user_id', user.id).maybeSingle(),
+      supabase.from('user_preferences').select('key, value').eq('user_id', user.id).in('key', ['preferred_location']),
+    ]).then(([profileRes, prefRes]) => {
+      const profile = profileRes.data;
+      const prefs = prefRes.data || [];
+      const prefLoc = prefs.find(p => p.key === 'preferred_location')?.value;
+      setUserProfile({
+        desiredTitle: (profile?.desired_job_titles as string[] | null)?.[0] || '',
+        desiredSkills: (profile?.skills as string[] | null) || [],
+        preferredLocation: prefLoc || '',
+      });
+    });
+  }, [user]);
+
+  // Auto-load jobs when component mounts
+  const loadJobs = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { data, error: fnError } = await supabase.functions.invoke('scrape-job-url', {
+        body: { url: listingUrl },
+      });
+
+      if (fnError) throw new Error(fnError.message);
+      if (data?.error) throw new Error(data.error);
+
+      // Listing page returns multiple jobs
+      const extracted: ListingJob[] = data?.jobs || (data?.job ? [data.job] : []);
+      setJobs(extracted);
+      setLoaded(true);
+
+      if (extracted.length === 0) {
+        setError('No individual jobs could be extracted from this listing page.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load jobs from this listing.');
+    }
+    setLoading(false);
+  }, [listingUrl]);
+
+  // Auto-load on mount
+  useEffect(() => {
+    loadJobs();
+  }, [loadJobs]);
+
+  // Derive available filter options from loaded data
+  const employmentTypes = useMemo(
+    () => [...new Set(jobs.map(j => j.employment_type).filter(Boolean))] as string[],
+    [jobs]
+  );
+  const remoteTypes = useMemo(
+    () => [...new Set(jobs.map(j => j.remote_type).filter(v => v && v !== 'unknown'))] as string[],
+    [jobs]
+  );
+  const seniorityLevels = useMemo(
+    () => [...new Set(jobs.map(j => j.seniority_level).filter(Boolean))] as string[],
+    [jobs]
+  );
+
+  // Apply all filters + profile scoring
+  const filteredJobs = useMemo(() => {
+    const cutoffDays = DATE_RANGES[dateRange]?.days ?? 0;
+    const cutoff = cutoffDays > 0 ? new Date(Date.now() - cutoffDays * 86400000) : null;
+
+    return jobs
+      .map(job => ({
+        job,
+        matchScore: profileMatchScore(job, userProfile),
+      }))
+      .filter(({ job, matchScore }) => {
+        // Text search
+        if (search) {
+          const q = search.toLowerCase();
+          const haystack = `${job.title} ${job.company} ${job.location ?? ''}`.toLowerCase();
+          if (!haystack.includes(q)) return false;
+        }
+        // Date filter
+        if (cutoff && job.source_created_at && new Date(job.source_created_at) < cutoff) return false;
+        // Employment type
+        if (employmentType !== 'all' && job.employment_type !== employmentType) return false;
+        // Remote type
+        if (remoteType !== 'all' && job.remote_type !== remoteType) return false;
+        // Seniority
+        if (seniority !== 'all' && job.seniority_level?.toLowerCase() !== seniority) return false;
+        // Profile match filter
+        if (matchFilter === 'good' && matchScore < 40) return false;
+        if (matchFilter === 'great' && matchScore < 70) return false;
+        return true;
+      })
+      // Sort: best match first, then by date
+      .sort((a, b) => {
+        const scoreDiff = b.matchScore - a.matchScore;
+        if (Math.abs(scoreDiff) > 5) return scoreDiff;
+        const aDate = a.job.source_created_at ? new Date(a.job.source_created_at).getTime() : 0;
+        const bDate = b.job.source_created_at ? new Date(b.job.source_created_at).getTime() : 0;
+        return bDate - aDate;
+      });
+  }, [jobs, search, dateRange, employmentType, remoteType, seniority, matchFilter, userProfile]);
+
+  const jobKey = (job: ListingJob) =>
+    job.apply_url || job.linkedin_job_id || `${job.title}|${job.company}`;
+
+  const importJob = async (job: ListingJob) => {
+    if (!user) return;
+    const key = jobKey(job);
+    setImportingKey(key);
+    try {
+      const { data, error: dbError } = await (supabase as any)
+        .from('jobs')
+        .insert(
+          buildHardlineJobInsert(user.id, job as any, {
+            sourceLabel: 'web',
+            sourceData: { imported_from: listingUrl, listing_source: listingUrl },
+          })
+        )
+        .select()
+        .single();
+
+      if (dbError) throw dbError;
+
+      await supabase.from('application_events').insert({
+        user_id: user.id,
+        job_id: data.id,
+        event_type: 'job_imported',
+        metadata: { source: 'listing_browser', source_url: listingUrl } as any,
+      });
+
+      setImportedKeys(prev => new Set(prev).add(key));
+      toast({ title: `"${job.title}" added to your Job Feed!` });
+    } catch (err: any) {
+      toast({ title: 'Import failed', description: err.message, variant: 'destructive' });
+    }
+    setImportingKey(null);
+  };
+
+  const clearFilters = () => {
+    setSearch('');
+    setDateRange('60d');
+    setEmploymentType('all');
+    setRemoteType('all');
+    setSeniority('all');
+    setMatchFilter('all');
+  };
+
+  const hasActiveFilters =
+    search || dateRange !== '60d' || employmentType !== 'all' ||
+    remoteType !== 'all' || seniority !== 'all' || matchFilter !== 'all';
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <Briefcase className="w-4 h-4 text-primary" />
+            <CardTitle className="text-base">
+              Jobs in this Listing
+              {totalCount != null && (
+                <span className="text-muted-foreground font-normal text-sm ml-2">
+                  (~{totalCount.toLocaleString()} total on source)
+                </span>
+              )}
+            </CardTitle>
+          </div>
+          {loaded && (
+            <Button variant="ghost" size="sm" onClick={loadJobs} disabled={loading} className="h-7 text-xs gap-1">
+              <RefreshCw className={`w-3 h-3 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+
+      <CardContent className="space-y-4 pt-0">
+
+        {/* ── Loading state ── */}
+        {loading && (
+          <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-3">
+            <Loader2 className="w-7 h-7 animate-spin text-primary" />
+            <p className="text-sm">Extracting individual jobs from listing…</p>
+          </div>
+        )}
+
+        {/* ── Error state ── */}
+        {!loading && error && (
+          <div className="text-center py-8 space-y-3">
+            <p className="text-sm text-destructive">{error}</p>
+            <Button variant="outline" size="sm" onClick={loadJobs}>Try Again</Button>
+          </div>
+        )}
+
+        {/* ── Loaded state ── */}
+        {!loading && loaded && !error && (
+          <>
+            {/* Filter bar */}
+            <div className="space-y-3 bg-muted/40 rounded-lg p-3 border">
+              <div className="flex items-center gap-2">
+                <ListFilter className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Filters</span>
+                <span className="ml-auto text-xs text-muted-foreground">
+                  <strong>{filteredJobs.length}</strong> of <strong>{jobs.length}</strong> jobs
+                </span>
+                {hasActiveFilters && (
+                  <Button variant="ghost" size="sm" className="h-5 text-xs px-1.5 text-primary" onClick={clearFilters}>
+                    Reset
+                  </Button>
+                )}
+              </div>
+
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  placeholder="Search job title or company…"
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="pl-8 h-8 text-sm"
+                />
+              </div>
+
+              {/* Filter selects */}
+              <div className="grid grid-cols-2 gap-2">
+                {/* Posted date — default 2 months */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide flex items-center gap-1">
+                    <Calendar className="w-2.5 h-2.5" /> Posted within
+                  </p>
+                  <Select value={dateRange} onValueChange={setDateRange}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(DATE_RANGES).map(([k, v]) => (
+                        <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Profile match */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide flex items-center gap-1">
+                    <Star className="w-2.5 h-2.5" /> Profile match
+                  </p>
+                  <Select value={matchFilter} onValueChange={setMatchFilter}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All jobs</SelectItem>
+                      <SelectItem value="good">Good match (40%+)</SelectItem>
+                      <SelectItem value="great">Great match (70%+)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Remote type */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">Remote</p>
+                  <Select value={remoteType} onValueChange={setRemoteType}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Any</SelectItem>
+                      {remoteTypes.length > 0
+                        ? remoteTypes.map(rt => <SelectItem key={rt} value={rt} className="capitalize">{rt}</SelectItem>)
+                        : <>
+                            <SelectItem value="remote">Remote</SelectItem>
+                            <SelectItem value="hybrid">Hybrid</SelectItem>
+                            <SelectItem value="onsite">On-site</SelectItem>
+                          </>
+                      }
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Employment type */}
+                <div>
+                  <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">Job type</p>
+                  <Select value={employmentType} onValueChange={setEmploymentType}>
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Any</SelectItem>
+                      {employmentTypes.length > 0
+                        ? employmentTypes.map(et => <SelectItem key={et} value={et} className="capitalize">{et}</SelectItem>)
+                        : <>
+                            <SelectItem value="full-time">Full-time</SelectItem>
+                            <SelectItem value="part-time">Part-time</SelectItem>
+                            <SelectItem value="contract">Contract</SelectItem>
+                          </>
+                      }
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Seniority */}
+                {seniorityLevels.length > 0 && (
+                  <div className="col-span-2">
+                    <p className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">Seniority</p>
+                    <Select value={seniority} onValueChange={setSeniority}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Any level</SelectItem>
+                        {seniorityLevels.map(sl => (
+                          <SelectItem key={sl} value={sl.toLowerCase()} className="capitalize">{sl}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Job list */}
+            {filteredJobs.length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground space-y-2">
+                <Search className="w-7 h-7 mx-auto opacity-30" />
+                <p className="text-sm font-medium">No jobs match your filters</p>
+                <p className="text-xs">Try expanding the date range or clearing the profile match filter.</p>
+                <Button variant="outline" size="sm" className="mt-2" onClick={clearFilters}>
+                  Clear All Filters
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-[640px] overflow-y-auto pr-1">
+                {filteredJobs.map(({ job, matchScore }, idx) => {
+                  const key = jobKey(job);
+                  const isImported = importedKeys.has(key);
+                  const isImporting = importingKey === key;
+                  const dateLabel = formatDatePosted(job.source_created_at);
+
+                  // Match badge colour
+                  const matchColor =
+                    matchScore >= 70 ? 'text-emerald-600 bg-emerald-50 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
+                    : matchScore >= 40 ? 'text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
+                    : 'text-muted-foreground bg-muted/50';
+
+                  const hasProfile = userProfile.desiredTitle || userProfile.desiredSkills?.length;
+
+                  return (
+                    <div
+                      key={idx}
+                      className="flex items-start gap-3 p-3 rounded-lg border bg-background hover:bg-muted/20 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <h4 className="font-medium text-sm text-foreground leading-snug line-clamp-2">
+                            {job.title}
+                          </h4>
+                          {hasProfile && (
+                            <Badge variant="outline" className={`text-[10px] shrink-0 h-5 px-1.5 ${matchColor}`}>
+                              {matchScore}%
+                            </Badge>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                          {job.company && (
+                            <span className="flex items-center gap-0.5">
+                              <Building2 className="w-3 h-3 flex-shrink-0" />
+                              {job.company}
+                            </span>
+                          )}
+                          {job.location && (
+                            <>
+                              <span className="text-border">·</span>
+                              <span className="flex items-center gap-0.5">
+                                <MapPin className="w-3 h-3 flex-shrink-0" />
+                                {job.location}
+                              </span>
+                            </>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-1 items-center">
+                          {dateLabel && (
+                            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                              <Calendar className="w-2.5 h-2.5" /> {dateLabel}
+                            </span>
+                          )}
+                          {job.remote_type && job.remote_type !== 'unknown' && (
+                            <Badge variant="outline" className="text-[10px] h-4 px-1.5 capitalize">
+                              {job.remote_type}
+                            </Badge>
+                          )}
+                          {job.employment_type && (
+                            <Badge variant="secondary" className="text-[10px] h-4 px-1.5 capitalize">
+                              {job.employment_type}
+                            </Badge>
+                          )}
+                          {job.seniority_level && (
+                            <Badge variant="outline" className="text-[10px] h-4 px-1.5 capitalize">
+                              {job.seniority_level}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Import button */}
+                      <Button
+                        size="sm"
+                        variant={isImported ? 'secondary' : 'default'}
+                        className="h-7 text-xs shrink-0 gap-1"
+                        onClick={() => !isImported && !isImporting && importJob(job)}
+                        disabled={isImporting || isImported}
+                      >
+                        {isImporting ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : isImported ? (
+                          <><CheckCircle2 className="w-3 h-3" /> Added</>
+                        ) : (
+                          <><Plus className="w-3 h-3" /> Add</>
+                        )}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
+export default ListingJobsBrowser;

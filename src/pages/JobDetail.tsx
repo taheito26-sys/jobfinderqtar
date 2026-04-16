@@ -20,6 +20,7 @@ import { Link } from 'react-router-dom';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import ATSScoreChecker from '@/components/ATSScoreChecker';
 import QuickApplyButton from '@/components/QuickApplyButton';
+import ListingJobsBrowser from '@/components/ListingJobsBrowser';
 
 function isLinkedInSource(job: any): boolean {
   if (!job) return false;
@@ -31,6 +32,34 @@ function isLinkedInSource(job: any): boolean {
   } catch {
     return sourceUrl.includes('linkedin.com');
   }
+}
+
+/**
+ * Detect whether this saved job is actually a listing page (a page that
+ * aggregates many individual job postings, e.g. qatar.jobzz.net/doha/architect).
+ * Detection uses a cascade of signals stored in raw_data or derived from the title/company.
+ */
+function detectListingPage(job: any): { isListing: boolean; totalCount: number | null } {
+  if (!job) return { isListing: false, totalCount: null };
+  const rd = job.raw_data as any;
+
+  // Explicit marker set by scrape-job-url
+  if (rd?.type === 'listing') return { isListing: true, totalCount: rd.total_count ?? null };
+  if (rd?.total_count > 1)    return { isListing: true, totalCount: rd.total_count };
+
+  // Heuristic: title contains "N Jobs in …" or "Jobs in …"
+  const title: string = job.title || '';
+  if (/\bjobs?\s+in\b/i.test(title)) {
+    const m = title.match(/(\d[\d,]*)\s+jobs?/i);
+    return { isListing: true, totalCount: m ? parseInt(m[1].replace(/,/g, '')) : null };
+  }
+
+  // Heuristic: company field is "N Jobs" (scraper used job count as company name)
+  const company: string = job.company || '';
+  const cMatch = company.match(/^(\d[\d,]*)\s+jobs?$/i);
+  if (cMatch) return { isListing: true, totalCount: parseInt(cMatch[1].replace(/,/g, '')) };
+
+  return { isListing: false, totalCount: null };
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -331,6 +360,10 @@ const JobDetail = () => {
 
   const nextProvider = getNextProvider();
 
+  // Detect listing page and extract metadata for the browser
+  const { isListing, totalCount: listingTotalCount } = detectListingPage(job);
+  const listingUrl = job?.source_url || job?.apply_url || '';
+
   return (
     <div className="animate-fade-in">
       <Button variant="ghost" size="sm" onClick={() => navigate('/jobs')} className="mb-4">
@@ -395,12 +428,25 @@ const JobDetail = () => {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader><CardTitle className="text-base">Description</CardTitle></CardHeader>
-            <CardContent>
-              {job.description ? <p className="text-sm text-foreground whitespace-pre-wrap">{job.description}</p> : <p className="text-sm text-muted-foreground">No description available.</p>}
-            </CardContent>
-          </Card>
+          {/* Description — hidden for listing pages (generic SEO text, not useful) */}
+          {!isListing && (
+            <Card>
+              <CardHeader><CardTitle className="text-base">Description</CardTitle></CardHeader>
+              <CardContent>
+                {job.description
+                  ? <p className="text-sm text-foreground whitespace-pre-wrap">{job.description}</p>
+                  : <p className="text-sm text-muted-foreground">No description available.</p>}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Listing page browser — shown instead of description for aggregate listing pages */}
+          {isListing && listingUrl && (
+            <ListingJobsBrowser
+              listingUrl={listingUrl}
+              totalCount={listingTotalCount}
+            />
+          )}
 
           {(job.requirements as any[])?.length > 0 && (
             <Card>
