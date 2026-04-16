@@ -40,8 +40,9 @@ const Auth = () => {
         toast({ title: 'Account created', description: 'Check your email to confirm your account.' });
       }
     } catch (error: any) {
+      console.error('Auth error:', error);
       const description =
-        isLogin && error?.message === 'Invalid login credentials'
+        isLogin && (error?.message === 'Invalid login credentials' || error?.status === 400)
           ? 'That password does not match this account. If this account was created with LinkedIn, use Continue with LinkedIn. Otherwise, request a password reset.'
           : error?.message ?? 'Something went wrong.';
 
@@ -70,6 +71,7 @@ const Auth = () => {
         description: 'Check your email for the password reset link and then come back here to sign in.',
       });
     } catch (error: any) {
+      console.error('Password reset error:', error);
       toast({ title: 'Reset failed', description: error?.message ?? 'Could not send the reset link.', variant: 'destructive' });
     } finally {
       setResetLoading(false);
@@ -85,6 +87,7 @@ const Auth = () => {
       });
       if (error) throw error;
     } catch (error: any) {
+      console.error('LinkedIn sign-in error:', error);
       toast({ title: 'LinkedIn sign-in failed', description: error.message, variant: 'destructive' });
       setLinkedinLoading(false);
     }
