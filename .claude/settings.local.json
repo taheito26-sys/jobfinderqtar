@@ -20,7 +20,8 @@
       "Bash(curl -s \"https://api.github.com/search/repositories?q=linkedin+jobs+scraper+language:javascript&sort=stars&per_page=5\")",
       "Bash(deno run:*)",
       "Bash(node test-linkedin-parsing.js)",
-      "Bash(git commit -m ':*)"
+      "Bash(git commit -m ':*)",
+      "Bash(git pull:*)"
     ]
   }
 }
