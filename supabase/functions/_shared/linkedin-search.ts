@@ -111,12 +111,56 @@ function extractJobIdFromUrl(href: string): string | null {
  */
 function parseStrategyCardBased(html: string): LinkedInJobSnippet[] {
   const snippets: LinkedInJobSnippet[] = [];
-  // Matches every <li>…</li> block (job cards live in a flat <ul>)
-  const liRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
-  let match;
 
-  while ((match = liRegex.exec(html)) !== null) {
-    const block = match[1];
+  /**
+   * Robust card boundary extraction.
+   *
+   * The code-review concern: a non-greedy `<li>…</li>` regex breaks when
+   * job cards contain nested <li> tags (requirements lists, etc.) because
+   * the regex terminates at the first </li> encountered.
+   *
+   * Fix: Instead of matching the outer <li> with regex, we locate each
+   * card by finding where its outer `<li>` opens *just before* the
+   * data-entity-urn attribute, then walk forward to find the matching
+   * closing `</li>` using a depth counter — correctly handling nesting.
+   */
+  function extractCardBlock(startPos: number): string {
+    // Find the opening <li> that contains this position (scan back)
+    const lookback = html.lastIndexOf("<li", startPos);
+    if (lookback === -1) return html.substring(startPos, Math.min(html.length, startPos + 3000));
+
+    // Walk forward tracking <li> open/close depth to find the true </li>
+    let depth = 0;
+    let i = lookback;
+    while (i < html.length) {
+      if (html[i] === '<') {
+        if (html.startsWith("</li", i) && (html[i + 4] === '>' || html[i + 4] === ' ')) {
+          if (depth === 0) return html.substring(lookback, i + 5);
+          depth--;
+          i += 5;
+          continue;
+        }
+        if (html.startsWith("<li", i) && (html[i + 3] === '>' || html[i + 3] === ' ')) {
+          depth++;
+        }
+      }
+      i++;
+    }
+    // Fallback: return a fixed-size window if depth never resolved
+    return html.substring(lookback, Math.min(html.length, lookback + 3000));
+  }
+
+  // Anchor on data-entity-urn — each unique job posting has exactly one
+  const urnRegex = /data-entity-urn="urn:li:jobPosting:(\d+)"/g;
+  const seenIds = new Set<string>();
+  let match: RegExpExecArray | null;
+
+  while ((match = urnRegex.exec(html)) !== null) {
+    const linkedin_job_id = match[1];
+    if (seenIds.has(linkedin_job_id)) continue;
+    seenIds.add(linkedin_job_id);
+
+    const block = extractCardBlock(match.index);
 
     // Only process blocks containing a LinkedIn job card div
     if (!block.includes("base-search-card")) continue;
@@ -128,20 +172,11 @@ function parseStrategyCardBased(html: string): LinkedInJobSnippet[] {
       block.match(/<a[^>]*class="[^"]*base-card__full-link[^"]*"[^>]*href="([^"]+)"/i) ||
       block.match(/href="([^"]*\/jobs\/view\/[^"?]+)"/i);
 
-    if (!linkMatch) continue;
-
-    const href = linkMatch[1];
-    const apply_url = href.split("?")[0];
-
-    // ── Job ID ───────────────────────────────────────────────────────────────
-    // JobSpy: job_id = href.split("-")[-1]   (last numeric segment of URL)
-    // Fallback: data-entity-urn="urn:li:jobPosting:XXXXX"
-    let linkedin_job_id = extractJobIdFromUrl(href) ?? "";
-    if (!linkedin_job_id) {
-      const urnMatch = block.match(/data-entity-urn="urn:li:jobPosting:(\d+)"/i);
-      if (urnMatch) linkedin_job_id = urnMatch[1];
-    }
-    if (!linkedin_job_id) continue;
+    // Derive apply_url: prefer the full-link href, fallback to canonical URL.
+    // Always strip query params (tracking ids) for a clean, stable URL.
+    const apply_url = linkMatch
+      ? linkMatch[1].split("?")[0]
+      : `https://www.linkedin.com/jobs/view/${linkedin_job_id}`;
 
     // ── Title ────────────────────────────────────────────────────────────────
     // JobSpy:          job_card.find("span", class_="sr-only")   ← most reliable

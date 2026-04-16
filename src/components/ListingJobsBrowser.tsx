@@ -1,7 +1,10 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import type { Database } from '@/integrations/supabase/types';
 import { useAuth } from '@/hooks/useAuth';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
+
+type JobInsert = Database['public']['Tables']['jobs']['Insert'];
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -112,7 +115,7 @@ function profileMatchScore(job: ListingJob, profile: UserProfile): number {
   const jobText = `${job.title} ${job.description ?? ''} ${(job.requirements ?? []).join(' ')}`.toLowerCase();
 
   if (profile.desiredTitle) {
-    const keywords = profile.desiredTitle.toLowerCase().split(/\s+/).filter(w => w.length > 2);
+    const keywords = profile.desiredTitle.toLowerCase().split(/\s+/).filter(w => w.length >= 2);
     const titleWords = job.title.toLowerCase().split(/\s+/);
     const matched = keywords.filter(k => titleWords.some(w => w.includes(k)));
     score += (matched.length / Math.max(keywords.length, 1)) * 50;
@@ -270,22 +273,26 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
       });
   }, [jobs, search, dateRange, employmentType, remoteType, seniority, matchFilter, userProfile]);
 
+  // Strip tracking query params so the same job reached via different URLs
+  // (e.g. ?refId=..., ?trackingId=...) doesn't generate a duplicate key.
   const jobKey = (job: ListingJob) =>
-    job.apply_url || job.linkedin_job_id || `${job.title}|${job.company}`;
+    (job.apply_url ? job.apply_url.split('?')[0] : null) ||
+    job.linkedin_job_id ||
+    `${job.title}|${job.company}`;
 
   const importJob = async (job: ListingJob) => {
     if (!user) return;
     const key = jobKey(job);
     setImportingKey(key);
     try {
-      const { data, error: dbError } = await (supabase as any)
+      const insertPayload = buildHardlineJobInsert(user.id, job as any, {
+        sourceLabel: 'linkedin',
+        sourceData: { imported_from: sourceUrl || job.apply_url, listing_source: sourceUrl },
+      }) as JobInsert;
+
+      const { data, error: dbError } = await supabase
         .from('jobs')
-        .insert(
-          buildHardlineJobInsert(user.id, job as any, {
-            sourceLabel: 'linkedin',
-            sourceData: { imported_from: sourceUrl || job.apply_url, listing_source: sourceUrl },
-          })
-        )
+        .insert(insertPayload)
         .select()
         .single();
 
