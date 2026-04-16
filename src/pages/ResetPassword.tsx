@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { mapSupabaseAuthError } from '@/lib/auth-error-map';
 
 const ResetPassword = () => {
   const [session, setSession] = useState<Session | null>(null);
@@ -74,13 +75,16 @@ const ResetPassword = () => {
       setIsComplete(true);
       toast({
         title: 'Password updated',
-        description: 'You can now sign in with your new password.',
+        description: 'If this recovery session was valid, your password has been updated and you can sign in again now.',
       });
       setTimeout(() => navigate('/auth', { replace: true }), 1200);
     } catch (error: any) {
+      const mappedError = mapSupabaseAuthError(error, { operation: 'password_recovery' });
       toast({
-        title: 'Reset failed',
-        description: error?.message ?? 'Could not update the password.',
+        title: mappedError.title,
+        description: mappedError.recommendedAction
+          ? `${mappedError.description} ${mappedError.recommendedAction}`
+          : mappedError.description,
         variant: 'destructive',
       });
     } finally {

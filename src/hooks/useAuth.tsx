@@ -42,17 +42,35 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (import.meta.env.DEV) {
+        const hasLinkedInIdentity = Boolean(nextSession?.user?.identities?.some((identity) => identity.provider === 'linkedin_oidc'));
+        console.debug('[auth]', {
+          event,
+          hasSession: Boolean(nextSession),
+          hasLinkedInIdentity,
+        });
+      }
+
+      setSession(nextSession);
       setLoading(false);
 
       // Sync LinkedIn profile data on sign-in (non-blocking)
-      if (session && _event === 'SIGNED_IN') {
-        syncLinkedInProfile(session);
+      if (nextSession && event === 'SIGNED_IN') {
+        syncLinkedInProfile(nextSession);
       }
     });
 
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (import.meta.env.DEV) {
+        const hasLinkedInIdentity = Boolean(session?.user?.identities?.some((identity) => identity.provider === 'linkedin_oidc'));
+        console.debug('[auth]', {
+          event: 'INITIAL_SESSION',
+          hasSession: Boolean(session),
+          hasLinkedInIdentity,
+        });
+      }
+
       setSession(session);
       setLoading(false);
     });

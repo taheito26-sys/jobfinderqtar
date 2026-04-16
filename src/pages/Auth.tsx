@@ -6,8 +6,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
-import { Briefcase, ArrowRight, Linkedin } from 'lucide-react';
+import { Briefcase, ArrowRight, ChevronDown, Linkedin } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { formatAuthBackendLabel, getAuthDebugInfo } from '@/lib/auth-debug';
+import { mapSupabaseAuthError } from '@/lib/auth-error-map';
 
 const Auth = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -18,6 +22,7 @@ const Auth = () => {
   const [resetLoading, setResetLoading] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const authDebug = getAuthDebugInfo();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,22 +45,20 @@ const Auth = () => {
         toast({ title: 'Account created', description: 'Check your email to confirm your account.' });
       }
     } catch (error: any) {
-      console.error('Auth error:', error);
-      const isExistingAccountSignup =
-        !isLogin && (error?.message === 'Database error saving new user' || error?.status === 500);
+      const mappedError = mapSupabaseAuthError(error, isLogin ? { operation: 'password_sign_in' } : { operation: 'signup' });
+      const isExistingAccountSignup = !isLogin && mappedError.code === 'EMAIL_ALREADY_REGISTERED';
 
       if (isExistingAccountSignup) {
         setIsLogin(true);
       }
 
-      const description =
-        isLogin && (error?.message === 'Invalid login credentials' || error?.status === 400)
-          ? 'That password does not match this account. If this account was created with LinkedIn, use Continue with LinkedIn. Otherwise, request a password reset.'
-          : isExistingAccountSignup
-            ? 'That email is already registered. Switch to Sign in and use your password instead.'
-          : error?.message ?? 'Something went wrong.';
-
-      toast({ title: 'Error', description, variant: 'destructive' });
+      toast({
+        title: mappedError.title,
+        description: mappedError.recommendedAction
+          ? `${mappedError.description} ${mappedError.recommendedAction}`
+          : mappedError.description,
+        variant: 'destructive',
+      });
     } finally {
       setLoading(false);
     }
@@ -76,12 +79,19 @@ const Auth = () => {
       if (error) throw error;
 
       toast({
-        title: 'Reset link sent',
-        description: 'Check your email for the password reset link and then come back here to sign in.',
+        title: 'Reset request sent',
+        description:
+          'If this email belongs to a password-based account in the current backend, Supabase will send a reset link.',
       });
     } catch (error: any) {
-      console.error('Password reset error:', error);
-      toast({ title: 'Reset failed', description: error?.message ?? 'Could not send the reset link.', variant: 'destructive' });
+      const mappedError = mapSupabaseAuthError(error, { operation: 'password_reset' });
+      toast({
+        title: mappedError.title,
+        description: mappedError.recommendedAction
+          ? `${mappedError.description} ${mappedError.recommendedAction}`
+          : mappedError.description,
+        variant: 'destructive',
+      });
     } finally {
       setResetLoading(false);
     }
@@ -96,8 +106,15 @@ const Auth = () => {
       });
       if (error) throw error;
     } catch (error: any) {
-      console.error('LinkedIn sign-in error:', error);
-      toast({ title: 'LinkedIn sign-in failed', description: error.message, variant: 'destructive' });
+      const mappedError = mapSupabaseAuthError(error, { operation: 'oauth_sign_in', provider: 'linkedin_oidc' });
+      toast({
+        title: mappedError.title,
+        description: mappedError.recommendedAction
+          ? `${mappedError.description} ${mappedError.recommendedAction}`
+          : mappedError.description,
+        variant: 'destructive',
+      });
+    } finally {
       setLinkedinLoading(false);
     }
   };
@@ -169,9 +186,38 @@ const Auth = () => {
                 <ArrowRight className="w-4 h-4 ml-2" />
               </Button>
             </form>
+
+            <Collapsible className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="ghost" className="group flex h-auto w-full items-center justify-between px-1 py-1.5">
+                  <span className="text-sm font-medium text-foreground">Troubleshooting login</span>
+                  <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-3 pb-1 pt-2 text-sm text-muted-foreground">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline" className="bg-background">
+                    {formatAuthBackendLabel(authDebug)}
+                  </Badge>
+                  {authDebug.uiAuthMethods.map((method) => (
+                    <Badge key={method.key} variant="secondary">
+                      {method.label}
+                    </Badge>
+                  ))}
+                </div>
+                <ul className="list-disc space-y-1 pl-4">
+                  <li>Password login only works for accounts that actually have a password in this auth backend.</li>
+                  <li>Same email does not guarantee the same account across different Supabase projects.</li>
+                  <li>An account created with LinkedIn may fail password login unless a password was later set.</li>
+                  <li>If LinkedIn is disabled in Supabase, LinkedIn-created accounts may be locked out.</li>
+                  <li>Reset password only helps password-based accounts in the current backend.</li>
+                </ul>
+              </CollapsibleContent>
+            </Collapsible>
+
             {isLogin && (
               <div className="flex items-center justify-between gap-3 text-sm">
-                <p className="text-muted-foreground">If this account came from LinkedIn, password login will not work.</p>
+                <p className="text-muted-foreground">If this account came from LinkedIn, password login may not work unless a password was later added.</p>
                 <Button type="button" variant="link" className="px-0" onClick={handlePasswordReset} disabled={resetLoading}>
                   {resetLoading ? 'Sending...' : 'Forgot password?'}
                 </Button>
