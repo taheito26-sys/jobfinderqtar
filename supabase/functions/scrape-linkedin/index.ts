@@ -138,6 +138,16 @@ function looksLikeLoginWall(html: string): boolean {
   return lower.includes("linkedin") && lower.includes("sign in");
 }
 
+function extractLinkedInSlugFromUrl(url: string): string {
+  try {
+    const parsed = new URL(url.startsWith("http") ? url : `https://${url}`);
+    const match = parsed.pathname.match(/^\/in\/([^/?#]+)/i);
+    return match?.[1] || "";
+  } catch {
+    return "";
+  }
+}
+
 async function fetchLinkedInContent(url: string): Promise<{ content: string; source: string }> {
   const browserHeaders = {
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -163,6 +173,29 @@ async function fetchLinkedInContent(url: string): Promise<{ content: string; sou
     const text = collapseWhitespace(await jinaResponse.text());
     if (text.length >= 100) {
       return { content: text.substring(0, 20000), source: "jina-reader" };
+    }
+  }
+
+  const slug = extractLinkedInSlugFromUrl(url);
+  const liAtCookie = Deno.env.get("LINKEDIN_LI_AT_COOKIE")?.trim() || "";
+  if (slug && liAtCookie) {
+    const voyagerUrl = `https://www.linkedin.com/voyager/api/identity/profiles/${slug}/profileView`;
+    const voyagerResponse = await fetch(voyagerUrl, {
+      headers: {
+        accept: "application/json",
+        "accept-language": "en-US,en;q=0.9",
+        "x-restli-protocol-version": "2.0.0",
+        cookie: `li_at=${liAtCookie}`,
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      },
+    });
+
+    if (voyagerResponse.ok) {
+      const text = collapseWhitespace(await voyagerResponse.text());
+      if (text.length >= 100) {
+        return { content: text.substring(0, 20000), source: "voyager-api" };
+      }
     }
   }
 
@@ -219,14 +252,14 @@ Deno.serve(async (req) => {
           textContent = fetched.content;
           console.log(`Extracted ${textContent.length} chars from LinkedIn via ${fetched.source}`);
         } else if (!trimmedText) {
-          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. LinkedIn is likely blocking direct fetches for this URL." }), {
+          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. LinkedIn is likely blocking direct fetches for this URL. If you want authenticated scraping, set LINKEDIN_LI_AT_COOKIE in the Supabase function environment using a logged-in LinkedIn session cookie." }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
       } catch (fetchError) {
         console.error("LinkedIn fetch error:", fetchError);
         if (!trimmedText) {
-          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. You can paste the profile text as a fallback." }), {
+          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. You can paste the profile text as a fallback, or configure LINKEDIN_LI_AT_COOKIE for authenticated profile fetches." }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
