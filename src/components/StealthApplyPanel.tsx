@@ -8,6 +8,7 @@ import { EyeOff, Loader2, Clock, Zap, CheckCircle2, AlertCircle } from 'lucide-r
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
+import { parseJobDate } from '@/lib/job-date';
 
 interface StealthApplyPanelProps {
   jobs: any[];
@@ -27,7 +28,7 @@ const StealthApplyPanel = ({ jobs, matches, userId, onDraftsCreated }: StealthAp
   const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
   const freshJobs = jobs.filter(j => {
-    const postedAt = j.posted_at ? new Date(j.posted_at) : new Date(j.created_at);
+    const postedAt = parseJobDate(j) ?? new Date(j.created_at);
     const isFresh = postedAt >= twentyFourHoursAgo;
     const match = matches[j.id];
     const hasScore = match && match.overall_score >= minScore;
@@ -61,7 +62,7 @@ const StealthApplyPanel = ({ jobs, matches, userId, onDraftsCreated }: StealthAp
           job_id: job.id,
           apply_mode: 'stealth',
           status: 'ready',
-          notes: `Stealth Apply — job posted ${formatDistanceToNow(new Date(job.posted_at || job.created_at), { addSuffix: true })}`,
+          notes: `Stealth Apply - job posted ${formatDistanceToNow(parseJobDate(job) ?? new Date(job.created_at), { addSuffix: true })}`,
         });
 
         // Optionally tailor CV

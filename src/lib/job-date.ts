@@ -1,0 +1,48 @@
+export function getBestJobDateCandidate(job: any): string | null {
+  const raw = job?.raw_data as any;
+  const candidate =
+    job?.source_created_at ||
+    job?.posted_at ||
+    job?.discovered_at ||
+    raw?.source_created_at ||
+    raw?.posted_at ||
+    raw?.postedAt ||
+    raw?.date ||
+    null;
+
+  if (!candidate) return null;
+  const text = String(candidate).trim();
+  return text.length ? text : null;
+}
+
+export function parseJobDate(job: any): Date | null {
+  const candidate = getBestJobDateCandidate(job);
+  if (!candidate) return null;
+
+  const direct = new Date(candidate);
+  if (!Number.isNaN(direct.getTime())) return direct;
+
+  const relative = candidate.toLowerCase();
+  const match = relative.match(/^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/);
+  if (!match) return null;
+
+  const value = Number(match[1]);
+  const unit = match[2];
+  const now = new Date();
+  const deltaMs =
+    unit === 'second' ? value * 1000 :
+    unit === 'minute' ? value * 60 * 1000 :
+    unit === 'hour' ? value * 60 * 60 * 1000 :
+    unit === 'day' ? value * 24 * 60 * 60 * 1000 :
+    unit === 'week' ? value * 7 * 24 * 60 * 60 * 1000 :
+    unit === 'month' ? value * 30 * 24 * 60 * 60 * 1000 :
+    value * 365 * 24 * 60 * 60 * 1000;
+
+  return new Date(now.getTime() - deltaMs);
+}
+
+export function formatJobDate(job: any, options?: Intl.DateTimeFormatOptions): string | null {
+  const parsed = parseJobDate(job);
+  if (!parsed) return null;
+  return parsed.toLocaleDateString(undefined, options ?? { year: 'numeric', month: 'long', day: 'numeric' });
+}

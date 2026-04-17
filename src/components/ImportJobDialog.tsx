@@ -13,6 +13,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
+import { parseJobDate } from '@/lib/job-date';
 import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2, Search, SlidersHorizontal, Calendar } from 'lucide-react';
 
 interface ImportJobDialogProps {
@@ -37,22 +38,6 @@ const QATAR_JOB_BOARDS = [
   { name: 'LinkedIn', url: 'https://www.linkedin.com/jobs' },
   { name: 'Tanqeeb', url: 'https://www.tanqeeb.com' },
 ];
-
-function formatDatePosted(iso: string | null): string | null {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return '1d ago';
-    if (diffDays < 7) return `${diffDays}d ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-    if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
-    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-  } catch { return null; }
-}
 
 function isLinkedInUrl(url: string): boolean {
   try { return new URL(url).hostname.includes('linkedin.com'); } catch { return false; }
@@ -151,7 +136,8 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
         const q = filters.search.toLowerCase();
         if (!job.title.toLowerCase().includes(q) && !job.company.toLowerCase().includes(q)) return false;
       }
-      if (cutoff && job.source_created_at && new Date(job.source_created_at) < cutoff) return false;
+      const jobDate = parseJobDate(job);
+      if (cutoff && jobDate && jobDate < cutoff) return false;
       if (filters.employmentType !== 'all' && job.employment_type !== filters.employmentType) return false;
       if (filters.remoteType !== 'all' && job.remote_type !== filters.remoteType) return false;
       if (filters.seniority !== 'all' && job.seniority_level?.toLowerCase() !== filters.seniority.toLowerCase()) return false;

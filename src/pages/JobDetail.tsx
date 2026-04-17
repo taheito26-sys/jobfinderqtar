@@ -21,6 +21,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import ATSScoreChecker from '@/components/ATSScoreChecker';
 import QuickApplyButton from '@/components/QuickApplyButton';
 import ListingJobsBrowser from '@/components/ListingJobsBrowser';
+import { formatJobDate } from '@/lib/job-date';
 
 function isLinkedInSource(job: any): boolean {
   if (!job) return false;
@@ -60,47 +61,6 @@ function detectListingPage(job: any): { isListing: boolean; totalCount: number |
   if (cMatch) return { isListing: true, totalCount: parseInt(cMatch[1].replace(/,/g, '')) };
 
   return { isListing: false, totalCount: null };
-}
-
-function formatOriginalPostedDate(job: any): string | null {
-  const raw = job?.raw_data as any;
-  const candidate =
-    job?.source_created_at ||
-    job?.posted_at ||
-    job?.discovered_at ||
-    raw?.source_created_at ||
-    raw?.posted_at ||
-    raw?.postedAt ||
-    raw?.date ||
-    null;
-
-  if (!candidate) return null;
-  const text = String(candidate).trim();
-  if (!text.length) return null;
-
-  const parsed = new Date(text);
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  }
-
-  const relative = text.toLowerCase();
-  const match = relative.match(/^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/);
-  if (match) {
-    const value = Number(match[1]);
-    const unit = match[2];
-    const now = new Date();
-    const deltaMs =
-      unit === 'second' ? value * 1000 :
-      unit === 'minute' ? value * 60 * 1000 :
-      unit === 'hour' ? value * 60 * 60 * 1000 :
-      unit === 'day' ? value * 24 * 60 * 60 * 1000 :
-      unit === 'week' ? value * 7 * 24 * 60 * 60 * 1000 :
-      unit === 'month' ? value * 30 * 24 * 60 * 60 * 1000 :
-      value * 365 * 24 * 60 * 60 * 1000;
-    return new Date(now.getTime() - deltaMs).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-  }
-
-  return null;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -145,7 +105,7 @@ const JobDetail = () => {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isLinkedin = isLinkedInSource(job);
-  const originalPostedDate = formatOriginalPostedDate(job);
+  const originalPostedDate = formatJobDate(job);
 
   // Load user's AI provider preference
   useEffect(() => {

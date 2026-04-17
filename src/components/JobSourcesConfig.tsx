@@ -21,16 +21,16 @@ import {
 
 // ─── Preset job boards ───
 const PRESET_SOURCES = [
-  { name: 'Indeed Qatar', type: 'scraper', url: 'https://qa.indeed.com', icon: '🔵', region: 'Qatar', description: 'Largest job board — Qatar edition' },
-  { name: 'Bayt.com', type: 'scraper', url: 'https://www.bayt.com', icon: '🟢', region: 'Gulf', description: 'Leading Middle East job platform' },
-  { name: 'GulfTalent', type: 'scraper', url: 'https://www.gulftalent.com', icon: '🟠', region: 'Gulf', description: 'Premium Gulf recruitment site' },
-  { name: 'Naukrigulf', type: 'scraper', url: 'https://www.naukrigulf.com', icon: '🔴', region: 'Gulf', description: 'Gulf job listings from Naukri' },
-  { name: 'LinkedIn Jobs', type: 'scraper', url: 'https://www.linkedin.com/jobs', icon: '🔷', region: 'Global', description: 'Professional network job listings' },
-  { name: 'Tanqeeb', type: 'scraper', url: 'https://www.tanqeeb.com', icon: '🟣', region: 'Gulf', description: 'Gulf job aggregator' },
+  { name: 'Indeed Qatar', type: 'scraper', url: 'https://qa.indeed.com/jobs?l=Qatar', icon: '🔵', region: 'Qatar', description: 'Largest job board — Qatar edition' },
+  { name: 'Bayt.com', type: 'scraper', url: 'https://www.bayt.com/en/qatar/jobs/search-jobs/', icon: '🟢', region: 'Gulf', description: 'Leading Middle East job platform' },
+  { name: 'GulfTalent', type: 'scraper', url: 'https://www.gulftalent.com/qatar/jobs', icon: '🟠', region: 'Gulf', description: 'Premium Gulf recruitment site' },
+  { name: 'Naukrigulf', type: 'scraper', url: 'https://www.naukrigulf.com/search-jobs-in-qatar', icon: '🔴', region: 'Gulf', description: 'Gulf job listings from Naukri' },
+  { name: 'LinkedIn Jobs', type: 'scraper', url: 'https://www.linkedin.com/jobs/search/', icon: '🔷', region: 'Global', description: 'Professional network job listings' },
+  { name: 'Tanqeeb', type: 'scraper', url: 'https://qatar.tanqeeb.com/en', icon: '🟣', region: 'Gulf', description: 'Gulf job aggregator' },
   { name: 'Qatar Living Jobs', type: 'scraper', url: 'https://www.qatarliving.com/jobs', icon: '🏠', region: 'Qatar', description: 'Qatar community job board' },
-  { name: 'Akhtaboot', type: 'scraper', url: 'https://www.akhtaboot.com', icon: '🐙', region: 'MENA', description: 'MENA recruitment platform' },
-  { name: 'Glassdoor', type: 'scraper', url: 'https://www.glassdoor.com', icon: '🚪', region: 'Global', description: 'Reviews + job listings' },
-  { name: 'WeWorkRemotely', type: 'rss', url: 'https://weworkremotely.com', icon: '🌍', region: 'Remote', description: 'Remote-only job board' },
+  { name: 'Akhtaboot', type: 'scraper', url: 'https://www.akhtaboot.com/en/qatar/jobs', icon: '🐙', region: 'MENA', description: 'MENA recruitment platform' },
+  { name: 'Glassdoor', type: 'scraper', url: 'https://www.glassdoor.com/Job/qatar-jobs-SRCH_IL.0,5_IN199.htm', icon: '🚪', region: 'Global', description: 'Reviews + job listings' },
+  { name: 'WeWorkRemotely', type: 'rss', url: 'https://weworkremotely.com/remote-jobs.rss', icon: '🌍', region: 'Remote', description: 'Remote-only job board' },
 ];
 
 type SourceConfig = {
@@ -207,20 +207,27 @@ const JobSourcesConfig = () => {
   const testSource = async (source: JobSource) => {
     setSyncing(source.id);
     try {
-      const { data, error } = await supabase.functions.invoke('search-jobs', {
-        body: {
-          query: (source.config.search_keywords ?? []).join(' ') || source.source_name,
-          location: source.config.search_location || '',
-          limit: 3,
-        },
-      });
+      const isLinkedIn = /linkedin/i.test(source.source_name) || /linkedin/i.test(source.config.base_url || '');
+      const { data, error } = isLinkedIn
+        ? await supabase.functions.invoke('search-jobs', {
+            body: {
+              query: (source.config.search_keywords ?? []).join(' ') || source.source_name,
+              country: source.config.search_location || '',
+              limit: 3,
+            },
+          })
+        : await supabase.functions.invoke('scrape-job-url', {
+            body: {
+              url: source.config.base_url || source.source_name,
+            },
+          });
 
       if (error) throw error;
 
       await supabase.from('job_sources').update({ last_synced_at: new Date().toISOString() }).eq('id', source.id);
       setSources(sources.map(s => s.id === source.id ? { ...s, last_synced_at: new Date().toISOString() } : s));
 
-      const count = data?.results?.length ?? data?.jobs_found ?? 0;
+      const count = data?.results?.length ?? data?.jobs_found ?? data?.jobs?.length ?? (data?.job ? 1 : 0) ?? 0;
       toast({ title: 'Test successful', description: `Found ${count} results from ${source.source_name}.` });
     } catch (err: any) {
       toast({ title: 'Test failed', description: err.message || 'Could not reach source', variant: 'destructive' });
@@ -315,12 +322,15 @@ const JobSourcesConfig = () => {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
-            <div className="space-y-0.5">
-              <p className="text-sm font-medium text-foreground">Enable auto-search</p>
-              <p className="text-xs text-muted-foreground">
-                Runs on a schedule using your profile's desired titles and location
-              </p>
-            </div>
+              <div className="space-y-0.5">
+                <p className="text-sm font-medium text-foreground">Enable auto-search</p>
+                <p className="text-xs text-muted-foreground">
+                  Runs on a schedule using your profile's desired titles and location
+                </p>
+                <p className="text-xs text-amber-600">
+                  Generic scraper sources need a real search or listing URL. A homepage alone often returns no jobs.
+                </p>
+              </div>
             <Switch
               checked={autoSearchEnabled}
               onCheckedChange={(v) => {

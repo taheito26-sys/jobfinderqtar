@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { useAuth } from '@/hooks/useAuth';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
+import { formatJobDate, parseJobDate } from '@/lib/job-date';
 
 type JobInsert = Database['public']['Tables']['jobs']['Insert'];
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -68,22 +69,6 @@ const DATE_RANGES: Record<string, { label: string; days: number }> = {
   '180d': { label: 'Last 6 months',  days: 180 },
   'all':  { label: 'Any time',       days: 0 },
 };
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function formatDatePosted(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    const diffDays = Math.floor((Date.now() - d.getTime()) / 86400000);
-    if (diffDays === 0) return 'Today';
-    if (diffDays === 1) return '1d ago';
-    if (diffDays < 7) return `${diffDays}d ago`;
-    if (diffDays < 30) return `${Math.floor(diffDays / 7)}w ago`;
-    if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
-    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-  } catch { return null; }
-}
 
 /**
  * Extract clean search keywords from a listing page title.
@@ -296,7 +281,8 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
           const q = search.toLowerCase();
           if (!`${job.title} ${job.company} ${job.location ?? ''}`.toLowerCase().includes(q)) return false;
         }
-        if (cutoff && job.source_created_at && new Date(job.source_created_at) < cutoff) return false;
+        const jobDate = parseJobDate(job);
+        if (cutoff && jobDate && jobDate < cutoff) return false;
         if (employmentType !== 'all' && job.employment_type !== employmentType) return false;
         if (remoteType !== 'all' && job.remote_type !== remoteType) return false;
         if (seniority !== 'all' && job.seniority_level?.toLowerCase() !== seniority) return false;
@@ -308,8 +294,8 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
       .sort((a, b) => {
         const diff = b.matchScore - a.matchScore;
         if (Math.abs(diff) > 5) return diff;
-        const aDate = a.job.source_created_at ? new Date(a.job.source_created_at).getTime() : 0;
-        const bDate = b.job.source_created_at ? new Date(b.job.source_created_at).getTime() : 0;
+        const aDate = parseJobDate(a.job)?.getTime() ?? 0;
+        const bDate = parseJobDate(b.job)?.getTime() ?? 0;
         return bDate - aDate;
       });
   }, [jobs, search, dateRange, employmentType, remoteType, seniority, matchFilter, sourceFilter, userProfile]);
@@ -572,7 +558,7 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
                   const key = jobKey(job);
                   const isImported = importedKeys.has(key);
                   const isImporting = importingKey === key;
-                  const dateLabel = formatDatePosted(job.source_created_at);
+                  const dateLabel = formatJobDate(job);
                   const hasProfile = userProfile.desiredTitle || userProfile.desiredSkills?.length;
 
                   const matchColor =
