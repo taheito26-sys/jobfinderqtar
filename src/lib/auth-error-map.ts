@@ -114,19 +114,35 @@ export function mapSupabaseAuthError(error: unknown, context: AuthErrorContext):
   if (
     context.operation === 'oauth_sign_in' ||
     provider === 'linkedin_oidc' ||
-    message.includes('unsupported provider') ||
-    message.includes('provider is not enabled') ||
-    message.includes('provider not enabled') ||
-    message.includes('provider not found') ||
+    (message.includes('unsupported provider') && context.operation === 'oauth_sign_in') ||
+    (message.includes('provider is not enabled') && context.operation === 'oauth_sign_in') ||
+    (message.includes('provider not enabled') && context.operation === 'oauth_sign_in') ||
+    (message.includes('provider not found') && context.operation === 'oauth_sign_in') ||
     message.includes('oauth provider') ||
     message.includes('sign in with oauth failed') ||
-    code.includes('provider_not_found')
+    (code.includes('provider_not_found') && context.operation === 'oauth_sign_in')
   ) {
     return createAuthUiError(
       'OAUTH_PROVIDER_UNAVAILABLE',
       'LinkedIn sign-in unavailable',
       'The backend auth provider for LinkedIn is not enabled or is not configured correctly.',
       'Enable the LinkedIn provider in Supabase Authentication settings, then retry.',
+    );
+  }
+
+  if (
+    message.includes('unsupported provider') ||
+    message.includes('provider is not enabled') ||
+    message.includes('provider not enabled') ||
+    message.includes('provider not found') ||
+    code.includes('provider_not_found')
+  ) {
+    return createAuthUiError(
+      'UNKNOWN_AUTH_ERROR',
+      'Email Provider Disabled',
+      'The Email authentication provider is not enabled in your Supabase project.',
+      'Please go to your Supabase Dashboard -> Authentication -> Providers and enable the Email provider.',
+      false
     );
   }
 
