@@ -1,5 +1,19 @@
+/**
+ * search-jobs edge function
+ *
+ * Multi-source Qatar job search: LinkedIn + Indeed + Bayt.com + GulfTalent.
+ * All sources run in parallel. Each source failure is isolated so that
+ * a single source outage never returns zero results.
+ *
+ * Request body:
+ *   { query: string, country?: string, limit?: number, sources?: object }
+ *
+ * Response:
+ *   { success: true, jobs: MultiSourceJob[], counts: {...}, provider: "multi-source" }
+ */
+
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { getPipelineConfig } from "../_shared/ai-pipeline.ts";
+import { searchAllSources } from "../_shared/multi-source-search.ts";
 import { recordLedgerSync } from "../_shared/hardline-ledger.ts";
 
 const corsHeaders = {
@@ -11,10 +25,12 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // ── Auth ────────────────────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(JSON.stringify({ error: "Missing authorization" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
@@ -26,72 +42,88 @@ Deno.serve(async (req) => {
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !user) {
       return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const { query, limit = 10, country } = await req.json();
-    if (!query) {
-      return new Response(JSON.stringify({ error: "Search query is required" }), {
-        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const pipelineConfig = await getPipelineConfig(user.id);
-    console.log(`[search-jobs] Pipeline: ${pipelineConfig.enabled ? "ON" : "OFF"}, country: ${country || 'Global'}, query: ${query}`);
-
-    // --- LinkedIn Native Search ONLY ---
-    // Firecrawl is removed to avoid 402 Payment Required in production
-    const { linkedinProvider } = await import("../_shared/linkedin-provider.ts");
-    const searchResult = await linkedinProvider.searchJobs({
-      keywords: query,
-      location: country || "",
-      limit: Math.min(limit, 25),
-    });
-
-    if (searchResult.success) {
-      const jobs = searchResult.jobs || [];
-      
-      // Record in ledger for auditing
-      try {
-        await recordLedgerSync(supabaseClient as any, user.id, "linkedin-native-search", "search", jobs, {
-          baseUrl: "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search",
-          configJson: { query, country: country || null, limit },
-          normalizationStatus: jobs.length > 0 ? "incomplete" : "valid",
-          runMode: "collect",
-        });
-      } catch (ledgerError) {
-        console.warn("Ledger sync failed for search-jobs:", ledgerError);
-      }
-
-      return new Response(JSON.stringify({ 
-        success: true, 
-        jobs, 
-        provider: "linkedin-native" 
-      }), {
+        status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Handle provider error
-    console.error("LinkedIn native search error:", searchResult.error);
-    return new Response(JSON.stringify({ 
-      success: false, 
-      error: searchResult.error || "Search failed",
-      error_type: searchResult.error_type || "PROVIDER_ERROR",
-      message: `LinkedIn provider error: ${searchResult.error}`
-    }), {
-      status: searchResult.error_type === "RATE_LIMIT" ? 429 : 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    // ── Parse request ───────────────────────────────────────────────────────
+    const body = await req.json();
+    const {
+      query,
+      limit = 50,
+      country,
+      sources,  // optional: { linkedin, indeed, bayt, gulftalent } booleans
+    } = body;
+
+    if (!query) {
+      return new Response(JSON.stringify({ error: "Search query is required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Default location to Qatar if no country provided or if "Qatar" is implied
+    const location = country || "Qatar";
+
+    console.log(
+      `[search-jobs] user=${user.id} query="${query}" location="${location}" limit=${limit}`
+    );
+
+    // ── Multi-source search ─────────────────────────────────────────────────
+    const result = await searchAllSources({
+      keywords: query,
+      location,
+      limit: Math.min(limit, 100),
+      perSourceLimit: 25,
+      sources: sources || {
+        linkedin: true,
+        indeed: true,
+        bayt: true,
+        gulftalent: true,
+      },
     });
 
+    const { jobs, counts, sources_with_results } = result;
+
+    console.log(
+      `[search-jobs] Returned ${jobs.length} jobs from sources: ${sources_with_results.join(", ")}`
+    );
+
+    // ── Audit ledger (best-effort, non-blocking) ────────────────────────────
+    try {
+      await recordLedgerSync(
+        supabaseClient as any,
+        user.id,
+        "multi-source-search",
+        "search",
+        jobs,
+        {
+          baseUrl: "multi-source",
+          configJson: { query, location, limit, counts },
+          normalizationStatus: jobs.length > 0 ? "incomplete" : "valid",
+          runMode: "collect",
+        }
+      );
+    } catch (ledgerErr) {
+      console.warn("[search-jobs] Ledger sync failed:", ledgerErr);
+    }
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        jobs,
+        counts,
+        provider: "multi-source",
+        sources_with_results,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (error: any) {
-    console.error("Critical search failure:", error);
-    return new Response(JSON.stringify({ 
-      success: false,
-      error: error.message || "Search failed" 
-    }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    console.error("[search-jobs] Critical failure:", error);
+    return new Response(
+      JSON.stringify({ success: false, error: error.message || "Search failed" }),
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 });

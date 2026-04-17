@@ -228,93 +228,119 @@ Deno.serve(async (req) => {
       }
     }
 
-    // --- Part 2: Process Profile-driven Auto-Discovery ---
-    const { linkedinProvider } = await import("../_shared/linkedin-provider.ts");
+    // --- Part 2: Multi-source Profile-driven Auto-Discovery ---
+    // Searches LinkedIn + Indeed + Bayt.com + GulfTalent in parallel for each
+    // desired job title from the user's profile.
+    const { searchAllSources } = await import("../_shared/multi-source-search.ts");
 
     for (const profile of profiles) {
       const userPrefs = preferenceMap.get(profile.user_id) ?? {};
       if (userPrefs.auto_search_enabled !== 'true') continue;
 
       const titles = (profile.desired_titles as string[]) || [];
-      const location = profile.location || profile.country || '';
-      const remotePreference = profile.remote_preference || 'flexible';
-      const maxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '1', 10) || 1, titles.length));
-      
+      const profileLocation = profile.location || profile.country || 'Qatar';
+      const maxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '2', 10) || 2, titles.length));
+
       for (const title of titles.slice(0, maxTitles)) {
-        console.log(`Auto-discovery for user ${profile.user_id}: "${title}" in "${location}"`);
-        
+        console.log(`[auto-search] Multi-source discovery: "${title}" in "${profileLocation}"`);
+
         try {
-          const searchResult = await linkedinProvider.searchJobs({
+          const searchResult = await searchAllSources({
             keywords: title,
-            location,
-            remotePreference: remotePreference === 'remote' ? 'remote' : 'flexible',
-            limit: 5,
+            location: profileLocation,
+            limit: 20,
+            perSourceLimit: 10,
           });
 
-          if (!searchResult.success || !searchResult.jobs) {
-            console.error(`Auto-discovery failed for "${title}":`, searchResult.error);
+          if (!searchResult.jobs || searchResult.jobs.length === 0) {
+            console.warn(`[auto-search] No jobs found for "${title}" from any source.`);
             continue;
           }
+
+          console.log(`[auto-search] "${title}" → ${searchResult.total} jobs from [${searchResult.sources_with_results.join(', ')}]`);
 
           // Record in ledger
           try {
             await recordLedgerSync(supabaseAdmin as any, profile.user_id, 'auto-search-jobs', 'scheduled-search', searchResult.jobs, {
-              baseUrl: 'linkedin-native',
-              configJson: { title, location, remotePreference },
+              baseUrl: 'multi-source',
+              configJson: { title, location: profileLocation, counts: searchResult.counts },
               normalizationStatus: 'incomplete',
               runMode: 'collect',
             });
           } catch (e) {
-            console.warn(`Ledger sync failed for "${title}":`, e);
+            console.warn(`[auto-search] Ledger sync failed for "${title}":`, e);
           }
 
           for (const job of searchResult.jobs) {
-            // Check for existing job
-            const { data: existing } = await supabaseAdmin
-              .from('jobs')
-              .select('id')
-              .eq('user_id', profile.user_id)
-              .eq('linkedin_job_id', job.linkedin_job_id)
-              .maybeSingle();
+            try {
+              // Dedup check: for LinkedIn jobs check linkedin_job_id;
+              // for others, check apply_url or external_id
+              let existing: any = null;
 
-            if (existing) continue;
+              if (job.linkedin_job_id) {
+                const { data } = await supabaseAdmin
+                  .from('jobs')
+                  .select('id')
+                  .eq('user_id', profile.user_id)
+                  .eq('linkedin_job_id', job.linkedin_job_id)
+                  .maybeSingle();
+                existing = data;
+              } else if (job.apply_url) {
+                // For non-LinkedIn sources dedup by apply_url (stripped of tracking)
+                const cleanApplyUrl = job.apply_url.split('?')[0];
+                const { data } = await supabaseAdmin
+                  .from('jobs')
+                  .select('id')
+                  .eq('user_id', profile.user_id)
+                  .ilike('apply_url', `${cleanApplyUrl}%`)
+                  .maybeSingle();
+                existing = data;
+              }
 
-            // Insert new job
-            const { data: newJob, error: insErr } = await supabaseAdmin.from('jobs').insert({
-              user_id: profile.user_id,
-              linkedin_job_id: job.linkedin_job_id,
-              source_platform: 'linkedin',
-              title: job.title,
-              company: job.company,
-              location: job.location,
-              remote_type: job.remote_type,
-              description: job.description,
-              apply_url: job.apply_url,
-              source_url: job.source_url,
-              source_created_at: job.source_created_at,
-              raw_source_card: job.raw_data?.snippet?.raw_card_payload || null,
-            }).select('id').single();
+              if (existing) continue;
 
-            if (insErr) {
-              console.error('Job insertion failed:', insErr.message);
-              continue;
-            }
-
-            // Create notification
-            if (userPrefs.auto_notify_new !== 'false') {
-              await supabaseAdmin.from('notifications').insert({
+              // Insert new job
+              const { data: newJob, error: insErr } = await supabaseAdmin.from('jobs').insert({
                 user_id: profile.user_id,
-                title: 'New job found!',
-                message: `${job.title} at ${job.company}`,
-                type: 'new_job',
-                entity_id: newJob.id,
-              });
-            }
+                linkedin_job_id: job.linkedin_job_id || null,
+                external_id: job.external_id || null,
+                source_platform: job.source_platform,
+                title: job.title,
+                company: job.company,
+                location: job.location,
+                remote_type: job.remote_type || 'unknown',
+                employment_type: job.employment_type || 'full-time',
+                seniority_level: job.seniority_level || null,
+                description: job.description || null,
+                apply_url: job.apply_url,
+                source_url: job.source_url || job.apply_url,
+                source_created_at: job.source_created_at || null,
+                raw_data: job.raw_data || null,
+              }).select('id').single();
 
-            totalNewJobs++;
+              if (insErr) {
+                console.error(`[auto-search] Insert failed for "${job.title}":`, insErr.message);
+                continue;
+              }
+
+              // Create notification
+              if (userPrefs.auto_notify_new !== 'false') {
+                await supabaseAdmin.from('notifications').insert({
+                  user_id: profile.user_id,
+                  title: 'New job found!',
+                  message: `${job.title} at ${job.company} (${job.source_platform})`,
+                  type: 'new_job',
+                  entity_id: newJob.id,
+                });
+              }
+
+              totalNewJobs++;
+            } catch (jobErr: any) {
+              console.error(`[auto-search] Error saving job "${job.title}":`, jobErr.message);
+            }
           }
-        } catch (err) {
-          console.error(`Error in discovery loop for "${title}":`, err.message);
+        } catch (err: any) {
+          console.error(`[auto-search] Error in discovery loop for "${title}":`, err.message);
         }
       }
     }

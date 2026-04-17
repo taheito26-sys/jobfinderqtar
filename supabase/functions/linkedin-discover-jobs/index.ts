@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { fetchLinkedInSearchPage } from "../_shared/linkedin-search.ts";
+import { fetchLinkedInSearch } from "../_shared/linkedin-search.ts";
 import { startRunLog, updateRunLog, finishRunLog } from "../_shared/linkedin-run-log.ts";
 import { parseLinkedInRelativeDate } from "../_shared/linkedin-job.ts";
 
@@ -85,11 +85,14 @@ Deno.serve(async (req) => {
       
       for (let page = 0; page < page_limit; page++) {
         try {
-          const cards = await fetchLinkedInSearchPage(keyword, location, {
-            remote_preference,
-            posted_within,
-            results_per_page
-          }, page);
+          const cards = await fetchLinkedInSearch({
+            keywords: keyword,
+            location,
+            remotePreference: remote_preference as any,
+            postedWithin: posted_within as any,
+            limit: results_per_page,
+            pageNum: page,
+          });
 
           if (cards.length === 0) {
             console.log(`No cards found on page ${page} for keyword ${keyword}`);
@@ -101,8 +104,8 @@ Deno.serve(async (req) => {
           // Process and stage each card
           for (const card of cards) {
             try {
-              const sourceCreatedAt = parseLinkedInRelativeDate(card.listed_at_text);
-              
+              const sourceCreatedAt = parseLinkedInRelativeDate(card.source_created_at_text);
+
               const { data: existing } = await supabaseAdmin
                 .from('linkedin_discovered_jobs')
                 .select('id, discovery_status')
@@ -119,7 +122,7 @@ Deno.serve(async (req) => {
                     title: card.title,
                     company: card.company,
                     location: card.location,
-                    listed_at_text: card.listed_at_text,
+                    listed_at_text: card.source_created_at_text,
                     source_created_at: sourceCreatedAt || undefined,
                     discovery_status: existing.discovery_status === 'failed' ? 'new' : existing.discovery_status
                   })
@@ -136,13 +139,13 @@ Deno.serve(async (req) => {
                     title: card.title,
                     company: card.company,
                     location: card.location,
-                    listed_at_text: card.listed_at_text,
+                    listed_at_text: card.source_created_at_text,
                     source_created_at: sourceCreatedAt,
                     apply_url: card.apply_url,
-                    search_url: card.search_url,
-                    search_keyword: card.search_keyword,
-                    search_location: card.search_location,
-                    page_number: card.page_number,
+                    search_url: null,
+                    search_keyword: keyword,
+                    search_location: location,
+                    page_number: page,
                     raw_card_payload: card.raw_card_payload,
                     discovery_status: 'new',
                     enrichment_status: 'pending'
