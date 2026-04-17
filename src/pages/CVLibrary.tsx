@@ -13,6 +13,7 @@ import { FileText, Upload, Trash2, Star, StarOff, Loader2, Sparkles, UserPlus, C
 import CVTemplateSelector from '@/components/CVTemplateSelector';
 import CVContentEditor from '@/components/CVContentEditor';
 import CVVersionHistory from '@/components/CVVersionHistory';
+import { getSupabaseFunctionErrorMessage } from '@/lib/supabase-function-errors';
 
 const CVLibrary = () => {
   const { user } = useAuth();
@@ -124,7 +125,11 @@ const CVLibrary = () => {
 
       toast({ title: 'Profile auto-populated!', description: 'Your CV was parsed and profile fields have been filled. Visit Profile to review.' });
     } catch (err: any) {
-      toast({ title: 'Auto-extraction failed', description: err.message + ' — You can retry manually.', variant: 'destructive' });
+      const message = await getSupabaseFunctionErrorMessage(
+        err,
+        'Could not auto-extract this CV. Try uploading a PDF or DOCX with selectable text.',
+      );
+      toast({ title: 'Auto-extraction failed', description: message + ' — You can retry manually.', variant: 'destructive' });
     }
     setParsing(null);
   };
@@ -168,7 +173,11 @@ const CVLibrary = () => {
       setDocuments(documents.map(d => d.id === docId ? { ...d, parsed_content: data.parsed } : d));
       toast({ title: 'CV parsed!', description: 'Click "Import to Profile" to populate your profile.' });
     } catch (err: any) {
-      toast({ title: 'Parse failed', description: err.message, variant: 'destructive' });
+      const message = await getSupabaseFunctionErrorMessage(
+        err,
+        'Could not parse this CV. Try uploading a PDF or DOCX with selectable text.',
+      );
+      toast({ title: 'Parse failed', description: message, variant: 'destructive' });
     }
     setParsing(null);
   };
