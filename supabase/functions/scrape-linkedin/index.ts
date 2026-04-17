@@ -177,7 +177,10 @@ async function fetchLinkedInContent(url: string): Promise<{ content: string; sou
   }
 
   const slug = extractLinkedInSlugFromUrl(url);
-  const liAtCookie = Deno.env.get("LINKEDIN_LI_AT_COOKIE")?.trim() || "";
+  const liAtCookie =
+    Deno.env.get("LINKEDIN_LI_AT_COOKIE")?.trim() ||
+    Deno.env.get("LI_AT_COOKIE")?.trim() ||
+    "";
   if (slug && liAtCookie) {
     const voyagerUrl = `https://www.linkedin.com/voyager/api/identity/profiles/${slug}/profileView`;
     const voyagerResponse = await fetch(voyagerUrl, {
@@ -252,14 +255,14 @@ Deno.serve(async (req) => {
           textContent = fetched.content;
           console.log(`Extracted ${textContent.length} chars from LinkedIn via ${fetched.source}`);
         } else if (!trimmedText) {
-          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. LinkedIn is likely blocking direct fetches for this URL. If you want authenticated scraping, set LINKEDIN_LI_AT_COOKIE in the Supabase function environment using a logged-in LinkedIn session cookie." }), {
+          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. LinkedIn is likely blocking direct fetches for this URL. If you want authenticated scraping, set LINKEDIN_LI_AT_COOKIE or LI_AT_COOKIE in the Supabase function environment using a logged-in LinkedIn session cookie." }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
       } catch (fetchError) {
         console.error("LinkedIn fetch error:", fetchError);
         if (!trimmedText) {
-          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. You can paste the profile text as a fallback, or configure LINKEDIN_LI_AT_COOKIE for authenticated profile fetches." }), {
+          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. You can paste the profile text as a fallback, or configure LINKEDIN_LI_AT_COOKIE / LI_AT_COOKIE for authenticated profile fetches." }), {
             status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
