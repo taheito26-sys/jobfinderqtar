@@ -48,7 +48,7 @@ const extractProfileTool = {
   type: "function",
   function: {
     name: "extract_linkedin_profile",
-    description: "Extract structured professional profile data from LinkedIn profile text content.",
+    description: "Extract structured professional profile data from LinkedIn profile content.",
     parameters: {
       type: "object",
       properties: {
@@ -100,6 +100,44 @@ const extractProfileTool = {
   }
 };
 
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+// Browser-exporter style DOM extraction, inspired by public LinkedIn profile tools such as joshuatz/linkedin-to-jsonresume.
+function extractLinkedInTextFromHtml(html: string): string {
+  const getMetaContent = (pattern: RegExp) => {
+    const match = html.match(pattern);
+    return match?.[1]?.trim() || "";
+  };
+
+  const title =
+    getMetaContent(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["'][^>]*>/i) ||
+    getMetaContent(/<title[^>]*>([^<]+)<\/title>/i) ||
+    "";
+  const description =
+    getMetaContent(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["'][^>]*>/i) ||
+    getMetaContent(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["'][^>]*>/i) ||
+    "";
+
+  const bodyText = html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<[^>]+>/g, " ");
+
+  return collapseWhitespace(
+    [title ? `Title: ${title}` : "", description ? `Description: ${description}` : "", bodyText]
+      .filter(Boolean)
+      .join("\n\n"),
+  ).substring(0, 20000);
+}
+
+function looksLikeLoginWall(html: string): boolean {
+  const lower = html.toLowerCase();
+  return lower.includes("linkedin") && lower.includes("sign in");
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -125,25 +163,87 @@ Deno.serve(async (req) => {
     }
 
     const { linkedin_text, linkedin_url } = await req.json();
-    if (!linkedin_text || linkedin_text.trim().length < 50) {
-      return new Response(JSON.stringify({ error: "Please paste your LinkedIn profile text (at least 50 characters). Open your LinkedIn profile in a browser, select all text (Ctrl+A), copy (Ctrl+C), and paste it here." }), {
+    const trimmedText = typeof linkedin_text === "string" ? linkedin_text.trim() : "";
+    const trimmedUrl = typeof linkedin_url === "string" ? linkedin_url.trim() : "";
+
+    let formattedUrl = "";
+    if (trimmedUrl) {
+      const urlNorm = trimmedUrl.toLowerCase();
+      if (!urlNorm.includes("linkedin.com/in/")) {
+        return new Response(JSON.stringify({ error: "Please provide a valid LinkedIn profile URL (for example, https://linkedin.com/in/yourname)." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      formattedUrl = trimmedUrl.startsWith("http") ? trimmedUrl : `https://${trimmedUrl}`;
+    }
+
+    let textContent = "";
+
+    if (formattedUrl) {
+      console.log("Fetching LinkedIn profile page:", formattedUrl);
+      try {
+        const pageResponse = await fetch(formattedUrl, {
+          headers: {
+            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "accept-language": "en-US,en;q=0.9",
+            "cache-control": "no-cache",
+            pragma: "no-cache",
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          },
+        });
+
+        if (pageResponse.ok) {
+          const html = await pageResponse.text();
+          const extracted = extractLinkedInTextFromHtml(html);
+          if (extracted.length >= 100 && !looksLikeLoginWall(html)) {
+            textContent = extracted;
+            console.log(`Extracted ${textContent.length} chars from LinkedIn HTML`);
+          } else if (!trimmedText) {
+            return new Response(JSON.stringify({ error: "Could not extract enough content from the LinkedIn profile. It may be private or require sign-in." }), {
+              status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        } else {
+          console.error("LinkedIn fetch failed:", pageResponse.status, pageResponse.statusText);
+          if (!trimmedText) {
+            return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. It may be private, blocked, or the URL is incorrect." }), {
+              status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
+      } catch (fetchError) {
+        console.error("LinkedIn fetch error:", fetchError);
+        if (!trimmedText) {
+          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. You can paste the profile text as a fallback." }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
+
+    if (!textContent && trimmedText) {
+      textContent = trimmedText.substring(0, 20000);
+      console.log(`Parsing pasted LinkedIn text: ${textContent.length} chars`);
+    }
+
+    if (!textContent || textContent.length < 100) {
+      return new Response(JSON.stringify({ error: "Could not extract enough LinkedIn content to parse. Provide a public profile URL or paste the LinkedIn profile text." }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const textContent = linkedin_text.trim().substring(0, 20000);
-    console.log(`Parsing LinkedIn text: ${textContent.length} chars`);
-
     const aiConfig = await getAIConfig(user.id);
 
-    const systemPrompt = `You are a LinkedIn profile parser. Extract ONLY facts present in the pasted text.
+    const systemPrompt = `You are a LinkedIn profile parser. Extract ONLY facts present in the provided LinkedIn content.
 RULES:
 - Never fabricate data
 - Use YYYY-MM-DD for dates; if only month/year, use YYYY-MM-01
 - For desired_titles: infer 3-5 job titles from current/recent roles
 - Extract all experience, education, and certifications found`;
 
-    const userPrompt = `Parse this LinkedIn profile text:\n\n${textContent}`;
+    const userPrompt = `Parse this LinkedIn profile content:\n\n${textContent}`;
 
     let rawResult: string;
 
@@ -183,7 +283,8 @@ RULES:
     }
 
     const parsed = JSON.parse(rawResult);
-    if (linkedin_url) parsed.linkedin_url = linkedin_url.trim();
+    if (formattedUrl) parsed.linkedin_url = formattedUrl;
+    else if (trimmedText && trimmedUrl) parsed.linkedin_url = trimmedUrl;
 
     console.log(`Extracted: name="${parsed.full_name}", ${(parsed.skills || []).length} skills, ${(parsed.employment || []).length} jobs`);
 

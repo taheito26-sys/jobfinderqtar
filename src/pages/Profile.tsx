@@ -123,21 +123,24 @@ const Profile = () => {
     if (!user) return;
     const trimmedText = linkedinText.trim();
     const trimmedUrl = linkedinUrl.trim();
-    if (trimmedText.length < 50) {
+    if (!trimmedText && !trimmedUrl) {
       toast({
-        title: 'LinkedIn text is required',
-        description: trimmedUrl
-          ? 'The LinkedIn URL is saved as a reference, but this importer needs pasted profile text to extract your data.'
-          : 'Paste your LinkedIn profile text into the box below so the importer can extract your data.',
+        title: 'LinkedIn content is required',
+        description: 'Paste your LinkedIn profile text or provide a LinkedIn profile URL so the importer can fetch and extract your data.',
         variant: 'destructive',
       });
       return;
     }
     setImportingLinkedin(true);
-    toast({ title: 'Importing from LinkedIn...', description: 'AI is parsing your LinkedIn profile text. This may take a moment.' });
+    toast({
+      title: 'Importing from LinkedIn...',
+      description: trimmedUrl
+        ? 'The importer is fetching and parsing your LinkedIn profile. This may take a moment.'
+        : 'AI is parsing your pasted LinkedIn profile text. This may take a moment.',
+    });
 
     try {
-      const { data, error } = await supabase.functions.invoke('scrape-linkedin', { body: { linkedin_text: trimmedText, linkedin_url: trimmedUrl || undefined } });
+      const { data, error } = await supabase.functions.invoke('scrape-linkedin', { body: { linkedin_text: trimmedText || undefined, linkedin_url: trimmedUrl || undefined } });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       if (!data?.parsed) throw new Error('No data extracted');
@@ -199,11 +202,12 @@ const Profile = () => {
       toast({ title: 'LinkedIn profile imported!', description: 'Review the populated fields and click Save Profile.' });
       setLinkedinDialogOpen(false);
       setLinkedinText('');
+      setLinkedinUrl('');
     } catch (err: any) {
       console.error('LinkedIn import error:', err);
       const message = await getSupabaseFunctionErrorMessage(
         err,
-        'LinkedIn import failed. Paste the profile text from LinkedIn, not just the URL.',
+        'LinkedIn import failed. Try a public LinkedIn profile URL or paste the profile text from LinkedIn.',
       );
       toast({ title: 'LinkedIn import failed', description: message, variant: 'destructive' });
     } finally {
@@ -779,21 +783,21 @@ const Profile = () => {
           <DialogHeader>
             <DialogTitle>Import from LinkedIn</DialogTitle>
             <DialogDescription>
-              Paste your LinkedIn profile content to auto-fill your profile. Open your LinkedIn profile in a browser, select all text (Ctrl+A / ⌘+A), copy it, and paste below.
+              Paste your LinkedIn profile content or provide your LinkedIn profile URL to auto-fill your profile.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>LinkedIn Profile URL (optional reference)</Label>
+              <Label>LinkedIn Profile URL</Label>
               <Input
                 value={linkedinUrl}
                 onChange={e => setLinkedinUrl(e.target.value)}
                 placeholder="https://linkedin.com/in/yourname"
               />
-              <p className="text-xs text-muted-foreground">We cannot fetch your profile from the URL directly here. Paste the profile text below to import it.</p>
+              <p className="text-xs text-muted-foreground">We will try to fetch and scrape the profile from this URL. If the profile is private or unavailable, you can paste the profile text below as a fallback.</p>
             </div>
             <div className="space-y-2">
-              <Label>Pasted LinkedIn Profile Text *</Label>
+              <Label>Pasted LinkedIn Profile Text (fallback)</Label>
               <Textarea
                 value={linkedinText}
                 onChange={e => setLinkedinText(e.target.value)}
@@ -801,9 +805,9 @@ const Profile = () => {
                 rows={8}
                 className="text-xs"
               />
-              <p className="text-xs text-muted-foreground">{linkedinText.length > 0 ? `${linkedinText.length} characters pasted` : 'Paste your full LinkedIn profile page content here'}</p>
+              <p className="text-xs text-muted-foreground">{linkedinText.length > 0 ? `${linkedinText.length} characters pasted` : 'Paste your LinkedIn profile text here if URL scraping is unavailable'}</p>
             </div>
-            <Button onClick={importFromLinkedin} className="w-full" disabled={(!(linkedinText.trim().length >= 50 || linkedinUrl.trim()) || importingLinkedin)}>
+            <Button onClick={importFromLinkedin} className="w-full" disabled={(!(linkedinText.trim() || linkedinUrl.trim()) || importingLinkedin)}>
               {importingLinkedin ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Importing...</> : <><Linkedin className="w-4 h-4 mr-2" />Import Profile</>}
             </Button>
           </div>
