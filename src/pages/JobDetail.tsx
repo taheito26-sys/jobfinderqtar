@@ -62,6 +62,47 @@ function detectListingPage(job: any): { isListing: boolean; totalCount: number |
   return { isListing: false, totalCount: null };
 }
 
+function formatOriginalPostedDate(job: any): string | null {
+  const raw = job?.raw_data as any;
+  const candidate =
+    job?.source_created_at ||
+    job?.posted_at ||
+    job?.discovered_at ||
+    raw?.source_created_at ||
+    raw?.posted_at ||
+    raw?.postedAt ||
+    raw?.date ||
+    null;
+
+  if (!candidate) return null;
+  const text = String(candidate).trim();
+  if (!text.length) return null;
+
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  const relative = text.toLowerCase();
+  const match = relative.match(/^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/);
+  if (match) {
+    const value = Number(match[1]);
+    const unit = match[2];
+    const now = new Date();
+    const deltaMs =
+      unit === 'second' ? value * 1000 :
+      unit === 'minute' ? value * 60 * 1000 :
+      unit === 'hour' ? value * 60 * 60 * 1000 :
+      unit === 'day' ? value * 24 * 60 * 60 * 1000 :
+      unit === 'week' ? value * 7 * 24 * 60 * 60 * 1000 :
+      unit === 'month' ? value * 30 * 24 * 60 * 60 * 1000 :
+      value * 365 * 24 * 60 * 60 * 1000;
+    return new Date(now.getTime() - deltaMs).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  }
+
+  return null;
+}
+
 const PROVIDER_LABELS: Record<string, string> = {
   lovable: 'Lovable AI',
   anthropic: 'Claude (Anthropic)',
@@ -104,6 +145,7 @@ const JobDetail = () => {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isLinkedin = isLinkedInSource(job);
+  const originalPostedDate = formatOriginalPostedDate(job);
 
   // Load user's AI provider preference
   useEffect(() => {
@@ -402,10 +444,7 @@ const JobDetail = () => {
                   <p className="flex items-center gap-1.5 text-sm text-muted-foreground mt-1">
                     <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
                     <span className="font-medium text-foreground">Original Job Posted Date:</span>
-                    {job.source_created_at
-                      ? new Date(job.source_created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
-                      : <span className="italic">Not provided by source</span>
-                    }
+                    {originalPostedDate || <span className="italic">Not provided by source</span>}
                   </p>
                 </div>
                 {match && <ScoreBadge score={match.overall_score} size="lg" showLabel />}
