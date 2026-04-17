@@ -138,6 +138,37 @@ function looksLikeLoginWall(html: string): boolean {
   return lower.includes("linkedin") && lower.includes("sign in");
 }
 
+async function fetchLinkedInContent(url: string): Promise<{ content: string; source: string }> {
+  const browserHeaders = {
+    accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "accept-language": "en-US,en;q=0.9",
+    "cache-control": "no-cache",
+    pragma: "no-cache",
+    "user-agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  };
+
+  const directResponse = await fetch(url, { headers: browserHeaders });
+  if (directResponse.ok) {
+    const html = await directResponse.text();
+    const extracted = extractLinkedInTextFromHtml(html);
+    if (extracted.length >= 100 && !looksLikeLoginWall(html)) {
+      return { content: extracted, source: "direct-html" };
+    }
+  }
+
+  const jinaUrl = `https://r.jina.ai/${url}`;
+  const jinaResponse = await fetch(jinaUrl, { headers: browserHeaders });
+  if (jinaResponse.ok) {
+    const text = collapseWhitespace(await jinaResponse.text());
+    if (text.length >= 100) {
+      return { content: text.substring(0, 20000), source: "jina-reader" };
+    }
+  }
+
+  return { content: "", source: "blocked" };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -183,35 +214,14 @@ Deno.serve(async (req) => {
     if (formattedUrl) {
       console.log("Fetching LinkedIn profile page:", formattedUrl);
       try {
-        const pageResponse = await fetch(formattedUrl, {
-          headers: {
-            accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "accept-language": "en-US,en;q=0.9",
-            "cache-control": "no-cache",
-            pragma: "no-cache",
-            "user-agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          },
-        });
-
-        if (pageResponse.ok) {
-          const html = await pageResponse.text();
-          const extracted = extractLinkedInTextFromHtml(html);
-          if (extracted.length >= 100 && !looksLikeLoginWall(html)) {
-            textContent = extracted;
-            console.log(`Extracted ${textContent.length} chars from LinkedIn HTML`);
-          } else if (!trimmedText) {
-            return new Response(JSON.stringify({ error: "Could not extract enough content from the LinkedIn profile. It may be private or require sign-in." }), {
-              status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
-        } else {
-          console.error("LinkedIn fetch failed:", pageResponse.status, pageResponse.statusText);
-          if (!trimmedText) {
-            return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. It may be private, blocked, or the URL is incorrect." }), {
-              status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
+        const fetched = await fetchLinkedInContent(formattedUrl);
+        if (fetched.content) {
+          textContent = fetched.content;
+          console.log(`Extracted ${textContent.length} chars from LinkedIn via ${fetched.source}`);
+        } else if (!trimmedText) {
+          return new Response(JSON.stringify({ error: "Failed to fetch the LinkedIn profile page. LinkedIn is likely blocking direct fetches for this URL." }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
       } catch (fetchError) {
         console.error("LinkedIn fetch error:", fetchError);
