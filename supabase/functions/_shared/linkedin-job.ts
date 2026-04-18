@@ -17,6 +17,10 @@ export function extractAllLinkedInJobIds(url: string): string[] {
   const currentMatch = url.match(/currentJobId=(\d+)/);
   if (currentMatch) ids.add(currentMatch[1]);
 
+  // referenceJobId param (LinkedIn collections often exposes the next card here)
+  const referenceMatch = url.match(/referenceJobId=(\d+)/);
+  if (referenceMatch) ids.add(referenceMatch[1]);
+
   // originToLandingJobPostings param (comma-separated IDs)
   const landingMatch = url.match(/originToLandingJobPostings=([^&]+)/);
   if (landingMatch) {
@@ -209,8 +213,9 @@ ${html}`;
           if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
         }
       }
-    } catch (e) {
-      console.warn('Primary AI enrichment failed, falling back to Lovable:', e.message);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('Primary AI enrichment failed, falling back to Lovable:', msg);
     }
 
     // Fallback to Lovable
@@ -243,8 +248,9 @@ ${html}`;
     }
 
     return null;
-  } catch (e) {
-    console.error(`Error enriching LinkedIn job ${jobId}:`, e.message);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Error enriching LinkedIn job ${jobId}:`, msg);
     return null;
   }
 }

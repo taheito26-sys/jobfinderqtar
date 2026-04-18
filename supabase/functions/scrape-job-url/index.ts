@@ -42,6 +42,8 @@ import {
   isLinkedInSearchUrl
 } from '../_shared/linkedin-job.ts';
 import { parseLinkedInJobCards } from '../_shared/linkedin-search.ts';
+import { fetchLinkedInSearch } from '../_shared/linkedin-search.ts';
+import { normalizeLinkedInJob } from '../_shared/linkedin-normalize.ts';
 
 function extractLinkedInJobId(url: string): string | null {
   return sharedExtractId(url);
@@ -51,6 +53,79 @@ function markNormalizationStatus(job: any, evidenceLength: number) {
   const description = String(job?.description || '').trim();
   const valid = evidenceLength >= 200 && description.length >= 250;
   return { ...job, normalization_status: valid ? 'valid' : 'incomplete' };
+}
+
+function dedupeLinkedInJobs(jobs: any[]): any[] {
+  const seen = new Set<string>();
+  const out: any[] = [];
+
+  for (const job of jobs) {
+    const key =
+      String(job?.linkedin_job_id || job?.external_id || job?.apply_url || job?.source_url || '')
+        .trim()
+        .toLowerCase() ||
+      `${String(job?.title || '').trim().toLowerCase()}|${String(job?.company || '').trim().toLowerCase()}`;
+
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(job);
+  }
+
+  return out;
+}
+
+function deriveLinkedInSearchSeed(job: any): { keywords: string; location?: string } | null {
+  const title = String(job?.title || '').trim();
+  if (!title) return null;
+
+  const location = String(job?.location || '').trim();
+  return {
+    keywords: title,
+    location: location || undefined,
+  };
+}
+
+async function expandLinkedInCollectionWithSearch(seedJobs: any[], userId: string, supabaseClient: any): Promise<any[]> {
+  const expanded: any[] = [];
+  const seeds = seedJobs.slice(0, 2);
+
+  for (const seed of seeds) {
+    const searchSeed = deriveLinkedInSearchSeed(seed);
+    if (!searchSeed) continue;
+
+    try {
+      const snippets = await fetchLinkedInSearch({
+        keywords: searchSeed.keywords,
+        location: searchSeed.location,
+        pageNum: 0,
+        limit: 10,
+        postedWithin: 'month',
+      });
+
+      const normalized = snippets.map((snippet) =>
+        markNormalizationStatus(normalizeLinkedInJob(snippet), 1000)
+      );
+
+      if (normalized.length > 0) {
+        try {
+            await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', normalized, {
+            baseUrl: `search:${searchSeed.keywords}|${searchSeed.location || ''}`,
+            configJson: { source: 'linkedin_collection_search_fallback', keywords: searchSeed.keywords, location: searchSeed.location || null },
+            normalizationStatus: 'valid',
+            runMode: 'collect',
+          });
+        } catch (ledgerError) {
+          console.warn('Ledger sync failed for LinkedIn collection search fallback:', ledgerError);
+        }
+        expanded.push(...normalized);
+      }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('LinkedIn search fallback failed for collection seed:', searchSeed.keywords, msg);
+      }
+  }
+
+  return dedupeLinkedInJobs(expanded);
 }
 
 /** Try LinkedIn's guest/public job posting endpoint */
@@ -275,7 +350,9 @@ async function scrapeSingleLinkedInJob(jobId: string, userId: string): Promise<R
     const jobUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
     const result = await extractJobWithAI(pageText, jobUrl, userId);
     // LinkedIn guest API always returns a single job page — take the first if multi detected
-    const job = result.type === 'multiple' ? result.jobs[0] : result.job;
+    const job = result.type === 'multiple'
+      ? result.jobs[0]
+      : ('job' in result ? result.job : null);
     return job ?? null;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -358,9 +435,19 @@ Deno.serve(async (req) => {
           failed_count: 0,
         }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
+      const extractedJob = 'job' in extracted ? extracted.job : null;
+      if (!extractedJob) {
+        return new Response(JSON.stringify({
+          success: false,
+          error: 'EXTRACTION_FAILED',
+          message: 'Could not extract structured data from the pasted description.',
+        }), {
+          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
       const job = markNormalizationStatus({
-        ...extracted.job,
-        description: extracted.job.description || manualDescription.substring(0, 5000),
+        ...extractedJob,
+        description: extractedJob.description || manualDescription.substring(0, 5000),
       }, manualDescription.length);
       try {
         await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', [job], {
@@ -419,24 +506,27 @@ Deno.serve(async (req) => {
             await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', jobs, {
               baseUrl: formattedUrl,
               configJson: { source: 'linkedin_search_url' },
-              normalizationStatus: 'valid',
-              runMode: 'collect',
+          normalizationStatus: 'valid',
+          runMode: 'collect',
+        });
+      } catch (ledgerError) {
+        console.warn('Ledger sync failed for LinkedIn search URL:', ledgerError);
+      }
+          if (jobs.length >= 2) {
+            return new Response(JSON.stringify({
+              success: true,
+              multiple: true,
+              jobs,
+              total_found: jobs.length,
+              failed_count: 0,
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
-          } catch (ledgerError) {
-            console.warn('Ledger sync failed for LinkedIn search URL:', ledgerError);
           }
-          return new Response(JSON.stringify({
-            success: true,
-            multiple: true,
-            jobs,
-            total_found: jobs.length,
-            failed_count: 0,
-          }), {
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
         }
       } catch (err) {
-        console.warn('LinkedIn collection page fetch failed, falling back to URL job IDs:', err?.message || String(err));
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn('LinkedIn collection page fetch failed, falling back to URL job IDs:', msg);
       }
 
       const allJobIds = extractAllLinkedInJobIds(formattedUrl);
@@ -457,23 +547,31 @@ Deno.serve(async (req) => {
         }
 
         if (jobs.length > 0) {
-          const normalizedJobs = jobs.map((job) => markNormalizationStatus(job, 1000));
+          let normalizedJobs = dedupeLinkedInJobs(jobs.map((job) => markNormalizationStatus(job, 1000)));
+
+          if (normalizedJobs.length < 2) {
+            const expandedJobs = await expandLinkedInCollectionWithSearch(normalizedJobs, userId, supabaseClient);
+            if (expandedJobs.length > normalizedJobs.length) {
+              normalizedJobs = dedupeLinkedInJobs([...normalizedJobs, ...expandedJobs]);
+            }
+          }
+
           try {
             await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', normalizedJobs, {
               baseUrl: formattedUrl,
-              configJson: { source: 'linkedin_search_url' },
+              configJson: { source: 'linkedin_search_url', fallback: normalizedJobs.length < 2 ? 'seed_job_search' : 'url_job_ids' },
               normalizationStatus: 'valid',
               runMode: 'collect',
             });
           } catch (ledgerError) {
             console.warn('Ledger sync failed for LinkedIn search URL:', ledgerError);
           }
-          console.log(`Successfully extracted ${jobs.length}/${allJobIds.length} jobs from LinkedIn search URL`);
+          console.log(`Successfully extracted ${normalizedJobs.length}/${allJobIds.length} jobs from LinkedIn search URL`);
           return new Response(JSON.stringify({
             success: true,
             multiple: true,
             jobs: normalizedJobs,
-            total_found: allJobIds.length,
+            total_found: Math.max(allJobIds.length, normalizedJobs.length),
             failed_count: failedIds.length,
           }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -500,9 +598,14 @@ Deno.serve(async (req) => {
           if (pageText.length > 200) {
             const aiResult = await extractJobWithAI(pageText, formattedUrl, userId);
             // LinkedIn guest API is always a single job page — take first if multi was returned
-            job = markNormalizationStatus(aiResult.type === 'multiple' ? aiResult.jobs[0] : aiResult.job, pageText.length);
-            extracted = true;
-            console.log('LinkedIn guest API + AI extracted:', job.title);
+            const aiJob = aiResult.type === 'multiple'
+              ? aiResult.jobs[0]
+              : ('job' in aiResult ? aiResult.job : null);
+            if (aiJob) {
+              job = markNormalizationStatus(aiJob, pageText.length);
+              extracted = true;
+              console.log('LinkedIn guest API + AI extracted:', job.title);
+            }
           }
         } catch (e: unknown) {
           const msg = e instanceof Error ? e.message : String(e);
