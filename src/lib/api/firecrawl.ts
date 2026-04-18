@@ -1,5 +1,3 @@
-import { supabase } from '@/integrations/supabase/client';
-
 export type ScrapedJob = {
   title: string;
   company: string;
@@ -56,13 +54,30 @@ async function fetchReaderText(url: string): Promise<string | null> {
   }
 }
 
-export const scrapeJobUrl = async (url: string, options?: { userId?: string | null }): Promise<{ success: boolean; job?: ScrapedJob; error?: string; message?: string }> => {
-  const { data, error } = await supabase.functions.invoke('scrape-job-url', {
-    body: { url, ...(options?.userId ? { user_id: options.userId } : {}) },
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+
+async function invokeScrapeJobUrl(body: Record<string, unknown>) {
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/scrape-job-url`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'apikey': SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
   });
 
-  if (error) {
-    return { success: false, error: error.message };
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  return { response, data };
+}
+
+export const scrapeJobUrl = async (url: string, options?: { userId?: string | null }): Promise<{ success: boolean; job?: ScrapedJob; error?: string; message?: string }> => {
+  const { response, data } = await invokeScrapeJobUrl({ url, ...(options?.userId ? { user_id: options.userId } : {}) });
+
+  if (!response.ok) {
+    return { success: false, error: data?.message || data?.error || `Edge Function returned HTTP ${response.status}`, message: data?.message || data?.error };
   }
 
   if (data?.error) {
@@ -81,9 +96,7 @@ export const scrapeJobUrlWithReaderFallback = async (
   const invokeBody: Record<string, unknown> = { url };
   if (jobId) invokeBody.job_id = jobId;
   if (options?.userId) invokeBody.user_id = options.userId;
-  const first = await supabase.functions.invoke('scrape-job-url', {
-    body: invokeBody,
-  });
+  const first = await invokeScrapeJobUrl(invokeBody);
 
   const firstJobs = Array.isArray(first.data?.jobs) ? first.data.jobs : [];
   const firstWasMulti = Boolean(first.data?.multiple && firstJobs.length > 1);
@@ -93,15 +106,15 @@ export const scrapeJobUrlWithReaderFallback = async (
     return first.data;
   }
 
-  if (!wantsMultiJobRetry && !first.error && !first.data?.fallback) {
+  if (!wantsMultiJobRetry && first.response.ok && !first.data?.fallback) {
     return first.data ?? { success: false, error: 'Could not extract job data from this URL.' };
   }
 
-  if (!wantsMultiJobRetry && firstWasSingle && !first.data?.fallback && !first.error) {
+  if (!wantsMultiJobRetry && firstWasSingle && !first.data?.fallback) {
     return first.data;
   }
 
-  if (first.error && isLinkedInJobViewUrl(url) && !wantsMultiJobRetry) {
+  if (!first.response.ok && isLinkedInJobViewUrl(url) && !wantsMultiJobRetry) {
     return {
       success: false,
       error: 'LINKEDIN_LOGIN_REQUIRED',
@@ -120,19 +133,17 @@ export const scrapeJobUrlWithReaderFallback = async (
         fallback: true,
       };
     }
-    return first.error
-      ? { success: false, error: first.error.message, message: first.error.message, fallback: true }
-      : first.data;
+    return first.data
+      ? first.data
+      : { success: false, error: 'Could not extract job data from this URL.', fallback: true };
   }
 
-  const retry = await supabase.functions.invoke('scrape-job-url', {
-    body: {
-      ...invokeBody,
-      manualDescription: readerText,
-    },
+  const retry = await invokeScrapeJobUrl({
+    ...invokeBody,
+    manualDescription: readerText,
   });
 
-  if (retry.error) {
+  if (!retry.response.ok) {
     if (isLinkedInJobViewUrl(url) && !wantsMultiJobRetry) {
       return {
         success: false,
@@ -143,8 +154,8 @@ export const scrapeJobUrlWithReaderFallback = async (
     }
     return {
       success: false,
-      error: retry.error.message,
-      message: retry.error.message,
+      error: retry.data?.message || retry.data?.error || `Edge Function returned HTTP ${retry.response.status}`,
+      message: retry.data?.message || retry.data?.error,
       fallback: true,
     };
   }
