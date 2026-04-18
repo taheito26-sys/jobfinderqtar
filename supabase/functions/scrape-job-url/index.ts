@@ -426,6 +426,7 @@ Deno.serve(async (req) => {
     }
 
     const { url, manualDescription } = body;
+    const debugMode = body?.debug === true;
     
     // Handle manual paste mode
     if (manualDescription) {
@@ -547,6 +548,13 @@ Deno.serve(async (req) => {
             jobs: normalizedJobs,
             total_found: normalizedJobs.length,
             failed_count: 0,
+            ...(debugMode ? {
+              debug: {
+                source: 'collection_search_branch',
+                initial_cards: jobs.length,
+                final_jobs: normalizedJobs.length,
+              },
+            } : {}),
           }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
@@ -576,7 +584,7 @@ Deno.serve(async (req) => {
         if (jobs.length > 0) {
           let normalizedJobs = dedupeLinkedInJobs(jobs.map((job) => markNormalizationStatus(job, 1000)));
 
-          if (normalizedJobs.length < 2) {
+          if (normalizedJobs.length < 5) {
             const expandedJobs = await expandLinkedInCollectionWithSearch(normalizedJobs, userId, supabaseClient);
             if (expandedJobs.length > normalizedJobs.length) {
               normalizedJobs = dedupeLinkedInJobs([...normalizedJobs, ...expandedJobs]);
@@ -586,7 +594,7 @@ Deno.serve(async (req) => {
           try {
             await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', normalizedJobs, {
               baseUrl: formattedUrl,
-              configJson: { source: 'linkedin_search_url', fallback: normalizedJobs.length < 2 ? 'seed_job_search' : 'url_job_ids' },
+              configJson: { source: 'linkedin_search_url', fallback: normalizedJobs.length < 5 ? 'seed_job_search' : 'url_job_ids' },
               normalizationStatus: 'valid',
               runMode: 'collect',
             });
@@ -600,6 +608,13 @@ Deno.serve(async (req) => {
             jobs: normalizedJobs,
             total_found: Math.max(allJobIds.length, normalizedJobs.length),
             failed_count: failedIds.length,
+            ...(debugMode ? {
+              debug: {
+                source: 'collection_url_id_branch',
+                url_ids: allJobIds.length,
+                final_jobs: normalizedJobs.length,
+              },
+            } : {}),
           }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
