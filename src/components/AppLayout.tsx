@@ -1,9 +1,7 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
-import { supabase } from '@/integrations/supabase/client';
-import { ensureJobsHydratedAndScored } from '@/lib/job-hydration';
 import {
   LayoutDashboard, User, FileText, Rss, Settings, Send, ClipboardList,
   LogOut, Menu, X, ChevronLeft, Briefcase, GitCompare, Bell as BellIcon, Inbox, BookOpen, ShieldAlert
@@ -26,73 +24,14 @@ const navItems = [
   { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
-const GlobalJobBackfill = ({ user }: { user: any }) => {
-  const runningRef = useRef(false);
-  const signatureRef = useRef('');
-
-  useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
-
-    const run = async () => {
-      if (runningRef.current) return;
-      runningRef.current = true;
-      try {
-        const [jobsRes, matchesRes] = await Promise.all([
-          supabase.from('jobs').select('id, apply_url, source_url, description').eq('user_id', user.id),
-          supabase.from('job_matches').select('job_id').eq('user_id', user.id),
-        ]);
-
-        const matchIds = new Set((matchesRes.data ?? []).map((match: any) => match.job_id));
-        const targets = (jobsRes.data ?? [])
-          .filter((job: any) => {
-            const desc = String(job.description || '').trim();
-            return desc.length === 0 || !matchIds.has(job.id);
-          })
-          .map((job: any) => ({
-            id: job.id,
-            apply_url: job.apply_url,
-            source_url: job.source_url,
-            description: job.description,
-            has_match: matchIds.has(job.id),
-          }));
-
-        const signature = `${user.id}:${targets.map((target) => target.id).join('|')}`;
-        if (!targets.length || signatureRef.current === signature) return;
-        signatureRef.current = signature;
-
-        await ensureJobsHydratedAndScored(targets);
-        if (!cancelled) {
-          window.dispatchEvent(new Event('jobs-backfilled'));
-        }
-      } catch (err) {
-        console.warn('Automatic job backfill failed:', err);
-      } finally {
-        if (!cancelled) {
-          runningRef.current = false;
-        }
-      }
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
-
-  return null;
-};
-
 const AppLayout = ({ children }: { children: ReactNode }) => {
-  const { signOut, user } = useAuth();
+  const { signOut } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      <GlobalJobBackfill user={user} />
       {/* Mobile overlay */}
       {mobileOpen && (
         <div className="fixed inset-0 bg-foreground/20 z-40 lg:hidden" onClick={() => setMobileOpen(false)} />

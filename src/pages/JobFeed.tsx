@@ -600,14 +600,6 @@ const JobFeed = () => {
     followUp: filtered.filter((job) => followUpJobIds.has(job.id)).length,
   }), [filtered, appliedJobIds, followUpJobIds]);
 
-  useEffect(() => {
-    const handler = () => {
-      void loadFeed();
-    };
-    window.addEventListener('jobs-backfilled', handler);
-    return () => window.removeEventListener('jobs-backfilled', handler);
-  }, [loadFeed]);
-
   // Sub-tab: extract countries from job locations
   const countryTabs = useMemo(() => {
     const countryMap = new Map<string, number>();

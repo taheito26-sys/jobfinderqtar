@@ -10,7 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
-import { hydrateImportedJobs, scoreImportedJobs } from '@/lib/job-hydration';
+import { hydrateImportedJobs } from '@/lib/job-hydration';
 import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 import {
   Search, Globe, Linkedin, Loader2, MapPin, Building2,
@@ -246,7 +246,6 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
           source_url: job.source_url,
           description: job.description,
         }))),
-        scoreImportedJobs(data.map((job: any) => job.id)),
       ]);
       onJobsAdded(data);
       const msg = skipped > 0

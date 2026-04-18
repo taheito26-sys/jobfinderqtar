@@ -13,7 +13,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { ScrapedJob, scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
-import { hydrateImportedJobs, scoreImportedJobs } from '@/lib/job-hydration';
+import { hydrateImportedJobs } from '@/lib/job-hydration';
 import { parseJobDate } from '@/lib/job-date';
 import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2, Search, SlidersHorizontal, Calendar } from 'lucide-react';
 
@@ -278,7 +278,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
         }
         await Promise.all([
           hydrateImportedJobs(jobTargets),
-          scoreImportedJobs(data.map((d: any) => d.id)),
         ]);
         onJobAdded(data);
         const msg = skipped > 0
@@ -348,7 +347,6 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
           source_url: data.source_url,
           description: data.description,
         }]),
-        scoreImportedJobs([data.id]),
       ]);
       onJobAdded(data);
       onOpenChange(false);

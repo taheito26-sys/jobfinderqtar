@@ -22,7 +22,6 @@ import ATSScoreChecker from '@/components/ATSScoreChecker';
 import QuickApplyButton from '@/components/QuickApplyButton';
 import ListingJobsBrowser from '@/components/ListingJobsBrowser';
 import { formatJobDate, getBestJobDescriptionCandidate } from '@/lib/job-date';
-import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 
 function isLinkedInSource(job: any): boolean {
   if (!job) return false;
@@ -90,8 +89,6 @@ const JobDetail = () => {
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [markedApplied, setMarkedApplied] = useState(false);
   const [applicationSubmission, setApplicationSubmission] = useState<any>(null);
-  const [hydratingJobMeta, setHydratingJobMeta] = useState(false);
-  const hydratedJobRef = useRef<string | null>(null);
 
   // Deep research state
   const [research, setResearch] = useState<any>(null);
@@ -153,72 +150,6 @@ const JobDetail = () => {
   useEffect(() => {
     setMarkedApplied(job?.status === 'applied' || Boolean(applicationSubmission));
   }, [job?.status, applicationSubmission]);
-
-  useEffect(() => {
-    if (!user || !id || !job) return;
-    if (hydratedJobRef.current === id) return;
-
-    const hasDescription = Boolean(getBestJobDescriptionCandidate(job));
-    const hasDate = Boolean(formatJobDate(job));
-    const sourceCandidate = job.apply_url || (job.linkedin_job_id ? `https://www.linkedin.com/jobs/view/${job.linkedin_job_id}/` : job.source_url || '');
-    const shouldHydrate = Boolean(isLinkedInSource(job) || /linkedin/i.test(String(sourceCandidate))) && Boolean(sourceCandidate) && (!hasDescription || !hasDate);
-    if (!shouldHydrate) return;
-
-    hydratedJobRef.current = id;
-    let cancelled = false;
-
-    const hydrate = async () => {
-      setHydratingJobMeta(true);
-      try {
-        const data = await scrapeJobUrlWithReaderFallback(sourceCandidate, { jobId: job.id });
-
-        if (!data?.success || data?.error) {
-          console.warn('Job metadata hydration failed:', data?.message || data?.error || 'unknown error');
-          return;
-        }
-
-        const hydratedJob = Array.isArray(data?.jobs) ? data.jobs[0] : (data?.job || null);
-        if (!hydratedJob) return;
-
-        const updates: Record<string, any> = {};
-        if (!hasDescription && hydratedJob.description) updates.description = hydratedJob.description;
-        if (!hasDate && (hydratedJob.source_created_at || hydratedJob.posted_at)) {
-          updates.source_created_at = hydratedJob.source_created_at || hydratedJob.posted_at;
-          updates.posted_at = hydratedJob.posted_at || hydratedJob.source_created_at || null;
-        }
-        if (hydratedJob.raw_data && !job.raw_data) {
-          updates.raw_data = hydratedJob.raw_data;
-        }
-
-        if (Object.keys(updates).length === 0) return;
-
-        const { error: updateError } = await supabase
-          .from('jobs')
-          .update(updates)
-          .eq('id', job.id)
-          .eq('user_id', user.id);
-
-        if (updateError) {
-          console.warn('Failed to persist hydrated job metadata:', updateError);
-          return;
-        }
-
-        if (!cancelled) {
-          setJob((prev: any) => prev ? { ...prev, ...updates } : prev);
-        }
-      } catch (err) {
-        console.warn('Job metadata hydration error:', err);
-      } finally {
-        if (!cancelled) setHydratingJobMeta(false);
-      }
-    };
-
-    void hydrate();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [id, job, user]);
 
   // Cleanup countdown on unmount
   useEffect(() => {
@@ -573,7 +504,7 @@ const JobDetail = () => {
                   <p className="flex items-center gap-1.5 text-sm text-muted-foreground mt-1">
                     <Calendar className="w-3.5 h-3.5 flex-shrink-0" />
                     <span className="font-medium text-foreground">Original Job Posted Date:</span>
-                    {originalPostedDate || (hydratingJobMeta ? <span className="italic">Fetching from source...</span> : <span className="italic">Not provided by source</span>)}
+                    {originalPostedDate || <span className="italic">Not provided by source</span>}
                   </p>
                 </div>
                 {match && <ScoreBadge score={match.overall_score} size="lg" showLabel />}
@@ -603,9 +534,7 @@ const JobDetail = () => {
               <CardContent>
                 {jobDescription
                   ? <p className="text-sm text-foreground whitespace-pre-wrap">{jobDescription}</p>
-                  : hydratingJobMeta
-                    ? <p className="text-sm text-muted-foreground">Fetching description from the source...</p>
-                    : <p className="text-sm text-muted-foreground">No description available.</p>}
+                  : <p className="text-sm text-muted-foreground">No description available.</p>}
               </CardContent>
             </Card>
           )}

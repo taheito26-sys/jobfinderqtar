@@ -13,30 +13,46 @@ serve(async (req) => {
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("No authorization header");
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const bearerToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
+    const body = await req.json();
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
+    let supabase: ReturnType<typeof createClient>;
+    let userId: string;
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) throw new Error("Unauthorized");
+    if (serviceRoleKey && bearerToken === serviceRoleKey) {
+      userId = body?.user_id;
+      if (!userId) throw new Error("Missing user_id");
+      supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+      );
+    } else {
+      supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_ANON_KEY")!,
+        { global: { headers: { Authorization: authHeader } } }
+      );
 
-    const pipelineConfig = await getPipelineConfig(user.id);
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) throw new Error("Unauthorized");
+      userId = user.id;
+    }
+
+    const pipelineConfig = await getPipelineConfig(userId);
     console.log(`[score-job] Pipeline: ${pipelineConfig.enabled ? "ON" : "OFF"}, providers: ${pipelineConfig.providers.map(p => p.name).join(" → ")}`);
 
-    const { job_id } = await req.json();
+    const { job_id } = body;
     if (!job_id) throw new Error("job_id is required");
 
     const { data: job, error: jobError } = await supabase
-      .from("jobs").select("*").eq("id", job_id).eq("user_id", user.id).single();
+      .from("jobs").select("*").eq("id", job_id).eq("user_id", userId).single();
     if (jobError || !job) throw new Error("Job not found");
 
     const [profileRes, skillsRes, empRes] = await Promise.all([
-      supabase.from("profiles_v2").select("*").eq("user_id", user.id).single(),
-      supabase.from("profile_skills").select("*").eq("user_id", user.id),
-      supabase.from("employment_history").select("*").eq("user_id", user.id).order("start_date", { ascending: false }),
+      supabase.from("profiles_v2").select("*").eq("user_id", userId).single(),
+      supabase.from("profile_skills").select("*").eq("user_id", userId),
+      supabase.from("employment_history").select("*").eq("user_id", userId).order("start_date", { ascending: false }),
     ]);
 
     const profile = profileRes.data;
@@ -162,10 +178,10 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
       const lovableKey = Deno.env.get("LOVABLE_API_KEY");
       if (lovableKey) {
         const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-        const { data: profileEmb } = await supabaseAdmin.from("profile_embeddings").select("embedding").eq("user_id", user.id).eq("section", "full").maybeSingle();
+        const { data: profileEmb } = await supabaseAdmin.from("profile_embeddings").select("embedding").eq("user_id", userId).eq("section", "full").maybeSingle();
         const { data: jobEmb } = await supabaseAdmin.from("job_embeddings").select("embedding").eq("job_id", job_id).maybeSingle();
         if (profileEmb?.embedding && jobEmb?.embedding) {
-          const { data: simResult } = await supabaseAdmin.rpc("compute_similarity", { _user_id: user.id, _job_id: job_id });
+          const { data: simResult } = await supabaseAdmin.rpc("compute_similarity", { _user_id: userId, _job_id: job_id });
           if (simResult !== null && simResult !== undefined) semanticSimilarity = Math.round(simResult * 100) / 100;
         }
       }
@@ -174,7 +190,7 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
     }
 
     const { data: match, error: matchError } = await supabase.from("job_matches").upsert({
-      user_id: user.id, job_id, ...scores,
+      user_id: userId, job_id, ...scores,
       semantic_similarity: semanticSimilarity,
       scored_at: new Date().toISOString(),
       legitimacy_tier: scores.legitimacy_tier || "unknown",
@@ -186,7 +202,7 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
     if (matchError) throw matchError;
 
     await supabase.from("activity_log").insert({
-      user_id: user.id,
+      user_id: userId,
       action: "scored_job",
       entity_type: "job_match",
       entity_id: match.id,

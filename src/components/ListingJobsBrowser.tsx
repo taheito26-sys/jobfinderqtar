@@ -3,7 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { useAuth } from '@/hooks/useAuth';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
-import { hydrateImportedJobs, scoreImportedJobs } from '@/lib/job-hydration';
+import { hydrateImportedJobs } from '@/lib/job-hydration';
 import { formatJobDate, parseJobDate } from '@/lib/job-date';
 import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 
@@ -340,7 +340,6 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
           source_url: data.source_url,
           description: data.description,
         }]),
-        scoreImportedJobs([data.id]),
       ]);
 
       setImportedKeys(prev => new Set(prev).add(key));
