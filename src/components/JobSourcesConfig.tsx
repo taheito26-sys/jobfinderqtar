@@ -298,6 +298,37 @@ const JobSourcesConfig = () => {
         });
         data = { jobs: deduped };
         error = null;
+      } else if (/indeed/i.test(source.source_name) || /indeed/i.test(source.config.base_url || '')) {
+        const seeds = profileSeedTitles.length > 0 ? profileSeedTitles : [fallbackSeed || 'Qatar'];
+        const allJobs: any[] = [];
+
+        for (const seed of seeds) {
+          const { data: seedData, error: seedError } = await supabase.functions.invoke('search-jobs', {
+            body: {
+              query: seed,
+              country: queryCountry || 'Qatar',
+              limit: 5,
+              sources: { linkedin: false, indeed: true, bayt: false, gulftalent: false },
+            },
+          });
+          if (seedError) {
+            error = seedError;
+            continue;
+          }
+          if (Array.isArray(seedData?.jobs)) {
+            allJobs.push(...seedData.jobs);
+          }
+        }
+
+        const seen = new Set<string>();
+        const deduped = allJobs.filter((job) => {
+          const key = `${String(job.apply_url || '').toLowerCase()}|${String(job.title || '').toLowerCase()}|${String(job.company || '').toLowerCase()}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        data = { jobs: deduped };
+        error = null;
       } else {
         const baseUrl = source.config.base_url || source.source_name;
         try {
