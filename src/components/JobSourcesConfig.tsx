@@ -270,45 +270,31 @@ const JobSourcesConfig = () => {
       let data: any;
       let error: any;
 
-      if (isLinkedIn) {
-        const seeds = profileSeedTitles.length > 0 ? profileSeedTitles : [fallbackSeed];
-        const allJobs: any[] = [];
-        for (const seed of seeds) {
-          const { data: seedData, error: seedError } = await supabase.functions.invoke('search-jobs', {
-            body: {
-              query: seed,
-              country: queryCountry,
-              limit: 3,
-            },
-          });
-          if (seedError) {
-            error = seedError;
-            continue;
-          }
-          if (Array.isArray(seedData?.jobs)) {
-            allJobs.push(...seedData.jobs);
-          }
-        }
+      const dedupeJobs = (jobs: any[]) => {
         const seen = new Set<string>();
-        const deduped = allJobs.filter((job) => {
+        return jobs.filter((job) => {
           const key = `${String(job.apply_url || '').toLowerCase()}|${String(job.title || '').toLowerCase()}|${String(job.company || '').toLowerCase()}`;
           if (seen.has(key)) return false;
           seen.add(key);
           return true;
         });
-        data = { jobs: deduped };
-        error = null;
-      } else if (/indeed/i.test(source.source_name) || /indeed/i.test(source.config.base_url || '')) {
+      };
+
+      const runBoardSearch = async (board: 'linkedin' | 'indeed' | 'bayt' | 'gulftalent') => {
         const seeds = profileSeedTitles.length > 0 ? profileSeedTitles : [fallbackSeed || 'Qatar'];
         const allJobs: any[] = [];
-
         for (const seed of seeds) {
           const { data: seedData, error: seedError } = await supabase.functions.invoke('search-jobs', {
             body: {
               query: seed,
               country: queryCountry || 'Qatar',
               limit: 5,
-              sources: { linkedin: false, indeed: true, bayt: false, gulftalent: false },
+              sources: {
+                linkedin: board === 'linkedin',
+                indeed: board === 'indeed',
+                bayt: board === 'bayt',
+                gulftalent: board === 'gulftalent',
+              },
             },
           });
           if (seedError) {
@@ -319,16 +305,18 @@ const JobSourcesConfig = () => {
             allJobs.push(...seedData.jobs);
           }
         }
-
-        const seen = new Set<string>();
-        const deduped = allJobs.filter((job) => {
-          const key = `${String(job.apply_url || '').toLowerCase()}|${String(job.title || '').toLowerCase()}|${String(job.company || '').toLowerCase()}`;
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-        data = { jobs: deduped };
+        data = { jobs: dedupeJobs(allJobs) };
         error = null;
+      };
+
+      if (isLinkedIn) {
+        await runBoardSearch('linkedin');
+      } else if (/indeed/i.test(source.source_name) || /indeed/i.test(source.config.base_url || '')) {
+        await runBoardSearch('indeed');
+      } else if (/bayt/i.test(source.source_name) || /bayt/i.test(source.config.base_url || '')) {
+        await runBoardSearch('bayt');
+      } else if (/gulftalent/i.test(source.source_name) || /gulftalent/i.test(source.config.base_url || '')) {
+        await runBoardSearch('gulftalent');
       } else {
         const baseUrl = source.config.base_url || source.source_name;
         try {
