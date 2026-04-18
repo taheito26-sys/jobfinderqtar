@@ -238,20 +238,20 @@ const JobSourcesConfig = () => {
   const triggerAutoSearch = async () => {
     setSyncing('auto');
     try {
-      const { data, error } = await supabase.functions.invoke('auto-search-jobs');
-      if (error) throw error;
-      const discovered = data?.jobs_found ?? 0;
-      const inserted = data?.jobs_inserted ?? 0;
+      void supabase.functions.invoke('auto-search-jobs', {
+        body: { mode: 'manual', user_id: user.id },
+      }).catch((err: any) => {
+        console.error('Auto-search background request failed:', err);
+      });
       toast({
-        title: 'Auto-search complete',
-        description: inserted > 0
-          ? `Discovered ${discovered} jobs and inserted ${inserted} new ones.`
-          : `Discovered ${discovered} jobs. No new inserts were needed.`,
+        title: 'Auto-search queued',
+        description: 'The scheduled sweep is active and this check is running in the background.',
       });
     } catch (err: any) {
       toast({ title: 'Auto-search failed', description: err.message, variant: 'destructive' });
+    } finally {
+      setSyncing(null);
     }
-    setSyncing(null);
   };
 
   const resetNewSource = () => {

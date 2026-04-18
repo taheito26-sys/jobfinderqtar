@@ -10,6 +10,10 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   try {
+    const body = await req.json().catch(() => ({} as Record<string, unknown>));
+    const runMode = body?.mode === 'manual' ? 'manual' : 'scheduled';
+    const requestedUserId = typeof body?.user_id === 'string' ? body.user_id : null;
+
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -234,7 +238,11 @@ Deno.serve(async (req) => {
     // desired job title from the user's profile.
     const { searchAllSources } = await import("../_shared/multi-source-search.ts");
 
-    for (const profile of profiles) {
+    const profilesToProcess = runMode === 'manual' && requestedUserId
+      ? profiles.filter((profile) => profile.user_id === requestedUserId)
+      : profiles;
+
+    for (const profile of profilesToProcess) {
       const userPrefs = preferenceMap.get(profile.user_id) ?? {};
       if (userPrefs.auto_search_enabled !== 'true') continue;
 
@@ -242,7 +250,10 @@ Deno.serve(async (req) => {
       // Use the broader country first so auto-search does not get trapped
       // by overly specific city-level locations like "Doha, Qatar".
       const profileLocation = profile.country || profile.location || 'Qatar';
-      const maxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '2', 10) || 2, titles.length));
+      const requestedMaxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '2', 10) || 2, titles.length));
+      const maxTitles = runMode === 'manual'
+        ? Math.min(1, requestedMaxTitles)
+        : requestedMaxTitles;
 
       for (const title of titles.slice(0, maxTitles)) {
         console.log(`[auto-search] Multi-source discovery: "${title}" in "${profileLocation}"`);
@@ -251,8 +262,11 @@ Deno.serve(async (req) => {
           const searchResult = await searchAllSources({
             keywords: title,
             location: profileLocation,
-            limit: 20,
-            perSourceLimit: 10,
+            limit: runMode === 'manual' ? 10 : 20,
+            perSourceLimit: runMode === 'manual' ? 5 : 10,
+            sources: runMode === 'manual'
+              ? { linkedin: true, indeed: false, bayt: false, gulftalent: false }
+              : undefined,
           });
 
           if (!searchResult.jobs || searchResult.jobs.length === 0) {
