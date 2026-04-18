@@ -21,7 +21,8 @@
       "Bash(deno run:*)",
       "Bash(node test-linkedin-parsing.js)",
       "Bash(git commit -m ':*)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(npx supabase *)"
     ]
   }
 }

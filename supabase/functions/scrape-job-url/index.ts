@@ -40,6 +40,7 @@ import {
   extractAllLinkedInJobIds,
   isLinkedInSearchUrl
 } from '../_shared/linkedin-job.ts';
+import { parseLinkedInJobCards } from '../_shared/linkedin-search.ts';
 
 function extractLinkedInJobId(url: string): string | null {
   return sharedExtractId(url);
@@ -54,6 +55,18 @@ function markNormalizationStatus(job: any, evidenceLength: number) {
 /** Try LinkedIn's guest/public job posting endpoint */
 async function fetchLinkedInJob(jobId: string): Promise<string> {
   return await fetchLinkedInJobHtml(jobId);
+}
+
+async function fetchLinkedInPageHtml(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml',
+      'Accept-Language': 'en-US,en;q=0.9',
+    },
+  });
+  if (!res.ok) throw new Error(`LinkedIn page fetch failed: ${res.status}`);
+  return await res.text();
 }
 
 
@@ -379,14 +392,57 @@ Deno.serve(async (req) => {
 
     // === LinkedIn Search/Collection URL: extract MULTIPLE jobs ===
     if (isLinkedin && isLinkedInSearchUrl(formattedUrl)) {
+      try {
+        const html = await fetchLinkedInPageHtml(formattedUrl);
+        const cards = parseLinkedInJobCards(html);
+        const jobs = cards.map((card) => markNormalizationStatus({
+          title: card.title,
+          company: card.company,
+          location: card.location,
+          apply_url: card.apply_url,
+          source_url: formattedUrl,
+          source_created_at: card.source_created_at_text || null,
+          description: '',
+          remote_type: 'unknown',
+          employment_type: 'full-time',
+          seniority_level: '',
+          requirements: [],
+          linkedin_job_id: card.linkedin_job_id,
+          raw_data: card.raw_card_payload,
+        }, html.length));
+
+        if (jobs.length > 0) {
+          try {
+            await recordLedgerSync(supabaseClient as any, user.id, 'linkedin-search-scrape', 'linkedin', jobs, {
+              baseUrl: formattedUrl,
+              configJson: { source: 'linkedin_search_url' },
+              normalizationStatus: 'valid',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn('Ledger sync failed for LinkedIn search URL:', ledgerError);
+          }
+          return new Response(JSON.stringify({
+            success: true,
+            multiple: true,
+            jobs,
+            total_found: jobs.length,
+            failed_count: 0,
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      } catch (err) {
+        console.warn('LinkedIn collection page fetch failed, falling back to URL job IDs:', err?.message || String(err));
+      }
+
       const allJobIds = extractAllLinkedInJobIds(formattedUrl);
-      console.log(`LinkedIn search URL detected. Found ${allJobIds.length} job IDs:`, allJobIds);
+      console.log(`LinkedIn search URL fallback detected. Found ${allJobIds.length} job IDs:`, allJobIds);
 
-        if (allJobIds.length > 0) {
-          const jobs: any[] = [];
-          const failedIds: string[] = [];
+      if (allJobIds.length > 0) {
+        const jobs: any[] = [];
+        const failedIds: string[] = [];
 
-        // Scrape each job sequentially (to avoid rate limiting)
         for (const jobId of allJobIds) {
           const result = await scrapeSingleLinkedInJob(jobId, user.id);
           if (result) {
@@ -420,17 +476,16 @@ Deno.serve(async (req) => {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
-
-        // All failed — fall back to login required message
-        return new Response(JSON.stringify({
-          success: false,
-          error: 'LINKEDIN_LOGIN_REQUIRED',
-          message: 'Could not extract jobs from this LinkedIn page. Use the "Paste Description" tab to manually paste job details.',
-          fallback: true,
-        }), {
-          status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
       }
+
+      return new Response(JSON.stringify({
+        success: false,
+        error: 'LINKEDIN_LOGIN_REQUIRED',
+        message: 'Could not extract jobs from this LinkedIn page. Use the "Paste Description" tab to manually paste job details.',
+        fallback: true,
+      }), {
+        status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     // === LinkedIn Single Job URL ===
