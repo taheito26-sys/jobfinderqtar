@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
     // Get all users with desired_titles set
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from('profiles_v2')
-      .select('user_id, desired_titles, location, country, remote_preference')
+      .select('user_id, desired_titles, headline, location, country, remote_preference, desired_salary_min')
       .not('desired_titles', 'eq', '[]');
 
     if (profilesError) throw profilesError;
@@ -62,12 +62,24 @@ Deno.serve(async (req) => {
       .from('user_preferences')
       .select('user_id, key, value')
       .in('user_id', userIds);
+    const { data: skillsRows } = await supabaseAdmin
+      .from('profile_skills')
+      .select('user_id, skill_name')
+      .in('user_id', userIds);
 
     const preferenceMap = new Map<string, Record<string, string>>();
     (preferences || []).forEach((p) => {
       const existing = preferenceMap.get(p.user_id) ?? {};
       existing[p.key] = p.value;
       preferenceMap.set(p.user_id, existing);
+    });
+
+    const skillsMap = new Map<string, string[]>();
+    (skillsRows || []).forEach((row: any) => {
+      const list = skillsMap.get(row.user_id) || [];
+      const skill = String(row.skill_name || '').trim();
+      if (skill) list.push(skill);
+      skillsMap.set(row.user_id, list);
     });
 
     let totalDiscoveredJobs = 0;
@@ -336,6 +348,15 @@ Deno.serve(async (req) => {
       if (userPrefs.auto_search_enabled !== 'true') continue;
 
       const titles = (profile.desired_titles as string[]) || [];
+      const profileContext = {
+        desiredTitles: titles.map((title) => String(title || '').trim()).filter(Boolean),
+        headline: String(profile.headline || '').trim(),
+        location: String(profile.location || '').trim(),
+        country: String(profile.country || '').trim(),
+        remotePreference: String(profile.remote_preference || '').trim(),
+        skills: skillsMap.get(profile.user_id) || [],
+        salaryFloor: Number(profile.desired_salary_min || 0),
+      };
       // Use the broader country first so auto-search does not get trapped
       // by overly specific city-level locations like "Doha, Qatar".
       const profileLocation = profile.country || profile.location || 'Qatar';
@@ -353,6 +374,7 @@ Deno.serve(async (req) => {
             sources: runMode === 'manual'
               ? { linkedin: true, indeed: false, bayt: false, gulftalent: false }
               : undefined,
+            profile: profileContext,
           });
 
           if (!searchResult.jobs || searchResult.jobs.length === 0) {

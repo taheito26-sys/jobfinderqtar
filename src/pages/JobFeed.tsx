@@ -39,6 +39,10 @@ import {
   type FeedMode,
 } from '@/lib/job-feed';
 import {
+  getInterviewDeadlines,
+  getStaleApplications,
+} from '@/lib/follow-up';
+import {
   buildPresetSubscriptionQuery,
   matchesSavedSearchKeywords,
   parseKeywordList,
@@ -51,11 +55,13 @@ import { buildHardlineJobInsert } from '@/lib/hardline-import';
 
 type ViewMode = 'list' | 'grid';
 type SubTab = 'all' | 'remote' | 'onsite' | string; // string for country names
+type ApplicationTab = 'all' | 'applied' | 'follow-up';
 
 const JobFeed = () => {
   const { user } = useAuth();
   const [jobs, setJobs] = useState<any[]>([]);
   const [matches, setMatches] = useState<Record<string, any>>({});
+  const [applicationSubmissions, setApplicationSubmissions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -69,6 +75,7 @@ const JobFeed = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [subTab, setSubTab] = useState<SubTab>('all');
   const [feedMode, setFeedMode] = useState<FeedMode>('all');
+  const [applicationTab, setApplicationTab] = useState<ApplicationTab>('all');
   const [selectedJobs, setSelectedJobs] = useState<Set<string>>(new Set());
   const [savedPresets, setSavedPresets] = useState<SavedSearchPreset[]>([]);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
@@ -98,18 +105,21 @@ const JobFeed = () => {
   useEffect(() => {
     if (!user) return;
     const load = async () => {
-      const [jobsRes, matchesRes, prefsRes] = await Promise.all([
+      const [jobsRes, matchesRes, submissionsRes, prefsRes] = await Promise.all([
         supabase.from('jobs').select('*').eq('user_id', user.id)
           .order('created_at', { ascending: false }).limit(200),
         supabase.from('job_matches').select('*').eq('user_id', user.id),
+        supabase.from('application_submissions').select('job_id, submission_status, follow_up_date, response_received_at, submitted_at, updated_at').eq('user_id', user.id),
         supabase.from('user_preferences').select('value').eq('user_id', user.id).eq('key', 'saved_search_presets').maybeSingle(),
       ]);
       const jobsData = jobsRes.data;
       const matchesData = matchesRes.data;
+      const submissionsData = submissionsRes.data;
       setJobs(jobsData ?? []);
       const matchMap: Record<string, any> = {};
       (matchesData ?? []).forEach(m => { matchMap[m.job_id] = m; });
       setMatches(matchMap);
+      setApplicationSubmissions(submissionsData ?? []);
       setSavedPresets(parseSavedSearches(prefsRes.data?.value));
       setLoading(false);
     };
@@ -191,6 +201,7 @@ const JobFeed = () => {
   const clearAllFilters = () => {
     setActivePresetId(null);
     setFeedMode('all');
+    setApplicationTab('all');
     setCompanyFilter('all');
     setRemoteFilter('all');
     setLocationFilter('all');
@@ -556,6 +567,38 @@ const JobFeed = () => {
     duplicates: filterJobsByFeedMode(jobs, matches, 'duplicates', duplicateData.byJobId).length,
   }), [jobs, matches, duplicateData.byJobId]);
 
+  const applicationStateByJobId = useMemo(() => {
+    const latestByJob = new Map<string, any>();
+    const sorted = [...applicationSubmissions].sort((a, b) => {
+      const aTime = new Date(a.updated_at || a.submitted_at || 0).getTime();
+      const bTime = new Date(b.updated_at || b.submitted_at || 0).getTime();
+      return bTime - aTime;
+    });
+
+    for (const submission of sorted) {
+      if (!submission?.job_id || latestByJob.has(submission.job_id)) continue;
+      latestByJob.set(submission.job_id, submission);
+    }
+
+    return latestByJob;
+  }, [applicationSubmissions]);
+
+  const staleApplications = useMemo(() => getStaleApplications(applicationSubmissions), [applicationSubmissions]);
+  const interviewDeadlines = useMemo(() => getInterviewDeadlines(applicationSubmissions), [applicationSubmissions]);
+  const followUpJobIds = useMemo(() => new Set([
+    ...staleApplications.map((submission) => submission.job_id),
+    ...interviewDeadlines.map((submission) => submission.job_id),
+  ]), [staleApplications, interviewDeadlines]);
+  const appliedJobIds = useMemo(() => new Set([
+    ...jobs.filter((job) => job.status === 'applied').map((job) => job.id),
+    ...applicationSubmissions.map((submission) => submission.job_id),
+  ]), [jobs, applicationSubmissions]);
+
+  const applicationCounts = useMemo(() => ({
+    applied: filtered.filter((job) => appliedJobIds.has(job.id)).length,
+    followUp: filtered.filter((job) => followUpJobIds.has(job.id)).length,
+  }), [filtered, appliedJobIds, followUpJobIds]);
+
   // Sub-tab: extract countries from job locations
   const countryTabs = useMemo(() => {
     const countryMap = new Map<string, number>();
@@ -585,13 +628,20 @@ const JobFeed = () => {
     return { countries: sorted, remoteCount, onsiteCount };
   }, [jobs]);
 
-  // Apply sub-tab filter on top of existing filters
+  const applicationFiltered = useMemo(() => {
+    if (applicationTab === 'all') return filtered;
+    if (applicationTab === 'applied') return filtered.filter((job) => appliedJobIds.has(job.id));
+    if (applicationTab === 'follow-up') return filtered.filter((job) => followUpJobIds.has(job.id));
+    return filtered;
+  }, [filtered, applicationTab, appliedJobIds, followUpJobIds]);
+
+  // Apply location sub-tab filter on top of the application filter
   const subTabFiltered = useMemo(() => {
-    if (subTab === 'all') return filtered;
-    if (subTab === 'remote') return filtered.filter(j => j.remote_type === 'remote');
-    if (subTab === 'onsite') return filtered.filter(j => j.remote_type === 'onsite' || j.remote_type === 'hybrid');
+    if (subTab === 'all') return applicationFiltered;
+    if (subTab === 'remote') return applicationFiltered.filter(j => j.remote_type === 'remote');
+    if (subTab === 'onsite') return applicationFiltered.filter(j => j.remote_type === 'onsite' || j.remote_type === 'hybrid');
     // Country sub-tab
-    return filtered.filter(j => {
+    return applicationFiltered.filter(j => {
       const loc = (j.location || '').toLowerCase();
       const country = subTab.toLowerCase();
       if (loc.includes(country)) return true;
@@ -600,7 +650,7 @@ const JobFeed = () => {
       if (subTab === 'Saudi Arabia' && (loc.includes('riyadh') || loc.includes('jeddah'))) return true;
       return false;
     });
-  }, [filtered, subTab]);
+  }, [applicationFiltered, subTab]);
 
   const formatSalary = (min?: number, max?: number, currency?: string) => {
     const fmt = (n: number) => n >= 1000 ? `${Math.round(n / 1000)}K` : n.toString();
@@ -609,6 +659,16 @@ const JobFeed = () => {
     if (min) return `${curr}${fmt(min)}+`;
     if (max) return `up to ${curr}${fmt(max)}`;
     return null;
+  };
+
+  const getJobApplicationState = (job: any) => {
+    const submission = applicationStateByJobId.get(job.id);
+    const isApplied = job.status === 'applied' || Boolean(submission);
+    const isFollowUp = followUpJobIds.has(job.id);
+    return {
+      status: isFollowUp ? 'follow-up' : isApplied ? 'applied' : 'none',
+      submission,
+    };
   };
 
   return (
@@ -990,6 +1050,36 @@ const JobFeed = () => {
         </CollapsibleContent>
       </Collapsible>
 
+      {/* Application status tabs */}
+      {!loading && jobs.length > 0 && (
+        <div className="flex items-center gap-1 mb-2 overflow-x-auto pb-1 scrollbar-none">
+          <button
+            onClick={() => setApplicationTab('all')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+              applicationTab === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            All Jobs ({filtered.length})
+          </button>
+          <button
+            onClick={() => setApplicationTab('applied')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+              applicationTab === 'applied' ? 'bg-emerald-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Applied ({applicationCounts.applied})
+          </button>
+          <button
+            onClick={() => setApplicationTab('follow-up')}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
+              applicationTab === 'follow-up' ? 'bg-amber-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            Follow-up ({applicationCounts.followUp})
+          </button>
+        </div>
+      )}
+
       {/* Sub-tabs: All / Remote / On-site / Countries */}
       {!loading && jobs.length > 0 && (
         <div className="flex items-center gap-1 mb-3 overflow-x-auto pb-1 scrollbar-none">
@@ -1091,10 +1181,10 @@ const JobFeed = () => {
       ) : subTabFiltered.length === 0 ? (
         <EmptyState
           icon={Rss}
-          title={search || activeFilterCount > 0 || subTab !== 'all' || feedMode !== 'all' || !!activePreset ? 'No matching jobs' : 'No jobs tracked yet'}
-          description={search || activeFilterCount > 0 || subTab !== 'all' || feedMode !== 'all' || !!activePreset ? 'Try different filters, tabs, or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
-          actionLabel={search || activeFilterCount > 0 || feedMode !== 'all' || subTab !== 'all' || !!activePreset ? 'Clear Filters' : 'Add Job'}
-          onAction={search || activeFilterCount > 0 || feedMode !== 'all' || !!activePreset ? clearAllFilters : subTab !== 'all' ? () => setSubTab('all') : () => setAddOpen(true)}
+          title={search || activeFilterCount > 0 || subTab !== 'all' || feedMode !== 'all' || applicationTab !== 'all' || !!activePreset ? 'No matching jobs' : 'No jobs tracked yet'}
+          description={search || activeFilterCount > 0 || subTab !== 'all' || feedMode !== 'all' || applicationTab !== 'all' || !!activePreset ? 'Try different filters, tabs, or search terms.' : 'Add jobs manually, import from URL, or run a bulk search.'}
+          actionLabel={search || activeFilterCount > 0 || feedMode !== 'all' || subTab !== 'all' || applicationTab !== 'all' || !!activePreset ? 'Clear Filters' : 'Add Job'}
+          onAction={search || activeFilterCount > 0 || feedMode !== 'all' || applicationTab !== 'all' || !!activePreset ? clearAllFilters : subTab !== 'all' ? () => setSubTab('all') : () => setAddOpen(true)}
         />
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -1103,6 +1193,7 @@ const JobFeed = () => {
               key={job.id}
               job={job}
               match={matches[job.id]}
+              applicationState={getJobApplicationState(job)}
               selected={selectedJobs.has(job.id)}
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
@@ -1121,6 +1212,7 @@ const JobFeed = () => {
               key={job.id}
               job={job}
               match={matches[job.id]}
+              applicationState={getJobApplicationState(job)}
               selected={selectedJobs.has(job.id)}
               onSelect={toggleJobSelect}
               onDelete={deleteJob}
@@ -1222,15 +1314,21 @@ function getJobSourceBadge(job: any) {
   return null;
 }
 
-const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
+const JobCardList = ({ job, match, applicationState, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
   const isLI = isLinkedInJob(job);
   const sourceBadge = getJobSourceBadge(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
+  const applicationClass =
+    applicationState?.status === 'follow-up'
+      ? 'border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20'
+      : applicationState?.status === 'applied'
+        ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/20'
+        : '';
 
   return (
     <Link to={`/jobs/${job.id}`}>
-      <Card className={`hover:border-primary/30 transition-colors cursor-pointer group ${selected ? 'border-primary bg-primary/5' : ''}`}>
+      <Card className={`hover:border-primary/30 transition-colors cursor-pointer group ${applicationClass} ${selected ? 'border-primary ring-1 ring-primary/20' : ''}`}>
         <CardContent className="py-3.5 px-4 flex items-center gap-3">
           {/* Select checkbox */}
           <div className="flex-shrink-0" onClick={e => onSelect(e, job.id)}>
@@ -1259,6 +1357,16 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUn
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {job.remote_type && job.remote_type !== 'unknown' && (
               <Badge variant="outline" className="text-[10px] capitalize h-5">{job.remote_type}</Badge>
+            )}
+            {applicationState?.status === 'applied' && (
+              <Badge className="text-[10px] h-5 border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                Applied
+              </Badge>
+            )}
+            {applicationState?.status === 'follow-up' && (
+              <Badge className="text-[10px] h-5 border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                Follow-up
+              </Badge>
             )}
             {job.seniority_level && (
               <Badge variant="outline" className="text-[10px] capitalize h-5">{job.seniority_level}</Badge>
@@ -1294,15 +1402,21 @@ const JobCardList = ({ job, match, selected, onSelect, onDelete, onArchive, onUn
   );
 };
 
-const JobCardGrid = ({ job, match, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
+const JobCardGrid = ({ job, match, applicationState, selected, onSelect, onDelete, onArchive, onUnarchive, isArchiveView, formatSalary, userId }: any) => {
   const isLI = isLinkedInJob(job);
   const sourceBadge = getJobSourceBadge(job);
   const salary = formatSalary(job.salary_min, job.salary_max, job.salary_currency);
   const timeAgo = formatDistanceToNow(new Date(job.created_at), { addSuffix: true });
+  const applicationClass =
+    applicationState?.status === 'follow-up'
+      ? 'border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/20'
+      : applicationState?.status === 'applied'
+        ? 'border-emerald-300 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/20'
+        : '';
 
   return (
     <Link to={`/jobs/${job.id}`}>
-      <Card className={`hover:border-primary/30 transition-colors cursor-pointer group h-full ${selected ? 'border-primary bg-primary/5' : ''}`}>
+      <Card className={`hover:border-primary/30 transition-colors cursor-pointer group h-full ${applicationClass} ${selected ? 'border-primary ring-1 ring-primary/20' : ''}`}>
         <CardContent className="p-4 flex flex-col gap-3 h-full">
           <div className="flex items-start justify-between">
             <div className="flex items-center gap-2">
@@ -1334,6 +1448,17 @@ const JobCardGrid = ({ job, match, selected, onSelect, onDelete, onArchive, onUn
           <div className="flex-1">
             <h3 className="font-medium text-foreground text-sm leading-snug line-clamp-2">{job.title}</h3>
           </div>
+          {applicationState?.status !== 'none' && (
+            <Badge
+              className={`w-fit text-[10px] h-5 ${
+                applicationState.status === 'follow-up'
+                  ? 'border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+                  : 'border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
+              }`}
+            >
+              {applicationState.status === 'follow-up' ? 'Follow-up' : 'Applied'}
+            </Badge>
+          )}
 
           {/* Meta row */}
           <div className="flex flex-wrap gap-1">

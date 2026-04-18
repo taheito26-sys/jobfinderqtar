@@ -14,6 +14,11 @@ export interface RunLogUpdate {
   completed_at?: string;
 }
 
+function isMissingTableError(error: any): boolean {
+  const message = String(error?.message || error?.details || error || '');
+  return message.includes("linkedin_search_runs") && message.includes("Could not find the table");
+}
+
 /** Starts a new run log entry */
 export async function startRunLog(
   supabase: any,
@@ -28,7 +33,7 @@ export async function startRunLog(
     posted_within?: string;
     page_limit?: number;
   }
-): Promise<string> {
+): Promise<string | null> {
   const { data, error } = await supabase
     .from('linkedin_search_runs')
     .insert({
@@ -39,31 +44,45 @@ export async function startRunLog(
     .select('id')
     .single();
 
-  if (error) throw error;
+  if (error) {
+    if (isMissingTableError(error)) {
+      console.warn('[linkedin-run-log] linkedin_search_runs table is missing; skipping run logging.');
+      return null;
+    }
+    throw error;
+  }
   return data.id;
 }
 
 /** Updates an existing run log entry */
 export async function updateRunLog(
   supabase: any,
-  runId: string,
+  runId: string | null,
   update: RunLogUpdate
 ) {
+  if (!runId) return;
   const { error } = await supabase
     .from('linkedin_search_runs')
     .update(update)
     .eq('id', runId);
 
-  if (error) console.error(`Failed to update run log ${runId}:`, error.message);
+  if (error) {
+    if (isMissingTableError(error)) {
+      console.warn('[linkedin-run-log] linkedin_search_runs table is missing; skipping run log update.');
+      return;
+    }
+    console.error(`Failed to update run log ${runId}:`, error.message);
+  }
 }
 
 /** Finalizes a run log entry */
 export async function finishRunLog(
   supabase: any,
-  runId: string,
+  runId: string | null,
   status: "success" | "partial" | "failed",
   errorSummary?: string
 ) {
+  if (!runId) return;
   await updateRunLog(supabase, runId, {
     status,
     error_summary: errorSummary,

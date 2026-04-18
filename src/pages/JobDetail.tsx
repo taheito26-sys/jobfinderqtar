@@ -141,6 +141,10 @@ const JobDetail = () => {
   }, [id, user]);
 
   useEffect(() => {
+    setMarkedApplied(job?.status === 'applied');
+  }, [job?.status]);
+
+  useEffect(() => {
     if (!user || !id || !job) return;
     if (hydratedJobRef.current === id) return;
 
@@ -378,6 +382,13 @@ const JobDetail = () => {
 
   const markApplied = async () => {
     if (!user || !id) return;
+    try {
+      const { error } = await supabase.from('jobs').update({ status: 'applied' }).eq('id', id).eq('user_id', user.id);
+      if (error) throw error;
+      setJob((prev: any) => prev ? { ...prev, status: 'applied' } : prev);
+    } catch (err) {
+      console.warn('Failed to persist applied status:', err);
+    }
     await logEvent('marked_applied', { method: 'manual', source: isLinkedin ? 'linkedin' : 'web' });
     setMarkedApplied(true);
     toast({ title: 'Marked as applied', description: 'Application status recorded.' });
@@ -464,7 +475,12 @@ const JobDetail = () => {
                     {job.location && <span className="flex items-center gap-1 text-sm text-muted-foreground"><MapPin className="w-3 h-3" />{job.location}</span>}
                     {job.remote_type !== 'unknown' && <Badge variant="outline" className="capitalize">{job.remote_type}</Badge>}
                     {job.employment_type && <Badge variant="outline">{job.employment_type}</Badge>}
-                    <Badge variant="secondary" className="capitalize">{job.status}</Badge>
+                    <Badge
+                      variant={job.status === 'applied' ? 'default' : 'secondary'}
+                      className={`capitalize ${job.status === 'applied' ? 'bg-emerald-600 text-white hover:bg-emerald-600' : ''}`}
+                    >
+                      {job.status}
+                    </Badge>
                   </div>
                   {(job.salary_min || job.salary_max) && (
                     <p className="text-sm text-muted-foreground mt-2">

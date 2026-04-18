@@ -10,6 +10,8 @@ export async function resolveRequestAuth(req: Request): Promise<RequestAuthResul
   const body = (await req.clone().json().catch(() => ({}))) as Record<string, unknown>;
   const authHeader = req.headers.get("Authorization");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
 
   if (authHeader?.startsWith("Bearer ")) {
     const token = authHeader.slice("Bearer ".length).trim();
@@ -21,14 +23,20 @@ export async function resolveRequestAuth(req: Request): Promise<RequestAuthResul
       return { userId: bodyUserId, isInternal: true, body };
     }
 
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-    const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-    if (authError || !user) throw new Error("Unauthorized");
-    return { userId: user.id, isInternal: false, body };
+    if (!supabaseUrl || !anonKey) throw new Error("Unauthorized");
+
+    const userRes = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: {
+        Authorization: authHeader,
+        apikey: anonKey,
+      },
+    });
+
+    if (!userRes.ok) throw new Error("Unauthorized");
+
+    const user = await userRes.json().catch(() => null);
+    if (!user?.id) throw new Error("Unauthorized");
+    return { userId: String(user.id), isInternal: false, body };
   }
 
   const bodyUserId = typeof body.user_id === "string" ? body.user_id : null;

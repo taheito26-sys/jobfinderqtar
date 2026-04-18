@@ -15,6 +15,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { searchAllSources } from "../_shared/multi-source-search.ts";
 import { recordLedgerSync } from "../_shared/hardline-ledger.ts";
+import { loadLinkedInProfileContext } from "../_shared/linkedin-profile-search.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -66,6 +67,8 @@ Deno.serve(async (req) => {
     // Default location to Qatar if no country provided or if "Qatar" is implied
     const location = country || "Qatar";
 
+    const profileContext = await loadLinkedInProfileContext(supabaseClient as any, user.id).catch(() => null);
+
     console.log(
       `[search-jobs] user=${user.id} query="${query}" location="${location}" limit=${limit}`
     );
@@ -82,6 +85,7 @@ Deno.serve(async (req) => {
         bayt: true,
         gulftalent: true,
       },
+      profile: profileContext,
     });
 
     const { jobs, counts, sources_with_results } = result;

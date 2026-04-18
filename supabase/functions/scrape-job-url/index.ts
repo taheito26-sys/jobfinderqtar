@@ -75,6 +75,189 @@ function dedupeLinkedInJobs(jobs: any[]): any[] {
   return out;
 }
 
+type LinkedInProfileContext = {
+  desiredTitles: string[];
+  headline: string;
+  location: string;
+  country: string;
+  remotePreference: string;
+  skills: string[];
+  salaryFloor: number;
+};
+
+function normalizeProfileText(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function splitTitleTokens(value: string): string[] {
+  return normalizeProfileText(value)
+    .split(' ')
+    .filter((token) => token.length >= 3);
+}
+
+function extractCountryFromLocation(location: string): string {
+  const parts = String(location || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) return parts.slice(1).join(', ');
+  return '';
+}
+
+async function loadLinkedInProfileContext(supabaseClient: any, userId: string): Promise<LinkedInProfileContext | null> {
+  const [profileRes, skillsRes] = await Promise.all([
+    supabaseClient
+      .from('profiles_v2')
+      .select('headline, location, country, remote_preference, desired_salary_min, desired_titles')
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabaseClient
+      .from('profile_skills')
+      .select('skill_name')
+      .eq('user_id', userId),
+  ]);
+
+  const profile = profileRes?.data as Record<string, unknown> | null;
+  if (!profile) return null;
+
+  const desiredTitles = Array.isArray(profile.desired_titles)
+    ? profile.desired_titles.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const headline = String(profile.headline || '').trim();
+  const titleSeeds = desiredTitles.length > 0 ? desiredTitles : headline ? [headline] : [];
+  const skills = (skillsRes.data || [])
+    .map((row: any) => String(row?.skill_name || '').trim())
+    .filter(Boolean);
+
+  return {
+    desiredTitles: titleSeeds,
+    headline,
+    location: String(profile.location || '').trim(),
+    country: String(profile.country || '').trim(),
+    remotePreference: String(profile.remote_preference || '').trim(),
+    skills,
+    salaryFloor: Number(profile.desired_salary_min || 0),
+  };
+}
+
+function scoreLinkedInJobAgainstProfile(job: any, profile: LinkedInProfileContext): number {
+  const jobTitle = normalizeProfileText(String(job?.title || ''));
+  const jobBlob = normalizeProfileText([
+    job?.title,
+    job?.company,
+    job?.location,
+    job?.description,
+    Array.isArray(job?.requirements) ? job.requirements.join(' ') : '',
+  ].filter(Boolean).join(' '));
+
+  if (!jobTitle) return 0;
+
+  const titleTokens = profile.desiredTitles.flatMap((title) => splitTitleTokens(title));
+  const exactTitleHit = profile.desiredTitles.some((title) => {
+    const normalized = normalizeProfileText(title);
+    return normalized && (jobTitle.includes(normalized) || normalized.includes(jobTitle));
+  });
+  const tokenMatches = titleTokens.filter((token) => jobTitle.includes(token)).length;
+  const titleScore = exactTitleHit
+    ? 70
+    : titleTokens.length > 0
+      ? Math.round((tokenMatches / Math.max(titleTokens.length, 1)) * 45)
+      : 0;
+
+  const skillMatches = profile.skills.filter((skill) => jobBlob.includes(normalizeProfileText(skill))).length;
+  const skillScore = profile.skills.length > 0
+    ? Math.round((skillMatches / Math.max(profile.skills.length, 1)) * 25)
+    : 0;
+
+  const locationText = normalizeProfileText(String(job?.location || ''));
+  const profileCountry = normalizeProfileText(profile.country);
+  const profileLocation = normalizeProfileText(profile.location);
+  const locationScore = profileCountry && locationText.includes(profileCountry)
+    ? 12
+    : profileLocation && locationText.includes(profileLocation)
+      ? 10
+      : String(job?.remote_type || '').toLowerCase() === 'remote' && profile.remotePreference === 'remote'
+        ? 8
+        : 0;
+
+  const salaryScore = profile.salaryFloor > 0 && Number(job?.salary_min || 0) >= profile.salaryFloor ? 5 : 0;
+
+  return Math.min(100, titleScore + skillScore + locationScore + salaryScore);
+}
+
+function rankLinkedInJobsByProfile(jobs: any[], profile: LinkedInProfileContext): Array<{ job: any; score: number }> {
+  return jobs
+    .map((job) => ({ job, score: scoreLinkedInJobAgainstProfile(job, profile) }))
+    .sort((a, b) => b.score - a.score);
+}
+
+async function fetchLinkedInProfileSeededJobs(profile: LinkedInProfileContext): Promise<{ jobs: any[]; debug: any[] }> {
+  const seeds = profile.desiredTitles.slice(0, 4);
+  const searchLocation = profile.country || extractCountryFromLocation(profile.location) || profile.location || 'Qatar';
+  const collected = new Map<string, any>();
+  const debug: any[] = [];
+
+  for (const seed of seeds) {
+    try {
+      const snippets = await fetchLinkedInSearch({
+        keywords: seed,
+        location: searchLocation,
+        pageNum: 0,
+        limit: 10,
+        postedWithin: 'month',
+      });
+
+      const normalized = snippets.map((snippet) =>
+        markNormalizationStatus(normalizeLinkedInJob(snippet), 1000)
+      );
+
+      const ranked = rankLinkedInJobsByProfile(normalized, profile);
+      const topScore = ranked[0]?.score ?? 0;
+      if (topScore < 25) {
+        debug.push({
+          seed,
+          location: searchLocation,
+          total: normalized.length,
+          kept: 0,
+          top_score: topScore,
+          skipped: true,
+        });
+        continue;
+      }
+
+      const relevant = ranked.filter((item) => item.score >= 20).map((item) => item.job);
+      const finalJobs = relevant.length > 0 ? relevant : ranked.slice(0, 5).map((item) => item.job);
+
+      debug.push({
+        seed,
+        location: searchLocation,
+        total: normalized.length,
+        kept: finalJobs.length,
+        top_score: topScore,
+      });
+
+      for (const job of finalJobs) {
+        const key = String(job?.linkedin_job_id || job?.apply_url || job?.title || '')
+          .trim()
+          .toLowerCase();
+        if (!key || collected.has(key)) continue;
+        collected.set(key, job);
+      }
+
+      if (collected.size >= 20) break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      debug.push({ seed, error: msg });
+    }
+  }
+
+  return { jobs: [...collected.values()], debug };
+}
+
 async function fetchLinkedInCollectionCards(formattedUrl: string): Promise<{ cards: any[]; debug: any[] }> {
   const collected = new Map<string, any>();
   const debug: any[] = [];
@@ -688,6 +871,7 @@ Deno.serve(async (req) => {
     if (isLinkedin && isLinkedInSearchUrl(formattedUrl)) {
       try {
         const { cards, debug } = await fetchLinkedInCollectionCards(formattedUrl);
+        const profileContext = await loadLinkedInProfileContext(supabaseClient, userId);
         const evidenceLength = debug.reduce((max, entry) => Math.max(max, Number(entry?.html_length || 0)), 0) || 1000;
         const jobs = cards.map((card) => markNormalizationStatus({
           title: card.title,
@@ -706,6 +890,29 @@ Deno.serve(async (req) => {
         }, evidenceLength));
 
         let normalizedJobs = dedupeLinkedInJobs(jobs.map((job) => markNormalizationStatus(job, 1000)));
+        let relevanceDebug: any = null;
+
+        if (profileContext) {
+          const ranked = rankLinkedInJobsByProfile(normalizedJobs, profileContext);
+          const relevant = ranked.filter((item) => item.score >= 25).map((item) => item.job);
+          relevanceDebug = {
+            strategy: 'page_cards',
+            top_scores: ranked.slice(0, 5).map((item) => ({ title: item.job?.title, score: item.score })),
+          };
+
+          if (relevant.length > 0) {
+            normalizedJobs = dedupeLinkedInJobs(relevant);
+          } else {
+            const seeded = await fetchLinkedInProfileSeededJobs(profileContext);
+            if (seeded.jobs.length > 0) {
+              normalizedJobs = dedupeLinkedInJobs(seeded.jobs.map((job) => markNormalizationStatus(job, 1000)));
+              relevanceDebug = {
+                strategy: 'profile_seeded_search',
+                seeds: seeded.debug,
+              };
+            }
+          }
+        }
 
         if (normalizedJobs.length < 5) {
           const expandedJobs = await expandLinkedInCollectionWithSearch(normalizedJobs, userId, supabaseClient);
@@ -727,18 +934,19 @@ Deno.serve(async (req) => {
           }
           console.log(`Successfully extracted ${normalizedJobs.length} LinkedIn jobs from collection/search URL`);
           return new Response(JSON.stringify({
-            success: true,
-            multiple: true,
-            jobs: normalizedJobs,
-            total_found: normalizedJobs.length,
-            failed_count: 0,
-            ...(debugMode ? {
-              debug: {
-                source: 'collection_guest_api',
-                pages: debug,
-                final_jobs: normalizedJobs.length,
-              },
-            } : {}),
+              success: true,
+              multiple: true,
+              jobs: normalizedJobs,
+              total_found: normalizedJobs.length,
+              failed_count: 0,
+              ...(debugMode ? {
+                debug: {
+                  source: 'collection_guest_api',
+                  pages: debug,
+                  relevance: relevanceDebug,
+                  final_jobs: normalizedJobs.length,
+                },
+              } : {}),
           }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });

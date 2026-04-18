@@ -1,11 +1,13 @@
 // LinkedIn Provider for search and details
 // Inspired by MCP/Service architecture
 
-import { fetchLinkedInSearch, LinkedInSearchInput, LinkedInJobSnippet } from "./linkedin-search.ts";
-import { normalizeLinkedInJob } from "./linkedin-normalize.ts";
+import { type LinkedInSearchInput } from "./linkedin-search.ts";
+import { fetchProfileAwareLinkedInSearch, type LinkedInProfileContext } from "./linkedin-profile-search.ts";
 import { fetchLinkedInJobHtml } from "./linkedin-job.ts";
 
-export interface LinkedInProviderSearchInput extends LinkedInSearchInput {}
+export interface LinkedInProviderSearchInput extends LinkedInSearchInput {
+  profile?: LinkedInProfileContext | null;
+}
 
 export class LinkedInProvider {
   /**
@@ -14,10 +16,11 @@ export class LinkedInProvider {
   async searchJobs(input: LinkedInProviderSearchInput) {
     try {
       console.log(`[LinkedInProvider] Searching for "${input.keywords}" in "${input.location || 'Global'}"`);
-      const snippets = await fetchLinkedInSearch(input);
-      
-      const jobs = snippets.map(snippet => normalizeLinkedInJob(snippet));
-      
+      const { jobs } = await fetchProfileAwareLinkedInSearch({
+        ...input,
+        profile: input.profile || null,
+      });
+
       return {
         success: true,
         jobs,

@@ -2,24 +2,18 @@
  * Multi-source Qatar job search orchestrator.
  *
  * Runs LinkedIn, Indeed, Bayt.com, and GulfTalent in parallel.
- * Each source is wrapped in a 12-second timeout — if one hangs or
+ * Each source is wrapped in a 12-second timeout - if one hangs or
  * fails, the others still return results.
  *
  * Deduplication:
  *   1. Exact URL match (after stripping tracking query params)
  *   2. Normalized title + company fingerprint
- *
- * Output format is a unified `MultiSourceJob` that is compatible
- * with the normalizeLinkedInJob output used by the existing frontend.
  */
 
-import { fetchLinkedInSearch } from "./linkedin-search.ts";
-import { normalizeLinkedInJob } from "./linkedin-normalize.ts";
+import { fetchProfileAwareLinkedInSearch, type LinkedInProfileContext } from "./linkedin-profile-search.ts";
 import { searchIndeedQatar } from "./indeed-search.ts";
 import { searchBaytQatar } from "./bayt-search.ts";
 import { searchGulfTalent } from "./gulftalent-search.ts";
-
-// ─── Unified job type ─────────────────────────────────────────────────────────
 
 export type JobSource = "linkedin" | "indeed" | "bayt" | "gulftalent";
 
@@ -32,9 +26,7 @@ export interface MultiSourceJob {
   description?: string;
   source_created_at: string | null;
   source_platform: JobSource | string;
-  /** LinkedIn-specific — null for non-LinkedIn sources */
   linkedin_job_id?: string | null;
-  /** Platform-native job ID */
   external_id?: string | null;
   remote_type: string;
   employment_type: string;
@@ -43,14 +35,10 @@ export interface MultiSourceJob {
   raw_data?: any;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Strip tracking query params for dedup purposes. */
 function cleanUrl(url: string): string {
   if (!url) return "";
   try {
     const u = new URL(url);
-    // Remove common tracking params
     for (const p of ["jk", "fccid", "vjs", "tk", "from", "referer", "trk", "trkInfo", "utm_source", "utm_medium", "utm_campaign"]) {
       u.searchParams.delete(p);
     }
@@ -60,14 +48,12 @@ function cleanUrl(url: string): string {
   }
 }
 
-/** Normalize a string for fingerprint comparison. */
 function fingerprint(title: string, company: string): string {
   const normalize = (s: string) =>
     s.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 60);
   return `${normalize(title)}|${normalize(company)}`;
 }
 
-/** Deduplicate a list of jobs — URL-first, then title+company fallback. */
 function deduplicate(jobs: MultiSourceJob[]): MultiSourceJob[] {
   const seenUrl = new Set<string>();
   const seenFp = new Set<string>();
@@ -88,7 +74,6 @@ function deduplicate(jobs: MultiSourceJob[]): MultiSourceJob[] {
   return result;
 }
 
-/** Wrap a source fetch in a timeout — bad source can't stall everything. */
 async function withTimeout<T>(
   promise: Promise<T[]>,
   source: string,
@@ -108,26 +93,22 @@ async function withTimeout<T>(
   }
 }
 
-// ─── Source adapters ──────────────────────────────────────────────────────────
-
 async function fetchLinkedIn(
   keywords: string,
   location: string,
-  limit: number
+  limit: number,
+  profile?: LinkedInProfileContext | null
 ): Promise<MultiSourceJob[]> {
-  const snippets = await fetchLinkedInSearch({ keywords, location, limit });
-  return snippets.map((s) => {
-    const n = normalizeLinkedInJob(s);
-    return {
-      ...n,
-      source_platform: "linkedin" as JobSource,
-      source_created_at: n.source_created_at || null,
-      remote_type: n.remote_type || "unknown",
-      employment_type: n.employment_type || "full-time",
-      seniority_level: n.seniority_level || "",
-      normalization_status: "incomplete" as const,
-    };
-  });
+  const { jobs } = await fetchProfileAwareLinkedInSearch({ keywords, location, limit, profile });
+  return jobs.map((job) => ({
+    ...job,
+    source_platform: "linkedin" as JobSource,
+    source_created_at: String(job.source_created_at || null) || null,
+    remote_type: String(job.remote_type || "unknown"),
+    employment_type: String(job.employment_type || "full-time"),
+    seniority_level: String(job.seniority_level || ""),
+    normalization_status: "incomplete" as const,
+  }));
 }
 
 async function fetchIndeed(
@@ -200,23 +181,18 @@ async function fetchGulfTalent(
   }));
 }
 
-// ─── Main orchestrator ────────────────────────────────────────────────────────
-
 export interface MultiSourceSearchOptions {
   keywords: string;
-  /** Target country/location — defaults to "Qatar" */
   location?: string;
-  /** Max total results (after dedup) */
   limit?: number;
-  /** Per-source limit (before dedup) */
   perSourceLimit?: number;
-  /** Which sources to enable */
   sources?: {
     linkedin?: boolean;
     indeed?: boolean;
     bayt?: boolean;
     gulftalent?: boolean;
   };
+  profile?: LinkedInProfileContext | null;
 }
 
 export interface MultiSourceSearchResult {
@@ -227,12 +203,6 @@ export interface MultiSourceSearchResult {
   sources_with_results: string[];
 }
 
-/**
- * Run all job sources in parallel, merge, deduplicate, and return.
- *
- * Each source failure is isolated — one error doesn't kill the rest.
- * Ordering: LinkedIn first, then other sources ranked by recency.
- */
 export async function searchAllSources(
   opts: MultiSourceSearchOptions
 ): Promise<MultiSourceSearchResult> {
@@ -242,18 +212,18 @@ export async function searchAllSources(
     limit = 50,
     perSourceLimit = 25,
     sources = { linkedin: true, indeed: true, bayt: true, gulftalent: true },
+    profile = null,
   } = opts;
 
   console.log(
     `[MultiSource] Searching "${keywords}" | location="${location}" | sources=${JSON.stringify(sources)}`
   );
 
-  // Launch all enabled sources concurrently
   const fetches: Promise<{ source: string; jobs: MultiSourceJob[] }>[] = [];
 
   if (sources.linkedin !== false) {
     fetches.push(
-      withTimeout(fetchLinkedIn(keywords, location, perSourceLimit), "LinkedIn").then(
+      withTimeout(fetchLinkedIn(keywords, location, perSourceLimit, profile), "LinkedIn").then(
         (jobs) => ({ source: "linkedin", jobs })
       )
     );
@@ -282,7 +252,6 @@ export async function searchAllSources(
 
   const settled = await Promise.all(fetches);
 
-  // Collect per-source counts
   const counts: Record<string, number> = {};
   const allJobs: MultiSourceJob[] = [];
   const sourcesQueried: string[] = [];
@@ -299,7 +268,6 @@ export async function searchAllSources(
     `[MultiSource] Raw counts: ${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ")}`
   );
 
-  // Deduplicate then truncate to limit
   const deduped = deduplicate(allJobs).slice(0, limit);
 
   console.log(

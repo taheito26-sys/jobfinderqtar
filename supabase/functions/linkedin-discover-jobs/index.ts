@@ -1,5 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
-import { fetchLinkedInSearch } from "../_shared/linkedin-search.ts";
+import { fetchProfileAwareLinkedInSearch, loadLinkedInProfileContext } from "../_shared/linkedin-profile-search.ts";
 import { startRunLog, updateRunLog, finishRunLog } from "../_shared/linkedin-run-log.ts";
 import { parseLinkedInRelativeDate } from "../_shared/linkedin-job.ts";
 import { resolveRequestAuth } from "../_shared/request-auth.ts";
@@ -45,6 +45,8 @@ Deno.serve(async (req) => {
 
     if (!keywords || keywords.length === 0) throw new Error("Keywords are required");
 
+    const profileContext = await loadLinkedInProfileContext(supabaseAdmin as any, userId).catch(() => null);
+
     // Start Run Log
     const runId = await startRunLog(supabaseAdmin, {
       user_id: userId,
@@ -67,14 +69,16 @@ Deno.serve(async (req) => {
       
       for (let page = 0; page < page_limit; page++) {
         try {
-          const cards = await fetchLinkedInSearch({
+          const searchResult = await fetchProfileAwareLinkedInSearch({
             keywords: keyword,
             location,
-            remotePreference: remote_preference as any,
             postedWithin: posted_within as any,
             limit: results_per_page,
             pageNum: page,
+            remotePreference: remote_preference as any,
+            profile: profileContext,
           });
+          const cards = searchResult.jobs;
 
           if (cards.length === 0) {
             console.log(`No cards found on page ${page} for keyword ${keyword}`);
