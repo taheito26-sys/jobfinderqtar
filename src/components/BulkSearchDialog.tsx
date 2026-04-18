@@ -131,6 +131,13 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     }
   };
 
+  const explicitSources = {
+    linkedin: true,
+    indeed: true,
+    bayt: true,
+    gulftalent: true,
+  };
+
   const handleSearch = async () => {
     const searchQuery = buildSearchQuery();
     if (!searchQuery) {
@@ -153,7 +160,12 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     try {
       const effectiveCountry = getEffectiveCountry();
       const { data, error } = await supabase.functions.invoke('search-jobs', {
-        body: { query: searchQuery, limit: 15, country: effectiveCountry || undefined },
+        body: {
+          query: searchQuery,
+          limit: 15,
+          country: effectiveCountry || undefined,
+          sources: explicitSources,
+        },
       });
 
       if (error) {
@@ -189,7 +201,12 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
       const searchQ = profileSeniority ? `${profileSeniority} ${title}` : title;
       try {
         const { data } = await supabase.functions.invoke('search-jobs', {
-          body: { query: searchQ, limit: 10, country: effectiveCountry || undefined },
+          body: {
+            query: searchQ,
+            limit: 10,
+            country: effectiveCountry || undefined,
+            sources: explicitSources,
+          },
         });
         if (data?.jobs) allJobs.push(...data.jobs);
       } catch { /* skip */ }
