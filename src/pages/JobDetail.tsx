@@ -383,6 +383,68 @@ const JobDetail = () => {
   const markApplied = async () => {
     if (!user || !id) return;
     try {
+      const followUpDate = new Date();
+      followUpDate.setDate(followUpDate.getDate() + 7);
+
+      const { data: existingSubmission } = await supabase
+        .from('application_submissions')
+        .select('id, draft_id, submission_status')
+        .eq('user_id', user.id)
+        .eq('job_id', id)
+        .maybeSingle();
+
+      let draftId = existingSubmission?.draft_id ?? null;
+
+      if (!draftId) {
+        const { data: existingDraft } = await supabase
+          .from('application_drafts')
+          .select('id, status')
+          .eq('user_id', user.id)
+          .eq('job_id', id)
+          .maybeSingle();
+
+        if (existingDraft) {
+          draftId = existingDraft.id;
+        } else {
+          const { data: newDraft, error: draftError } = await supabase
+            .from('application_drafts')
+            .insert({
+              user_id: user.id,
+              job_id: id,
+              match_id: match?.id || null,
+              apply_mode: 'manual',
+              status: 'submitted',
+              notes: `Lightweight submission created from Job Detail on ${new Date().toISOString()}`,
+            })
+            .select('id')
+            .single();
+          if (draftError) throw draftError;
+          draftId = newDraft.id;
+        }
+      }
+
+      if (!existingSubmission) {
+        const { error: submissionError } = await supabase.from('application_submissions').insert({
+          user_id: user.id,
+          draft_id: draftId,
+          job_id: id,
+          submission_method: 'manual',
+          submission_status: 'submitted',
+          follow_up_date: followUpDate.toISOString().slice(0, 10),
+          outcome_notes: 'Created automatically from Job Detail Mark Applied.',
+        });
+        if (submissionError) throw submissionError;
+      } else if (existingSubmission.submission_status !== 'submitted') {
+        const { error: updateSubmissionError } = await supabase
+          .from('application_submissions')
+          .update({
+            submission_status: 'submitted',
+            follow_up_date: followUpDate.toISOString().slice(0, 10),
+          })
+          .eq('id', existingSubmission.id);
+        if (updateSubmissionError) throw updateSubmissionError;
+      }
+
       const { error } = await supabase.from('jobs').update({ status: 'applied' }).eq('id', id).eq('user_id', user.id);
       if (error) throw error;
       setJob((prev: any) => prev ? { ...prev, status: 'applied' } : prev);
