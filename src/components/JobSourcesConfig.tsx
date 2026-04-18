@@ -70,6 +70,12 @@ type JobSource = {
   created_at: string;
 };
 
+type ProfileContext = {
+  desired_titles: string[];
+  location: string | null;
+  country: string | null;
+};
+
 const JobSourcesConfig = () => {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -82,6 +88,11 @@ const JobSourcesConfig = () => {
   const [autoSearchEnabled, setAutoSearchEnabled] = useState(false);
   const [autoSearchFreq, setAutoSearchFreq] = useState('daily');
   const [prefs, setPrefs] = useState<Record<string, string>>({});
+  const [profileContext, setProfileContext] = useState<ProfileContext>({
+    desired_titles: [],
+    location: null,
+    country: null,
+  });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
 
   // New source form
@@ -122,10 +133,11 @@ const JobSourcesConfig = () => {
 
   const loadData = async () => {
     if (!user) return;
-    const [srcRes, prefRes, jobsRes] = await Promise.all([
+    const [srcRes, prefRes, jobsRes, profileRes] = await Promise.all([
       supabase.from('job_sources').select('*').eq('user_id', user.id).order('created_at'),
       supabase.from('user_preferences').select('*').eq('user_id', user.id),
       supabase.from('jobs').select('source_id').eq('user_id', user.id),
+      supabase.from('profiles_v2').select('desired_titles, location, country').eq('user_id', user.id).maybeSingle(),
     ]);
     const jobsBySource = new Map<string, number>();
     (jobsRes.data ?? []).forEach((job: any) => {
@@ -142,6 +154,11 @@ const JobSourcesConfig = () => {
     setPrefs(prefMap);
     setAutoSearchEnabled(prefMap['auto_search_enabled'] === 'true');
     setAutoSearchFreq(prefMap['auto_search_frequency'] || 'daily');
+    setProfileContext({
+      desired_titles: (profileRes.data?.desired_titles as string[]) ?? [],
+      location: profileRes.data?.location ?? null,
+      country: profileRes.data?.country ?? null,
+    });
     setLoading(false);
   };
 
@@ -244,14 +261,20 @@ const JobSourcesConfig = () => {
     setSyncing(source.id);
     try {
       const isLinkedIn = /linkedin/i.test(source.source_name) || /linkedin/i.test(source.config.base_url || '');
+      const profileSeedTitle = profileContext.desired_titles?.[0]?.trim() || '';
+      const querySeed =
+        (source.config.search_keywords ?? []).map((kw) => kw.trim()).filter(Boolean).join(' ')
+        || profileSeedTitle
+        || source.source_name;
+      const queryCountry = source.config.search_location || profileContext.country || profileContext.location || '';
       let data: any;
       let error: any;
 
       if (isLinkedIn) {
         ({ data, error } = await supabase.functions.invoke('search-jobs', {
           body: {
-            query: (source.config.search_keywords ?? []).join(' ') || source.source_name,
-            country: source.config.search_location || '',
+            query: querySeed,
+            country: queryCountry,
             limit: 3,
           },
         }));
