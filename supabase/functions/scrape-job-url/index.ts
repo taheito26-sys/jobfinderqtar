@@ -85,6 +85,19 @@ function deriveLinkedInSearchSeed(job: any): { keywords: string; location?: stri
   };
 }
 
+function buildLinkedInSearchVariants(seed: { keywords: string; location?: string }): Array<{ keywords: string; location?: string }> {
+  const variants: Array<{ keywords: string; location?: string }> = [{ keywords: seed.keywords, location: seed.location }];
+
+  if (seed.location) {
+    // Some LinkedIn collection pages expose broad region labels like EMEA,
+    // which can overly constrain search. Retry the same keyword without the
+    // location if the first pass is sparse.
+    variants.push({ keywords: seed.keywords });
+  }
+
+  return variants;
+}
+
 async function expandLinkedInCollectionWithSearch(seedJobs: any[], userId: string, supabaseClient: any): Promise<any[]> {
   const expanded: any[] = [];
   const seeds = seedJobs.slice(0, 2);
@@ -94,35 +107,41 @@ async function expandLinkedInCollectionWithSearch(seedJobs: any[], userId: strin
     if (!searchSeed) continue;
 
     try {
-      const snippets = await fetchLinkedInSearch({
-        keywords: searchSeed.keywords,
-        location: searchSeed.location,
-        pageNum: 0,
-        limit: 10,
-        postedWithin: 'month',
-      });
+      const variants = buildLinkedInSearchVariants(searchSeed);
+      for (const variant of variants) {
+        const snippets = await fetchLinkedInSearch({
+          keywords: variant.keywords,
+          location: variant.location,
+          pageNum: 0,
+          limit: 10,
+          postedWithin: 'month',
+        });
 
-      const normalized = snippets.map((snippet) =>
-        markNormalizationStatus(normalizeLinkedInJob(snippet), 1000)
-      );
+        const normalized = snippets.map((snippet) =>
+          markNormalizationStatus(normalizeLinkedInJob(snippet), 1000)
+        );
 
-      if (normalized.length > 0) {
-        try {
+        if (normalized.length > 0) {
+          try {
             await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', normalized, {
-            baseUrl: `search:${searchSeed.keywords}|${searchSeed.location || ''}`,
-            configJson: { source: 'linkedin_collection_search_fallback', keywords: searchSeed.keywords, location: searchSeed.location || null },
-            normalizationStatus: 'valid',
-            runMode: 'collect',
-          });
-        } catch (ledgerError) {
-          console.warn('Ledger sync failed for LinkedIn collection search fallback:', ledgerError);
+              baseUrl: `search:${variant.keywords}|${variant.location || ''}`,
+              configJson: { source: 'linkedin_collection_search_fallback', keywords: variant.keywords, location: variant.location || null },
+              normalizationStatus: 'valid',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn('Ledger sync failed for LinkedIn collection search fallback:', ledgerError);
+          }
+          expanded.push(...normalized);
         }
-        expanded.push(...normalized);
+
+        // Stop early once we have enough supplemental LinkedIn jobs.
+        if (expanded.length >= 6) break;
       }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn('LinkedIn search fallback failed for collection seed:', searchSeed.keywords, msg);
-      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('LinkedIn search fallback failed for collection seed:', searchSeed.keywords, msg);
+    }
   }
 
   return dedupeLinkedInJobs(expanded);
