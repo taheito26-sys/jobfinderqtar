@@ -51,6 +51,8 @@ export interface MultiSourceJob {
 
 const EXTERNAL_VARIANT_LIMIT = 3;          // variants per external source
 const EXTERNAL_RELEVANCE_THRESHOLD = 20;   // min score to keep when profile exists
+const EXTERNAL_NEARBY_WINDOW = 15;         // allow adjacent roles just below the main threshold
+const EXTERNAL_NEARBY_LIMIT = 5;           // cap the extra nearby results we retain
 
 function cleanUrl(url: string): string {
   if (!url) return "";
@@ -134,7 +136,7 @@ function buildExternalVariants(
  * Score + filter + rank an external-source result set against the profile.
  * When no profile is present, returns the input unchanged (no filtering).
  */
-function rankExternalAgainstProfile(
+export function rankExternalAgainstProfile(
   jobs: MultiSourceJob[],
   profile?: LinkedInProfileContext | null
 ): MultiSourceJob[] {
@@ -143,13 +145,17 @@ function rankExternalAgainstProfile(
     ...j,
     relevance_score: scoreLinkedInJobAgainstProfile(j as unknown as Record<string, unknown>, profile),
   }));
-  const kept = scored.filter((j) => (j.relevance_score ?? 0) >= EXTERNAL_RELEVANCE_THRESHOLD);
-  // If profile filtering drops everything, fall back to the scored-but-unfiltered list so the
-  // user still sees *something* from that source (ranked by score).
-  const ranked = (kept.length > 0 ? kept : scored).sort(
-    (a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0)
-  );
-  return ranked;
+  const ranked = [...scored].sort((a, b) => (b.relevance_score ?? 0) - (a.relevance_score ?? 0));
+  const kept = ranked.filter((j) => (j.relevance_score ?? 0) >= EXTERNAL_RELEVANCE_THRESHOLD);
+  const nearbyFloor = Math.max(5, EXTERNAL_RELEVANCE_THRESHOLD - EXTERNAL_NEARBY_WINDOW);
+  const nearby = ranked
+    .filter((j) => (j.relevance_score ?? 0) < EXTERNAL_RELEVANCE_THRESHOLD && (j.relevance_score ?? 0) >= nearbyFloor)
+    .slice(0, EXTERNAL_NEARBY_LIMIT);
+
+  // Keep the best matches, but also retain a small nearby bucket so adjacent role
+  // titles do not disappear when a few stronger matches exist.
+  const merged = deduplicate(kept.length > 0 ? [...kept, ...nearby] : ranked);
+  return merged;
 }
 
 async function fetchLinkedIn(

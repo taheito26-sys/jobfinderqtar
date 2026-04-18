@@ -201,6 +201,18 @@ export function scoreLinkedInJobAgainstProfile(job: Record<string, unknown>, pro
     if (jobFamilies.includes('engineer') && titleFamilies.includes('engineer')) {
       familyScore = Math.max(familyScore, 55);
     }
+    if (
+      jobFamilies.includes('specialist')
+      && (
+        titleFamilies.includes('architect')
+        || titleFamilies.includes('engineer')
+        || titleFamilies.includes('solutions')
+        || titleFamilies.includes('infrastructure')
+        || titleFamilies.includes('cloud')
+      )
+    ) {
+      familyScore = Math.max(familyScore, 35);
+    }
   }
 
   const skillMatches = profile.skills.filter((skill) => jobBlob.includes(normalizeText(skill))).length;
