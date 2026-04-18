@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { fetchLinkedInSearch } from "../_shared/linkedin-search.ts";
 import { startRunLog, updateRunLog, finishRunLog } from "../_shared/linkedin-run-log.ts";
 import { parseLinkedInRelativeDate } from "../_shared/linkedin-job.ts";
+import { resolveRequestAuth } from "../_shared/request-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,27 +30,8 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Validate Auth or Service Role
-    const authHeader = req.headers.get("Authorization");
-    let userId: string;
-    
-    if (authHeader?.startsWith("Bearer ")) {
-      const supabaseClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-      if (authError || !user) throw new Error("Unauthorized");
-      userId = user.id;
-    } else {
-      // Allow service role or explicit user_id if triggered internally
-      const body = await req.clone().json();
-      if (!body.user_id) throw new Error("Missing user_id for system call");
-      userId = body.user_id;
-    }
-
-    const payload: DiscoverInput = await req.json();
+    const { userId, body } = await resolveRequestAuth(req);
+    const payload = body as unknown as DiscoverInput;
     const {
       keywords,
       location = "United States",
@@ -155,7 +137,8 @@ Deno.serve(async (req) => {
                 stagedCount++;
               }
             } catch (cardErr) {
-              console.error(`Failed to stage card ${card.linkedin_job_id}:`, cardErr.message);
+              const message = cardErr instanceof Error ? cardErr.message : String(cardErr);
+              console.error(`Failed to stage card ${card.linkedin_job_id}:`, message);
               failedCount++;
             }
           }
@@ -171,9 +154,10 @@ Deno.serve(async (req) => {
           await new Promise(r => setTimeout(r, 1000 + Math.random() * 2000));
 
         } catch (pageErr) {
-          console.error(`Failed to fetch page ${page} for keyword ${keyword}:`, pageErr.message);
+          const message = pageErr instanceof Error ? pageErr.message : String(pageErr);
+          console.error(`Failed to fetch page ${page} for keyword ${keyword}:`, message);
           failedCount++;
-          if (pageErr.message.includes("rate limited")) break; // Stop this keyword
+          if (message.includes("rate limited")) break; // Stop this keyword
         }
       }
     }

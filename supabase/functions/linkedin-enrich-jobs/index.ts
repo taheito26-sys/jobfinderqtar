@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { enrichLinkedInJob } from "../_shared/linkedin-job.ts";
 import { startRunLog, updateRunLog, finishRunLog } from "../_shared/linkedin-run-log.ts";
 import { isJobStale } from "../_shared/linkedin-dedup.ts";
+import { resolveRequestAuth } from "../_shared/request-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -24,26 +25,8 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Auth validation
-    const authHeader = req.headers.get("Authorization");
-    let userId: string;
-    
-    if (authHeader?.startsWith("Bearer ")) {
-      const supabaseClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-      if (authError || !user) throw new Error("Unauthorized");
-      userId = user.id;
-    } else {
-      const body = await req.clone().json();
-      if (!body.user_id) throw new Error("Missing user_id");
-      userId = body.user_id;
-    }
-
-    const payload: EnrichInput = await req.json();
+    const { userId, body } = await resolveRequestAuth(req);
+    const payload = body as EnrichInput;
     const { batch_limit = 5, run_mode = "manual", source_id } = payload;
 
     // Start Run Log
@@ -145,13 +128,14 @@ Deno.serve(async (req) => {
         }
 
       } catch (err) {
-        console.error(`Enrichment failed for ${cand.linkedin_job_id}:`, err.message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Enrichment failed for ${cand.linkedin_job_id}:`, message);
         await supabaseAdmin
           .from('linkedin_discovered_jobs')
           .update({ 
             enrichment_status: 'failed', 
             failure_count: cand.failure_count + 1,
-            last_error: err.message
+            last_error: message
           })
           .eq('id', cand.id);
         failedCount++;

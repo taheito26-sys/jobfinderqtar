@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.4";
 import { startRunLog, finishRunLog, updateRunLog } from "../_shared/linkedin-run-log.ts";
+import { resolveRequestAuth } from "../_shared/request-auth.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -15,32 +16,14 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Auth validation
-    const authHeader = req.headers.get("Authorization");
-    let userId: string;
-    
-    if (authHeader?.startsWith("Bearer ")) {
-      const supabaseClient = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_ANON_KEY")!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-      if (authError || !user) throw new Error("Unauthorized");
-      userId = user.id;
-    } else {
-      const body = await req.clone().json();
-      if (!body.user_id) throw new Error("Missing user_id");
-      userId = body.user_id;
-    }
-
-    const payload = await req.json();
+    const { userId, body } = await resolveRequestAuth(req);
+    const payload = body as Record<string, unknown>;
     const { 
       source_id, 
       run_mode = "manual",
       discover_page_limit = 1,
       enrich_batch_limit = 10
-    } = payload;
+    } = payload as any;
 
     // Find LinkedIn sources for this user
     let query = supabaseAdmin
@@ -113,7 +96,8 @@ Deno.serve(async (req) => {
           totalStaged += discData.staged_count || 0;
         }
       } catch (err) {
-        console.error(`Discovery failed for source ${source.id}:`, err.message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Discovery failed for source ${source.id}:`, message);
       }
 
       // Update progress
@@ -143,7 +127,8 @@ Deno.serve(async (req) => {
           totalEnriched += enrData.enriched_count || 0;
         }
       } catch (err) {
-        console.error(`Enrichment failed for source ${source.id}:`, err.message);
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`Enrichment failed for source ${source.id}:`, message);
       }
 
       // Final progress update for this source
