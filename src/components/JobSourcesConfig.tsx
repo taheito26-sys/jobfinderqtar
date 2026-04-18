@@ -89,6 +89,7 @@ const JobSourcesConfig = () => {
   const [autoSearchEnabled, setAutoSearchEnabled] = useState(false);
   const [autoSearchFreq, setAutoSearchFreq] = useState('daily');
   const [prefs, setPrefs] = useState<Record<string, string>>({});
+  const [lastAutoSearchSummary, setLastAutoSearchSummary] = useState<string | null>(null);
   const [profileContext, setProfileContext] = useState<ProfileContext>({
     desired_titles: [],
     location: null,
@@ -378,14 +379,24 @@ const JobSourcesConfig = () => {
   const triggerAutoSearch = async () => {
     setSyncing('auto');
     try {
-      void supabase.functions.invoke('auto-search-jobs', {
+      const { data, error } = await supabase.functions.invoke('auto-search-jobs', {
         body: { mode: 'manual', user_id: user.id },
-      }).catch((err: any) => {
-        console.error('Auto-search background request failed:', err);
       });
+      if (error) throw error;
+
+      const breakdown = data?.source_breakdown || {};
+      const summary = Object.entries(breakdown)
+        .filter(([, stats]: any) => stats && (stats.discovered > 0 || stats.inserted > 0))
+        .map(([source, stats]: any) => {
+          const titles = Array.isArray(stats.titles) && stats.titles.length > 0 ? ` for ${stats.titles.join(', ')}` : '';
+          return `${source}: ${stats.inserted || 0}/${stats.discovered || 0} inserted${titles}`;
+        })
+        .join(' · ');
+      setLastAutoSearchSummary(summary || 'No source breakdown returned.');
+
       toast({
         title: 'Auto-search queued',
-        description: 'The scheduled sweep is active and this check is running in the background.',
+        description: summary || 'The scheduled sweep is active and this check is running in the background.',
       });
     } catch (err: any) {
       toast({ title: 'Auto-search failed', description: err.message, variant: 'destructive' });
@@ -465,8 +476,13 @@ const JobSourcesConfig = () => {
             Automatically search for jobs matching your desired titles from your profile
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
+          <CardContent className="space-y-4">
+            {lastAutoSearchSummary && (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">Last sweep breakdown:</span> {lastAutoSearchSummary}
+              </div>
+            )}
+            <div className="flex items-center justify-between">
               <div className="space-y-0.5">
                 <p className="text-sm font-medium text-foreground">Enable auto-search</p>
                 <p className="text-xs text-muted-foreground">

@@ -84,6 +84,7 @@ Deno.serve(async (req) => {
 
     let totalDiscoveredJobs = 0;
     let totalInsertedJobs = 0;
+    const sourceBreakdown: Record<string, { discovered: number; inserted: number; titles: string[] }> = {};
 
     // --- Part 1: Process LinkedIn Specific Sources (from previous Turn) ---
     const { data: linkedinSources } = await supabaseAdmin
@@ -384,6 +385,13 @@ Deno.serve(async (req) => {
 
           totalDiscoveredJobs += searchResult.jobs.length;
 
+          for (const [sourceName, count] of Object.entries(searchResult.counts)) {
+            const bucket = sourceBreakdown[sourceName] ?? { discovered: 0, inserted: 0, titles: [] };
+            bucket.discovered += Number(count) || 0;
+            if (!bucket.titles.includes(title)) bucket.titles.push(title);
+            sourceBreakdown[sourceName] = bucket;
+          }
+
           console.log(`[auto-search] "${title}" → ${searchResult.total} jobs from [${searchResult.sources_with_results.join(', ')}]`);
 
           // Record in ledger
@@ -462,6 +470,10 @@ Deno.serve(async (req) => {
               }
 
               totalInsertedJobs++;
+              const sourceName = String(job.source_platform || 'unknown');
+              const bucket = sourceBreakdown[sourceName] ?? { discovered: 0, inserted: 0, titles: [] };
+              bucket.inserted += 1;
+              sourceBreakdown[sourceName] = bucket;
             } catch (jobErr: any) {
               console.error(`[auto-search] Error saving job "${job.title}":`, jobErr.message);
             }
@@ -476,6 +488,7 @@ Deno.serve(async (req) => {
       success: true,
       jobs_found: totalDiscoveredJobs,
       jobs_inserted: totalInsertedJobs,
+      source_breakdown: sourceBreakdown,
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
