@@ -55,6 +55,16 @@ function normalizeLinkedInJobUrl(url: string): string {
           : `https://${decoded}`;
       }
     }
+
+    // Keep LinkedIn search and collection pages intact so the backend can
+    // parse every visible job card instead of collapsing to a single job ID.
+    if (u.hostname.includes('linkedin.com') && (
+      u.pathname.includes('/jobs/search') ||
+      u.pathname.includes('/jobs/collections')
+    )) {
+      return url;
+    }
+
     const jobIdMatch = u.pathname.match(/\/jobs\/view\/(\d+)/) ||
                        u.pathname.match(/\/jobs\/(\d+)/) ||
                        url.match(/currentJobId=(\d+)/);
