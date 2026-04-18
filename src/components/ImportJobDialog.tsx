@@ -13,6 +13,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
+import { hydrateImportedJobs } from '@/lib/job-hydration';
 import { parseJobDate } from '@/lib/job-date';
 import { Loader2, Globe, Check, Linkedin, ClipboardPaste, CheckCircle2, Search, SlidersHorizontal, Calendar } from 'lucide-react';
 
@@ -268,6 +269,11 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
             metadata: { source: 'linkedin_search', source_url: url } as any,
           });
         }
+        await hydrateImportedJobs(data.map((d: any) => ({
+          id: d.id,
+          apply_url: d.apply_url,
+          source_url: d.source_url,
+        })));
         onJobAdded(data);
         const msg = skipped > 0
           ? `Imported ${data.length} jobs! (${skipped} duplicates skipped)`
@@ -329,6 +335,11 @@ const ImportJobDialog = ({ open, onOpenChange, onJobAdded }: ImportJobDialogProp
         user_id: user.id, job_id: data.id, event_type: 'job_imported',
         metadata: { source: isLI ? 'linkedin' : 'web', source_url: sourceUrl } as any,
       });
+      await hydrateImportedJobs([{
+        id: data.id,
+        apply_url: data.apply_url,
+        source_url: data.source_url,
+      }]);
       onJobAdded(data);
       onOpenChange(false);
       resetState();

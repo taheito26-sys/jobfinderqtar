@@ -3,6 +3,7 @@ import { supabase } from '@/integrations/supabase/client';
 import type { Database } from '@/integrations/supabase/types';
 import { useAuth } from '@/hooks/useAuth';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
+import { hydrateImportedJobs } from '@/lib/job-hydration';
 import { formatJobDate, parseJobDate } from '@/lib/job-date';
 
 type JobInsert = Database['public']['Tables']['jobs']['Insert'];
@@ -331,6 +332,11 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
         event_type: 'job_imported',
         metadata: { source: 'listing_browser', source_url: sourceUrl } as any,
       });
+      await hydrateImportedJobs([{
+        id: data.id,
+        apply_url: data.apply_url,
+        source_url: data.source_url,
+      }]);
 
       setImportedKeys(prev => new Set(prev).add(key));
       toast({ title: `"${job.title}" added to your Job Feed!` });

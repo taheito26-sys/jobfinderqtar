@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
+import { hydrateImportedJobs } from '@/lib/job-hydration';
 import {
   Search, Globe, Linkedin, Loader2, MapPin, Building2,
   Sparkles, CheckCircle2, ClipboardPaste, Link2, ArrowRight,
@@ -238,6 +239,11 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
     const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
 
     if (data) {
+      await hydrateImportedJobs(data.map((job: any) => ({
+        id: job.id,
+        apply_url: job.apply_url,
+        source_url: job.source_url,
+      })));
       onJobsAdded(data);
       const msg = skipped > 0
         ? `Imported ${data.length} jobs (${skipped} duplicates skipped)`

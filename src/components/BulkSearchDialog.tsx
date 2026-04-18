@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
+import { hydrateImportedJobs } from '@/lib/job-hydration';
 import { Loader2, Search, MapPin, Building2, Plus, CheckCircle2, User, Briefcase, Sparkles } from 'lucide-react';
 
 interface SearchResult {
@@ -267,6 +268,11 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     const { data, error } = await (supabase as any).from('jobs').insert(insertData).select();
 
     if (data) {
+      await hydrateImportedJobs(data.map((job: any) => ({
+        id: job.id,
+        apply_url: job.apply_url,
+        source_url: job.source_url,
+      })));
       const newImported = new Set(imported);
       results.forEach((_, i) => { if (selected.has(i)) newImported.add(i); });
       setImported(newImported);

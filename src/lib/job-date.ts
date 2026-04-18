@@ -6,6 +6,8 @@ export function getBestJobDateCandidate(job: any): string | null {
     job?.discovered_at ||
     raw?.source_created_at ||
     raw?.posted_at ||
+    raw?.hydrated_job?.source_created_at ||
+    raw?.hydrated_job?.posted_at ||
     raw?.postedAt ||
     raw?.source_created_at_text ||
     raw?.listed_at_text ||
@@ -66,6 +68,7 @@ export function getBestJobDescriptionCandidate(job: any): string | null {
   const candidate =
     job?.description ||
     raw?.description ||
+    raw?.hydrated_job?.description ||
     raw?.details?.description ||
     raw?.raw_source_detail?.description ||
     raw?.snippet?.description ||

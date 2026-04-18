@@ -287,6 +287,137 @@ function normaliseJob(raw: Record<string, unknown>, fallbackUrl: string): Record
   };
 }
 
+function isMeaningfulText(value: unknown): boolean {
+  return Boolean(String(value ?? '').trim());
+}
+
+async function persistHydratedJobRow(
+  supabaseClient: any,
+  userId: string,
+  jobId: string,
+  sourceUrl: string,
+  hydratedJob: Record<string, unknown>,
+) {
+  const { data: existingJob, error: existingError } = await supabaseClient
+    .from('jobs')
+    .select('id, description, posted_at, raw_data, updated_at')
+    .eq('id', jobId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (existingError) {
+    throw existingError;
+  }
+
+  if (!existingJob) {
+    return null;
+  }
+
+  const existingRaw = (existingJob.raw_data as Record<string, unknown> | null) ?? {};
+  const currentDescription = String(existingJob.description || '').trim();
+  const currentPostedAt = String(existingJob.posted_at || '').trim();
+  const hydratedDescription = isMeaningfulText(hydratedJob.description) ? String(hydratedJob.description).trim() : '';
+  const hydratedPostedAt = isMeaningfulText(hydratedJob.source_created_at)
+    ? String(hydratedJob.source_created_at).trim()
+    : isMeaningfulText(hydratedJob.posted_at)
+      ? String(hydratedJob.posted_at).trim()
+      : '';
+
+  const mergedHydration = {
+    ...(existingRaw.hydration as Record<string, unknown> | undefined),
+    status: 'hydrated',
+    hydrated_at: new Date().toISOString(),
+    source_url: sourceUrl,
+    description_hydrated: Boolean(hydratedDescription),
+    posted_at_hydrated: Boolean(hydratedPostedAt),
+  };
+
+  const updates: Record<string, unknown> = {
+    raw_data: {
+      ...existingRaw,
+      hydration: mergedHydration,
+      hydrated_job: hydratedJob,
+    },
+    updated_at: new Date().toISOString(),
+  };
+
+  if (!currentDescription && hydratedDescription) {
+    updates.description = hydratedDescription;
+  }
+
+  if (!currentPostedAt && hydratedPostedAt) {
+    updates.posted_at = hydratedPostedAt;
+  }
+
+  if (isMeaningfulText(hydratedJob.apply_url)) {
+    updates.apply_url = String(hydratedJob.apply_url).trim();
+  }
+
+  if (isMeaningfulText(hydratedJob.source_url)) {
+    updates.source_url = String(hydratedJob.source_url).trim();
+  }
+
+  if (isMeaningfulText(hydratedJob.title)) {
+    updates.title = String(hydratedJob.title).trim();
+  }
+
+  if (isMeaningfulText(hydratedJob.company)) {
+    updates.company = String(hydratedJob.company).trim();
+  }
+
+  if (isMeaningfulText(hydratedJob.location)) {
+    updates.location = String(hydratedJob.location).trim();
+  }
+
+  if (isMeaningfulText(hydratedJob.remote_type)) {
+    updates.remote_type = String(hydratedJob.remote_type).trim();
+  }
+
+  if (isMeaningfulText(hydratedJob.employment_type)) {
+    updates.employment_type = String(hydratedJob.employment_type).trim();
+  }
+
+  if (isMeaningfulText(hydratedJob.seniority_level)) {
+    updates.seniority_level = String(hydratedJob.seniority_level).trim();
+  }
+
+  if (Array.isArray(hydratedJob.requirements) && hydratedJob.requirements.length > 0) {
+    updates.requirements = hydratedJob.requirements;
+  }
+
+  if (Array.isArray(hydratedJob.nice_to_haves) && hydratedJob.nice_to_haves.length > 0) {
+    updates.nice_to_haves = hydratedJob.nice_to_haves;
+  }
+
+  if (hydratedJob.salary_min !== undefined && hydratedJob.salary_min !== null && hydratedJob.salary_min !== '') {
+    updates.salary_min = Number(hydratedJob.salary_min);
+  }
+
+  if (hydratedJob.salary_max !== undefined && hydratedJob.salary_max !== null && hydratedJob.salary_max !== '') {
+    updates.salary_max = Number(hydratedJob.salary_max);
+  }
+
+  if (isMeaningfulText(hydratedJob.salary_currency)) {
+    updates.salary_currency = String(hydratedJob.salary_currency).trim();
+  }
+
+  if (!currentDescription && hydratedDescription) {
+    updates.normalized = hydratedDescription.length >= 250;
+  }
+
+  const { error: updateError } = await supabaseClient
+    .from('jobs')
+    .update(updates)
+    .eq('id', jobId)
+    .eq('user_id', userId);
+
+  if (updateError) {
+    throw updateError;
+  }
+
+  return updates;
+}
+
 /** Use AI to extract structured job data from raw text.
  *  Returns a single job, multiple individual jobs, or a listing page with many job cards. */
 async function extractJobWithAI(text: string, sourceUrl: string, userId: string): Promise<ExtractionResult> {
@@ -432,8 +563,9 @@ Deno.serve(async (req) => {
       userId = user.id;
     }
 
-    const { url, manualDescription } = body;
+    const { url, manualDescription, job_id } = body;
     const debugMode = body?.debug === true;
+    const hydratedJobId = isMeaningfulText(job_id) ? String(job_id).trim() : '';
     
     // Handle manual paste mode
     if (manualDescription) {
@@ -854,6 +986,15 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ success: false, error: msg || 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
+      }
+    }
+
+    if (hydratedJobId && job) {
+      try {
+        await persistHydratedJobRow(supabaseClient as any, userId, hydratedJobId, formattedUrl, job);
+      } catch (hydrationError) {
+        const msg = hydrationError instanceof Error ? hydrationError.message : String(hydrationError);
+        console.warn(`Failed to persist hydrated job ${hydratedJobId}:`, msg);
       }
     }
 

@@ -1,0 +1,47 @@
+import { supabase } from '@/integrations/supabase/client';
+
+export type JobHydrationTarget = {
+  id: string;
+  apply_url?: string | null;
+  source_url?: string | null;
+};
+
+export async function hydrateImportedJob(target: JobHydrationTarget) {
+  const url = String(target.apply_url || target.source_url || '').trim();
+  if (!target.id || !url) {
+    return { ok: false, skipped: true, reason: 'missing_url' as const };
+  }
+
+  const { data, error } = await supabase.functions.invoke('scrape-job-url', {
+    body: { url, job_id: target.id },
+  });
+
+  if (error) {
+    return { ok: false, error: error.message };
+  }
+  if (data?.error) {
+    return { ok: false, error: data.message || data.error };
+  }
+
+  return { ok: true, data };
+}
+
+export async function hydrateImportedJobs(targets: JobHydrationTarget[]) {
+  const settled = await Promise.allSettled(targets.map((target) => hydrateImportedJob(target)));
+
+  let hydrated = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const result of settled) {
+    if (result.status === 'fulfilled') {
+      if (result.value.skipped) skipped += 1;
+      else if (result.value.ok) hydrated += 1;
+      else failed += 1;
+    } else {
+      failed += 1;
+    }
+  }
+
+  return { hydrated, skipped, failed };
+}
