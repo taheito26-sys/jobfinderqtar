@@ -130,7 +130,7 @@ Deno.serve(async (req) => {
             });
           }
         } catch (err) {
-          const message = err?.message || String(err);
+          const message = err instanceof Error ? err.message : String(err);
           await setSourceRunState(supabaseAdmin, source.id, (source.config as Record<string, any>) || {}, {
             search_status: 'error',
             search_progress: 100,
@@ -312,7 +312,7 @@ Deno.serve(async (req) => {
             console.log(`Generic source ${source.source_name}: inserted ${inserted} jobs`);
           }
         } catch (err: any) {
-          const message = err?.message || String(err);
+          const message = err instanceof Error ? err.message : String(err);
           await supabaseAdmin
             .from('job_sources')
             .update({ config: { ...config, last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } })
@@ -339,10 +339,7 @@ Deno.serve(async (req) => {
       // Use the broader country first so auto-search does not get trapped
       // by overly specific city-level locations like "Doha, Qatar".
       const profileLocation = profile.country || profile.location || 'Qatar';
-      const requestedMaxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '2', 10) || 2, titles.length));
-      const maxTitles = runMode === 'manual'
-        ? Math.min(1, requestedMaxTitles)
-        : requestedMaxTitles;
+      const maxTitles = titles.length;
 
       for (const title of titles.slice(0, maxTitles)) {
         console.log(`[auto-search] Multi-source discovery: "${title}" in "${profileLocation}"`);

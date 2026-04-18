@@ -261,23 +261,42 @@ const JobSourcesConfig = () => {
     setSyncing(source.id);
     try {
       const isLinkedIn = /linkedin/i.test(source.source_name) || /linkedin/i.test(source.config.base_url || '');
-      const profileSeedTitle = profileContext.desired_titles?.[0]?.trim() || '';
-      const querySeed =
+      const profileSeedTitles = (profileContext.desired_titles || []).map((title) => title.trim()).filter(Boolean);
+      const fallbackSeed =
         (source.config.search_keywords ?? []).map((kw) => kw.trim()).filter(Boolean).join(' ')
-        || profileSeedTitle
         || source.source_name;
       const queryCountry = source.config.search_location || profileContext.country || profileContext.location || '';
       let data: any;
       let error: any;
 
       if (isLinkedIn) {
-        ({ data, error } = await supabase.functions.invoke('search-jobs', {
-          body: {
-            query: querySeed,
-            country: queryCountry,
-            limit: 3,
-          },
-        }));
+        const seeds = profileSeedTitles.length > 0 ? profileSeedTitles : [fallbackSeed];
+        const allJobs: any[] = [];
+        for (const seed of seeds) {
+          const { data: seedData, error: seedError } = await supabase.functions.invoke('search-jobs', {
+            body: {
+              query: seed,
+              country: queryCountry,
+              limit: 3,
+            },
+          });
+          if (seedError) {
+            error = seedError;
+            continue;
+          }
+          if (Array.isArray(seedData?.jobs)) {
+            allJobs.push(...seedData.jobs);
+          }
+        }
+        const seen = new Set<string>();
+        const deduped = allJobs.filter((job) => {
+          const key = `${String(job.apply_url || '').toLowerCase()}|${String(job.title || '').toLowerCase()}|${String(job.company || '').toLowerCase()}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        data = { jobs: deduped };
+        error = null;
       } else {
         const baseUrl = source.config.base_url || source.source_name;
         try {
