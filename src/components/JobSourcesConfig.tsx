@@ -330,7 +330,7 @@ const JobSourcesConfig = () => {
       } else {
         const baseUrl = source.config.base_url || source.source_name;
         try {
-          const result = await scrapeJobUrlWithReaderFallback(baseUrl);
+          const result = await scrapeJobUrlWithReaderFallback(baseUrl, { userId: user?.id ?? null });
           data = result;
           error = result.success ? null : new Error(result.message || result.error || 'Could not reach source');
         } catch (readerErr: any) {

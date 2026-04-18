@@ -45,9 +45,22 @@ import {
 import { parseLinkedInJobCards } from '../_shared/linkedin-search.ts';
 import { fetchLinkedInSearch } from '../_shared/linkedin-search.ts';
 import { normalizeLinkedInJob } from '../_shared/linkedin-normalize.ts';
+import { searchIndeedQatar } from '../_shared/indeed-search.ts';
+import { searchAllSources } from '../_shared/multi-source-search.ts';
+import { buildLinkedInSearchVariants, loadLinkedInProfileContext, scoreLinkedInJobAgainstProfile } from '../_shared/linkedin-profile-search.ts';
 
 function extractLinkedInJobId(url: string): string | null {
   return sharedExtractId(url);
+}
+
+function isIndeedSearchUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return parsed.hostname.includes('indeed.com') && path.includes('/jobs') && !path.includes('/viewjob');
+  } catch {
+    return false;
+  }
 }
 
 function markNormalizationStatus(job: any, evidenceLength: number) {
@@ -391,6 +404,125 @@ async function fetchLinkedInPageHtml(url: string): Promise<string> {
   });
   if (!res.ok) throw new Error(`LinkedIn page fetch failed: ${res.status}`);
   return await res.text();
+}
+
+function pickIndeedSearchSeed(profile: LinkedInProfileContext | null, url: string): string {
+  try {
+    const parsed = new URL(url);
+    const q = parsed.searchParams.get('q')?.trim();
+    if (q) return q;
+  } catch {
+    /* ignore */
+  }
+
+  const fromProfile = profile?.desiredTitles?.find((title) => String(title || '').trim());
+  return String(fromProfile || profile?.headline || 'Qatar').trim() || 'Qatar';
+}
+
+async function searchIndeedFromUrl(
+  formattedUrl: string,
+  userId: string,
+  supabaseClient: any,
+): Promise<{ jobs: any[]; debug: any[] }> {
+  const profileContext = await loadLinkedInProfileContext(supabaseClient, userId).catch(() => null);
+  let location = 'Qatar';
+
+  try {
+    const parsed = new URL(formattedUrl);
+    location = parsed.searchParams.get('l')?.trim() || location;
+  } catch {
+    /* ignore */
+  }
+
+  if (profileContext?.country) location = profileContext.country;
+  else if (profileContext?.location) location = profileContext.location;
+
+  const initialSeed = pickIndeedSearchSeed(profileContext, formattedUrl);
+  const seedCandidates = new Set<string>([
+    initialSeed,
+    ...buildLinkedInSearchVariants({ keywords: initialSeed, profile: profileContext }),
+    ...(profileContext?.desiredTitles || []).slice(0, 4),
+    profileContext?.headline || '',
+    profileContext?.country || '',
+    profileContext?.location || '',
+    'Qatar',
+    'architect',
+    'engineer',
+    'solutions architect',
+    'infrastructure architect',
+    'cloud architect',
+    'system engineer',
+  ].map((seed) => String(seed || '').trim()).filter(Boolean));
+
+  const collected = new Map<string, any>();
+  const debug: any[] = [];
+
+  for (const seed of [...seedCandidates].slice(0, 8)) {
+    try {
+      const jobs = await searchIndeedQatar(seed, location, 10);
+      const ranked = profileContext
+        ? jobs.map((job) => ({ ...job, relevance_score: scoreLinkedInJobAgainstProfile(job, profileContext) }))
+        : jobs;
+
+      debug.push({ seed, count: jobs.length });
+
+      for (const job of ranked) {
+        const key = String(job?.apply_url || job?.external_id || job?.title || '')
+          .trim()
+          .toLowerCase() || `${String(job?.title || '').trim().toLowerCase()}|${String(job?.company || '').trim().toLowerCase()}`;
+        if (!key || collected.has(key)) continue;
+        collected.set(key, job);
+      }
+
+      if (collected.size >= 20) break;
+    } catch (err) {
+      debug.push({ seed, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  const resultJobs = [...collected.values()];
+  let finalJobs = profileContext
+    ? resultJobs.sort((a, b) => Number(b.relevance_score || 0) - Number(a.relevance_score || 0))
+    : resultJobs;
+
+  if (finalJobs.length === 0) {
+    const fallbackQuery = profileContext?.desiredTitles?.[0] || profileContext?.headline || initialSeed || 'Qatar';
+    const fallback = await searchAllSources({
+      keywords: fallbackQuery,
+      location,
+      limit: 20,
+      perSourceLimit: 10,
+      sources: {
+        linkedin: true,
+        indeed: false,
+        bayt: true,
+        gulftalent: true,
+      },
+      profile: profileContext,
+    });
+    finalJobs = fallback.jobs || [];
+    debug.push({
+      fallback: 'multi_source',
+      query: fallbackQuery,
+      counts: fallback.counts,
+      sources_with_results: fallback.sources_with_results,
+      returned: finalJobs.length,
+    });
+  }
+
+  return {
+    jobs: finalJobs,
+    debug: [
+      {
+        source: 'indeed_search_url',
+        query: initialSeed,
+        location,
+        counts: { indeed: finalJobs.length },
+        sources_with_results: finalJobs.length > 0 ? ['indeed'] : [],
+        seeds: debug,
+      },
+    ],
+  };
 }
 
 
@@ -740,43 +872,64 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
+    const body = await req.json().catch(() => ({} as Record<string, unknown>));
     const authHeader = req.headers.get('Authorization');
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization' }), {
-        status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+    const requestedUrl = typeof body?.url === 'string' ? body.url : '';
+    const requestedUserId = typeof body?.user_id === 'string' ? body.user_id : null;
+    const allowUserIdFallback = Boolean(requestedUserId && isIndeedSearchUrl(requestedUrl));
     let userId: string;
     let supabaseClient: any;
 
-    if (serviceRoleKey && bearerToken === serviceRoleKey) {
-      userId = body?.user_id;
-      if (!userId) {
-        return new Response(JSON.stringify({ error: 'Missing user_id' }), {
-          status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-      supabaseClient = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-      );
-    } else {
-      supabaseClient = createClient(
-        Deno.env.get('SUPABASE_URL')!,
-        Deno.env.get('SUPABASE_ANON_KEY')!,
-        { global: { headers: { Authorization: authHeader } } }
-      );
-      const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
-      if (authError || !user) {
-        return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+    if (!authHeader) {
+      if (allowUserIdFallback && serviceRoleKey && requestedUserId) {
+        userId = requestedUserId;
+        supabaseClient = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          serviceRoleKey
+        );
+      } else {
+        return new Response(JSON.stringify({ error: 'Missing authorization' }), {
           status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      userId = user.id;
+    } else {
+      const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : authHeader;
+
+      if (serviceRoleKey && bearerToken === serviceRoleKey) {
+        userId = requestedUserId || '';
+        if (!userId) {
+          return new Response(JSON.stringify({ error: 'Missing user_id' }), {
+            status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        supabaseClient = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          serviceRoleKey
+        );
+      } else {
+        supabaseClient = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_ANON_KEY')!,
+          { global: { headers: { Authorization: authHeader } } }
+        );
+        const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
+        if (authError || !user) {
+          if (allowUserIdFallback && serviceRoleKey && requestedUserId) {
+            userId = requestedUserId;
+            supabaseClient = createClient(
+              Deno.env.get('SUPABASE_URL')!,
+              serviceRoleKey
+            );
+          } else {
+            return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+              status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+        } else {
+          userId = user.id;
+        }
+      }
     }
 
     const { url, manualDescription, job_id } = body;
@@ -1051,11 +1204,11 @@ Deno.serve(async (req) => {
     }
 
     // === LinkedIn Single Job URL ===
-    if (isLinkedin) {
-      const jobId = extractLinkedInJobId(formattedUrl);
-      if (jobId) {
-        try {
-          const enriched = await enrichLinkedInJob(jobId, userId);
+      if (isLinkedin) {
+        const jobId = extractLinkedInJobId(formattedUrl);
+        if (jobId) {
+          try {
+            const enriched = await enrichLinkedInJob(jobId, userId);
           if (enriched) {
             const evidenceLength = String(enriched.description || '').trim().length || 1000;
             job = markNormalizationStatus(enriched, evidenceLength);
@@ -1076,13 +1229,70 @@ Deno.serve(async (req) => {
           fallback: true,
         }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
+          });
+        }
       }
-    }
 
-    // === Non-LinkedIn: try Firecrawl first ===
-    if (!extracted) {
-      const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
+      // === Indeed search/listing URLs: route through board search instead of scraping blocked HTML ===
+      if (!extracted && isIndeedSearchUrl(formattedUrl)) {
+        try {
+          const { jobs, debug } = await searchIndeedFromUrl(formattedUrl, userId, supabaseClient);
+          if (jobs.length > 0) {
+            try {
+              await recordLedgerSync(supabaseClient as any, userId, 'indeed-search-scrape', 'search', jobs, {
+                baseUrl: formattedUrl,
+                configJson: {
+                  source: 'indeed_search_url',
+                  debug,
+                },
+                normalizationStatus: 'valid',
+                runMode: 'collect',
+              });
+            } catch (ledgerError) {
+              console.warn('Ledger sync failed for Indeed search URL:', ledgerError);
+            }
+
+            console.log(`Successfully extracted ${jobs.length} Indeed jobs from search/list URL`);
+            return new Response(JSON.stringify({
+              success: true,
+              multiple: true,
+              jobs,
+              total_found: jobs.length,
+              failed_count: 0,
+              debug,
+            }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'INDEED_SEARCH_EMPTY',
+            message: 'Indeed search returned no jobs for this query.',
+            fallback: true,
+            debug,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn('Indeed search/list URL fallback failed:', msg);
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'INDEED_SEARCH_FAILED',
+            message: msg,
+            fallback: true,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+      }
+
+      // === Non-LinkedIn: try Firecrawl first ===
+      if (!extracted) {
+        const apiKey = Deno.env.get('FIRECRAWL_API_KEY');
       if (apiKey) {
         try {
           const scrapeResponse = await fetch('https://api.firecrawl.dev/v1/scrape', {

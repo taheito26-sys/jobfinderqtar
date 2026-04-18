@@ -91,7 +91,7 @@ async function scrapeOrParse(url: string, manualDescription?: string): Promise<{
     ? await supabase.functions.invoke('scrape-job-url', {
         body: { url, manualDescription },
       })
-    : { data: await scrapeJobUrlWithReaderFallback(url), error: null };
+    : { data: await scrapeJobUrlWithReaderFallback(url, { userId: user?.id ?? null }), error: null };
 
   if (error) {
     return { success: false, error: error.message };

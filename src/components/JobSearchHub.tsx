@@ -120,7 +120,7 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
     setUrlSelected(new Set());
 
     try {
-      const data = await scrapeJobUrlWithReaderFallback(normalizedUrl);
+      const data = await scrapeJobUrlWithReaderFallback(normalizedUrl, { userId: user?.id ?? null });
 
       if (data?.multiple && Array.isArray(data.jobs)) {
         setUrlResults(data.jobs);

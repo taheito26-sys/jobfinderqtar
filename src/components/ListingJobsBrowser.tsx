@@ -220,7 +220,7 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
 
     // ── Source 2: Original listing page scrape (non-LinkedIn) ─────────────────
     const listingFetch: Promise<ListingJob[]> = sourceUrl
-      ? scrapeJobUrlWithReaderFallback(sourceUrl)
+      ? scrapeJobUrlWithReaderFallback(sourceUrl, { userId: user?.id ?? null })
           .then((data) => {
             if (!data?.success || data?.error) return [] as ListingJob[];
             // Listing response may be { multiple: true, jobs: [...] } or { job: {...} }

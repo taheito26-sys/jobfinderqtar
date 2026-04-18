@@ -15,7 +15,7 @@ export async function hydrateImportedJob(target: JobHydrationTarget) {
     return { ok: false, skipped: true, reason: 'missing_url' as const };
   }
 
-  const data = await scrapeJobUrlWithReaderFallback(url, { jobId: target.id });
+  const data = await scrapeJobUrlWithReaderFallback(url, { jobId: target.id, userId });
 
   if (!data?.success || data?.error) {
     return { ok: false, error: data?.message || data?.error || 'Could not hydrate job' };
