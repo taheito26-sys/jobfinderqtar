@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
-import { getPipelineConfig } from '../_shared/ai-pipeline.ts';
+import { getPipelineConfig, runPipelineText } from '../_shared/ai-pipeline.ts';
 import { recordLedgerSync } from '../_shared/hardline-ledger.ts';
 
 const corsHeaders = {
@@ -170,22 +170,91 @@ async function fetchLinkedInPageHtml(url: string): Promise<string> {
 
 /** Fetch raw HTML from a URL and extract text */
 async function fetchPageText(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-  const html = await res.text();
-  return html
+  const readerUrl = `https://r.jina.ai/http://${url}`;
+  const hostname = (() => {
+    try {
+      return new URL(url).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  const preferReaderFirst = [
+    'bayt.com',
+    'gulftalent.com',
+    'indeed.',
+    'naukrigulf.com',
+    'tanqeeb.com',
+    'qatarliving.com',
+    'akhtaboot.com',
+    'glassdoor.com',
+    'weworkremotely.com',
+  ].some((domain) => hostname === domain || hostname.endsWith(`.${domain}`) || hostname.includes(domain));
+
+  const toReadableText = (html: string) => html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .substring(0, 12000);
+
+  const looksBlocked = (text: string) => /just a moment|access denied|captcha|verify you are human|blocked|enable javascript/i.test(text);
+
+  const fetchDirect = async () => {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`Direct fetch failed with ${res.status}`);
+    }
+    const html = await res.text();
+    const readable = toReadableText(html);
+    if (readable.length < 200 || looksBlocked(readable)) {
+      throw new Error('Direct fetch returned sparse or blocked content');
+    }
+    return readable;
+  };
+
+  const fetchReader = async () => {
+    const readerRes = await fetch(readerUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/plain, text/markdown, text/html, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (!readerRes.ok) {
+      throw new Error(`Reader fetch failed with ${readerRes.status}`);
+    }
+    const readerText = await readerRes.text();
+    const readable = toReadableText(readerText);
+    if (readable.length < 100) {
+      throw new Error('Reader returned too little content');
+    }
+    return readable;
+  };
+
+  const attempts = preferReaderFirst
+    ? [fetchReader, fetchDirect]
+    : [fetchDirect, fetchReader];
+
+  const attemptErrors: string[] = [];
+  for (const attempt of attempts) {
+    try {
+      const text = await attempt();
+      if (text.length >= 100) return text;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      attemptErrors.push(message);
+      console.warn(`Page text fetch attempt failed for ${url}: ${message}`);
+    }
+  }
+
+  throw new Error(attemptErrors.length > 0 ? attemptErrors.join(' | ') : 'Could not fetch enough content from this page.');
 }
 
 /**
@@ -259,103 +328,41 @@ For LISTING_PAGE: extract ALL visible job cards; find each card's link (href) an
 
 PAGE CONTENT:
 ${text}`;
+  const config = await getPipelineConfig(userId);
+  const { result: content, providerChain } = await runPipelineText({
+    config,
+    systemPrompt: 'You extract structured job data from web pages and return only valid JSON.',
+    userPrompt: prompt,
+    reviewInstruction: 'Return only valid JSON that matches the requested schema. Do not add markdown, commentary, or code fences.',
+  });
 
-  const lovableKey = Deno.env.get('LOVABLE_API_KEY');
-  const providers: Array<{name: string; url: string; headers: Record<string,string>; body: any; extractContent: (d:any)=>string}> = [];
+  console.log(`AI extraction provider chain: ${providerChain.join(' -> ')}`);
 
-  if (lovableKey) {
-    providers.push({
-      name: 'Lovable AI',
-      url: 'https://ai.gateway.lovable.dev/v1/chat/completions',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${lovableKey}` },
-      body: { model: 'google/gemini-3-flash-preview', messages: [{ role: 'user', content: prompt }], temperature: 0.1 },
-      extractContent: (data: any) => data.choices?.[0]?.message?.content || '',
-    });
+  const jsonMatch = content.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+  if (!jsonMatch) {
+    throw new Error('AI provider did not return valid JSON');
+  }
+  const parsed = JSON.parse(jsonMatch[0]);
+
+  if (Array.isArray(parsed)) {
+    const jobs = parsed.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
+    console.log(`AI extraction: ${jobs.length} jobs (bare array)`);
+    return jobs.length === 1 ? { type: 'single', job: jobs[0] } : { type: 'multiple', jobs };
+  }
+  if (parsed.type === 'listing' && Array.isArray(parsed.jobs)) {
+    const jobs = parsed.jobs.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
+    console.log(`AI extraction: ${jobs.length} listing cards (total on page: ${parsed.total_count})`);
+    return { type: 'listing', jobs, total_count: Number(parsed.total_count) || jobs.length };
+  }
+  if (parsed.type === 'multiple' && Array.isArray(parsed.jobs)) {
+    const jobs = parsed.jobs.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
+    console.log(`AI extraction: ${jobs.length} jobs (multiple)`);
+    return jobs.length === 1 ? { type: 'single', job: jobs[0] } : { type: 'multiple', jobs };
   }
 
-  try {
-    const config = await getPipelineConfig(userId);
-    if (config.primary.apiKey && config.primary.provider !== 'lovable') {
-      const p = config.primary;
-      if (p.provider === 'anthropic') {
-        providers.push({
-          name: p.name,
-          url: p.url,
-          headers: { 'Content-Type': 'application/json', 'x-api-key': p.apiKey, 'anthropic-version': '2023-06-01' },
-          body: { model: p.model, max_tokens: 4000, messages: [{ role: 'user', content: prompt }] },
-          extractContent: (data: any) => data.content?.[0]?.text || '',
-        });
-      } else {
-        providers.push({
-          name: p.name,
-          url: p.url,
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${p.apiKey}` },
-          body: { model: p.model, messages: [{ role: 'user', content: prompt }], temperature: 0.1 },
-          extractContent: (data: any) => data.choices?.[0]?.message?.content || '',
-        });
-      }
-    }
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.warn('Could not load pipeline config, using Lovable AI only:', msg);
-  }
-
-  let lastError = '';
-  for (const prov of providers) {
-    try {
-      console.log(`Trying AI extraction with ${prov.name}...`);
-      const res = await fetch(prov.url, {
-        method: 'POST',
-        headers: prov.headers,
-        body: JSON.stringify(prov.body),
-      });
-      if (!res.ok) {
-        const errText = await res.text();
-        console.warn(`${prov.name} failed (${res.status}): ${errText.substring(0, 200)}`);
-        lastError = `${prov.name}: ${res.status}`;
-        continue;
-      }
-      const data = await res.json();
-      const content = prov.extractContent(data);
-
-      // Parse the outermost JSON object or array
-      const jsonMatch = content.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-      if (!jsonMatch) {
-        console.warn(`${prov.name} did not return valid JSON`);
-        lastError = `${prov.name}: no JSON in response`;
-        continue;
-      }
-      const parsed = JSON.parse(jsonMatch[0]);
-
-      // Handle response shapes
-      if (Array.isArray(parsed)) {
-        // Bare array of jobs
-        const jobs = parsed.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
-        console.log(`AI extraction (${prov.name}): ${jobs.length} jobs (bare array)`);
-        return jobs.length === 1 ? { type: 'single', job: jobs[0] } : { type: 'multiple', jobs };
-      }
-      if (parsed.type === 'listing' && Array.isArray(parsed.jobs)) {
-        const jobs = parsed.jobs.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
-        console.log(`AI extraction (${prov.name}): ${jobs.length} listing cards (total on page: ${parsed.total_count})`);
-        return { type: 'listing', jobs, total_count: Number(parsed.total_count) || jobs.length };
-      }
-      if (parsed.type === 'multiple' && Array.isArray(parsed.jobs)) {
-        const jobs = parsed.jobs.map((j: Record<string, unknown>) => normaliseJob(j, sourceUrl));
-        console.log(`AI extraction (${prov.name}): ${jobs.length} jobs (multiple)`);
-        return jobs.length === 1 ? { type: 'single', job: jobs[0] } : { type: 'multiple', jobs };
-      }
-      // Single-job response (either {type:'single',job:{}} or bare job object)
-      const rawJob = parsed.type === 'single' && parsed.job ? parsed.job as Record<string, unknown> : parsed as Record<string, unknown>;
-      console.log(`AI extraction (${prov.name}): 1 job (single)`);
-      return { type: 'single', job: normaliseJob(rawJob, sourceUrl) };
-
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`${prov.name} error: ${msg}`);
-      lastError = msg;
-    }
-  }
-  throw new Error(`All AI providers failed. Last error: ${lastError}`);
+  const rawJob = parsed.type === 'single' && parsed.job ? parsed.job as Record<string, unknown> : parsed as Record<string, unknown>;
+  console.log('AI extraction: 1 job (single)');
+  return { type: 'single', job: normaliseJob(rawJob, sourceUrl) };
 }
 
 /** Scrape a single LinkedIn job by ID, return structured job or null */
@@ -431,17 +438,18 @@ Deno.serve(async (req) => {
     // Handle manual paste mode
     if (manualDescription) {
       console.log('Using manually pasted job description');
-      const extracted = await extractJobWithAI(manualDescription, url || '', userId);
+      const safeManualDescription = manualDescription.slice(0, 12000);
+      const extracted = await extractJobWithAI(safeManualDescription, url || '', userId);
       if (extracted.type === 'multiple') {
         const jobs = extracted.jobs.map((job) => markNormalizationStatus({
           ...job,
-          description: job.description || manualDescription.substring(0, 5000),
-        }, manualDescription.length));
+          description: job.description || safeManualDescription.substring(0, 5000),
+        }, safeManualDescription.length));
         try {
           await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', jobs, {
             baseUrl: url || '',
             configJson: { source: 'manual_description' },
-            normalizationStatus: manualDescription.length >= 250 ? 'valid' : 'incomplete',
+            normalizationStatus: safeManualDescription.length >= 250 ? 'valid' : 'incomplete',
             runMode: 'collect',
           });
         } catch (ledgerError) {
@@ -467,13 +475,13 @@ Deno.serve(async (req) => {
       }
       const job = markNormalizationStatus({
         ...extractedJob,
-        description: extractedJob.description || manualDescription.substring(0, 5000),
-      }, manualDescription.length);
+        description: extractedJob.description || safeManualDescription.substring(0, 5000),
+      }, safeManualDescription.length);
       try {
         await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', [job], {
           baseUrl: url || '',
           configJson: { source: 'manual_description' },
-          normalizationStatus: manualDescription.length >= 250 ? 'valid' : 'incomplete',
+          normalizationStatus: safeManualDescription.length >= 250 ? 'valid' : 'incomplete',
           runMode: 'collect',
         });
       } catch (ledgerError) {
@@ -843,7 +851,7 @@ Deno.serve(async (req) => {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error('All extraction methods failed:', msg);
-        return new Response(JSON.stringify({ success: false, error: 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
+        return new Response(JSON.stringify({ success: false, error: msg || 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }

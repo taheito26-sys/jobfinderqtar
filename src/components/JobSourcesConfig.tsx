@@ -208,28 +208,65 @@ const JobSourcesConfig = () => {
     setSyncing(source.id);
     try {
       const isLinkedIn = /linkedin/i.test(source.source_name) || /linkedin/i.test(source.config.base_url || '');
-      const { data, error } = isLinkedIn
-        ? await supabase.functions.invoke('search-jobs', {
+      let data: any;
+      let error: any;
+
+      if (isLinkedIn) {
+        ({ data, error } = await supabase.functions.invoke('search-jobs', {
+          body: {
+            query: (source.config.search_keywords ?? []).join(' ') || source.source_name,
+            country: source.config.search_location || '',
+            limit: 3,
+          },
+        }));
+      } else {
+        const baseUrl = source.config.base_url || source.source_name;
+        try {
+          const readerUrl = `https://r.jina.ai/http://${baseUrl.replace(/^https?:\/\//i, '')}`;
+          const readerRes = await fetch(readerUrl);
+          if (!readerRes.ok) throw new Error(`Reader fetch failed with ${readerRes.status}`);
+          const pageText = await readerRes.text();
+          const clippedText = pageText.slice(0, 12000);
+
+          if (clippedText.trim().length < 100) {
+            throw new Error('Reader returned too little content');
+          }
+
+          ({ data, error } = await supabase.functions.invoke('scrape-job-url', {
             body: {
-              query: (source.config.search_keywords ?? []).join(' ') || source.source_name,
-              country: source.config.search_location || '',
-              limit: 3,
+              url: baseUrl,
+              manualDescription: clippedText,
             },
-          })
-        : await supabase.functions.invoke('scrape-job-url', {
+          }));
+        } catch (readerErr: any) {
+          console.warn('Browser reader fetch failed, falling back to direct scrape:', readerErr);
+          ({ data, error } = await supabase.functions.invoke('scrape-job-url', {
             body: {
-              url: source.config.base_url || source.source_name,
+              url: baseUrl,
             },
-          });
+          }));
+        }
+      }
 
       if (error) throw error;
 
-      await supabase.from('job_sources').update({ last_synced_at: new Date().toISOString() }).eq('id', source.id);
-      setSources(sources.map(s => s.id === source.id ? { ...s, last_synced_at: new Date().toISOString() } : s));
+      const now = new Date().toISOString();
+      const nextConfig = { ...(source.config || {}), last_error: null };
+      await supabase
+        .from('job_sources')
+        .update({ last_synced_at: now, config: nextConfig as any })
+        .eq('id', source.id);
+      setSources(sources.map(s => s.id === source.id ? { ...s, last_synced_at: now, config: nextConfig } : s));
 
       const count = data?.results?.length ?? data?.jobs_found ?? data?.jobs?.length ?? (data?.job ? 1 : 0) ?? 0;
       toast({ title: 'Test successful', description: `Found ${count} results from ${source.source_name}.` });
     } catch (err: any) {
+      const message = err?.message || 'Could not reach source';
+      await supabase
+        .from('job_sources')
+        .update({ config: { ...(source.config || {}), last_error: message } as any })
+        .eq('id', source.id);
+      setSources(sources.map(s => s.id === source.id ? { ...s, config: { ...(s.config || {}), last_error: message } } : s));
       toast({ title: 'Test failed', description: err.message || 'Could not reach source', variant: 'destructive' });
     }
     setSyncing(null);
