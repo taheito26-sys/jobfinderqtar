@@ -14,6 +14,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
+import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 import {
   Plus, Trash2, Plug, Database, Pencil, Search, Globe, Rss, Bot, RefreshCw,
   ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, Loader2, Zap,
@@ -300,24 +301,11 @@ const JobSourcesConfig = () => {
       } else {
         const baseUrl = source.config.base_url || source.source_name;
         try {
-          const readerUrl = `https://r.jina.ai/http://${baseUrl.replace(/^https?:\/\//i, '')}`;
-          const readerRes = await fetch(readerUrl);
-          if (!readerRes.ok) throw new Error(`Reader fetch failed with ${readerRes.status}`);
-          const pageText = await readerRes.text();
-          const clippedText = pageText.slice(0, 12000);
-
-          if (clippedText.trim().length < 100) {
-            throw new Error('Reader returned too little content');
-          }
-
-          ({ data, error } = await supabase.functions.invoke('scrape-job-url', {
-            body: {
-              url: baseUrl,
-              manualDescription: clippedText,
-            },
-          }));
+          const result = await scrapeJobUrlWithReaderFallback(baseUrl);
+          data = result;
+          error = result.success ? null : new Error(result.message || result.error || 'Could not reach source');
         } catch (readerErr: any) {
-          console.warn('Browser reader fetch failed, falling back to direct scrape:', readerErr);
+          console.warn('Browser reader fallback failed:', readerErr);
           ({ data, error } = await supabase.functions.invoke('scrape-job-url', {
             body: {
               url: baseUrl,

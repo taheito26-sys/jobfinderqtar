@@ -11,6 +11,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
 import { hydrateImportedJobs, scoreImportedJobs } from '@/lib/job-hydration';
+import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 import {
   Search, Globe, Linkedin, Loader2, MapPin, Building2,
   Sparkles, CheckCircle2, ClipboardPaste, Link2, ArrowRight,
@@ -119,17 +120,14 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
     setUrlSelected(new Set());
 
     try {
-      const { data, error } = await supabase.functions.invoke('scrape-job-url', {
-        body: { url: normalizedUrl },
-      });
+      const data = await scrapeJobUrlWithReaderFallback(normalizedUrl);
 
-      if (error) {
-        toast({ title: 'Scrape failed', description: error.message, variant: 'destructive' });
-      } else if (data?.multiple && Array.isArray(data.jobs)) {
+      if (data?.multiple && Array.isArray(data.jobs)) {
         setUrlResults(data.jobs);
         setUrlSelected(new Set(data.jobs.map((_: any, i: number) => i)));
         const failedMsg = data.failed_count ? ` (${data.failed_count} could not be extracted)` : '';
-        toast({ title: `Found ${data.jobs.length} jobs!`, description: `Review and select which to import${failedMsg}` });
+        const fallbackMsg = data.fallback ? ' Reader fallback used.' : '';
+        toast({ title: `Found ${data.jobs.length} jobs!`, description: `Review and select which to import${failedMsg}${fallbackMsg}` });
       } else if (data?.job) {
         setUrlResults([data.job]);
         setUrlSelected(new Set([0]));
@@ -137,7 +135,9 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
       } else if (data?.error === 'LINKEDIN_LOGIN_REQUIRED') {
         toast({ title: 'LinkedIn login required', description: data.message || 'Try a direct job URL or use Bulk Search.', variant: 'destructive' });
       } else {
-        toast({ title: 'Extraction failed', description: 'Could not extract job data from this URL.', variant: 'destructive' });
+        const description = data?.message || data?.error || 'Could not extract job data from this URL.';
+        const fallbackHint = data?.fallback ? ' Open the full import dialog to paste the job description instead.' : '';
+        toast({ title: 'Extraction failed', description: `${description}${fallbackHint}`, variant: 'destructive' });
       }
     } catch {
       toast({ title: 'Error', description: 'Scrape failed', variant: 'destructive' });

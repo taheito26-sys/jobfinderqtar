@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
 import { hydrateImportedJobs, scoreImportedJobs } from '@/lib/job-hydration';
 import { formatJobDate, parseJobDate } from '@/lib/job-date';
+import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 
 type JobInsert = Database['public']['Tables']['jobs']['Insert'];
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -219,14 +220,14 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
 
     // ── Source 2: Original listing page scrape (non-LinkedIn) ─────────────────
     const listingFetch: Promise<ListingJob[]> = sourceUrl
-      ? supabase.functions.invoke('scrape-job-url', {
-          body: { url: sourceUrl },
-        }).then(({ data, error: fnError }) => {
-          if (fnError || data?.error) return [] as ListingJob[];
-          // Listing response may be { multiple: true, jobs: [...] } or { job: {...} }
-          const raw: any[] = data?.jobs || (data?.job ? [data.job] : []);
-          return raw.map(j => ({ ...j, _source: 'listing' as const }));
-        }).catch(() => [] as ListingJob[])
+      ? scrapeJobUrlWithReaderFallback(sourceUrl)
+          .then((data) => {
+            if (!data?.success || data?.error) return [] as ListingJob[];
+            // Listing response may be { multiple: true, jobs: [...] } or { job: {...} }
+            const raw: any[] = data?.jobs || (data?.job ? [data.job] : []);
+            return raw.map(j => ({ ...j, _source: 'listing' as const }));
+          })
+          .catch(() => [] as ListingJob[])
       : Promise.resolve([] as ListingJob[]);
 
     // ── Merge ─────────────────────────────────────────────────────────────────

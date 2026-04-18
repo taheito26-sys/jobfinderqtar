@@ -3,6 +3,12 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
 import { getPipelineConfig } from './ai-pipeline.ts';
+import {
+  extractAllLinkedInJobIds,
+  isLinkedInSearchUrl,
+  extractLinkedInJobId,
+  normalizeLinkedInUrl,
+} from './linkedin-job-helpers.ts';
 
 export function getLinkedInCookieHeader(): string | null {
   const cookie = Deno.env.get('LINKEDIN_LI_AT_COOKIE') || Deno.env.get('LI_AT_COOKIE');
@@ -10,69 +16,7 @@ export function getLinkedInCookieHeader(): string | null {
 }
 
 /** Extract ALL job IDs from a LinkedIn search/collection URL */
-export function extractAllLinkedInJobIds(url: string): string[] {
-  const ids = new Set<string>();
-
-  // currentJobId param
-  const currentMatch = url.match(/currentJobId=(\d+)/);
-  if (currentMatch) ids.add(currentMatch[1]);
-
-  // referenceJobId param (LinkedIn collections often exposes the next card here)
-  const referenceMatch = url.match(/referenceJobId=(\d+)/);
-  if (referenceMatch) ids.add(referenceMatch[1]);
-
-  // originToLandingJobPostings param (comma-separated IDs)
-  const landingMatch = url.match(/originToLandingJobPostings=([^&]+)/);
-  if (landingMatch) {
-    const decoded = decodeURIComponent(landingMatch[1]);
-    decoded.split(/[,%2C]+/).forEach(id => {
-      const trimmed = id.trim();
-      if (/^\d+$/.test(trimmed)) ids.add(trimmed);
-    });
-  }
-
-  // /jobs/view/ID pattern
-  const viewMatch = url.match(/\/jobs\/view\/(\d+)/);
-  if (viewMatch) ids.add(viewMatch[1]);
-
-  return [...ids];
-}
-
-/** Check if this is a LinkedIn search/collection page (not a single job view) */
-export function isLinkedInSearchUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    const path = u.pathname;
-    // Search pages, collections, alerts
-    if (path.includes('/jobs/search') || path.includes('/jobs/collections')) return true;
-    // Has multiple job IDs
-    if (u.searchParams.get('originToLandingJobPostings')) return true;
-    return false;
-  } catch { return false; }
-}
-
-/** Extract LinkedIn Job ID from various URL patterns */
-export function extractLinkedInJobId(url: string): string | null {
-  const match = url.match(/\/jobs\/view\/(?:[^\/]*-)?(\d+)\/?/) ||
-                url.match(/currentJobId=(\d+)/) ||
-                url.match(/\/jobs\/search\/\?.*jobId=(\d+)/);
-  return match ? match[1] : null;
-}
-
-/** Normalize LinkedIn URL by removing tracking parameters */
-export function normalizeLinkedInUrl(url: string): string {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.includes('linkedin.com')) {
-      // Keep only clean path for job view
-      const jobId = extractLinkedInJobId(url);
-      if (jobId) return `https://www.linkedin.com/jobs/view/${jobId}/`;
-    }
-    return url;
-  } catch {
-    return url;
-  }
-}
+export { extractAllLinkedInJobIds, isLinkedInSearchUrl, extractLinkedInJobId, normalizeLinkedInUrl };
 
 /** Normalise a raw extracted job object into a clean, consistently shaped record */
 export function normaliseJobFields(raw: Record<string, any>, fallbackUrl: string): Record<string, any> {

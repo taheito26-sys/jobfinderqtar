@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 
 export type JobHydrationTarget = {
   id: string;
@@ -12,15 +13,10 @@ export async function hydrateImportedJob(target: JobHydrationTarget) {
     return { ok: false, skipped: true, reason: 'missing_url' as const };
   }
 
-  const { data, error } = await supabase.functions.invoke('scrape-job-url', {
-    body: { url, job_id: target.id },
-  });
+  const data = await scrapeJobUrlWithReaderFallback(url);
 
-  if (error) {
-    return { ok: false, error: error.message };
-  }
-  if (data?.error) {
-    return { ok: false, error: data.message || data.error };
+  if (!data?.success || data?.error) {
+    return { ok: false, error: data?.message || data?.error || 'Could not hydrate job' };
   }
 
   return { ok: true, data };

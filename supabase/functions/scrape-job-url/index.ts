@@ -929,7 +929,8 @@ Deno.serve(async (req) => {
       try {
         const pageText = await fetchPageText(formattedUrl);
         if (pageText.length < 100) {
-          return new Response(JSON.stringify({ success: false, error: 'Could not fetch enough content from this page.', fallback: true }), {
+          const message = 'Could not fetch enough content from this page.';
+          return new Response(JSON.stringify({ success: false, error: message, message, fallback: true }), {
             status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
@@ -983,7 +984,8 @@ Deno.serve(async (req) => {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error('All extraction methods failed:', msg);
-        return new Response(JSON.stringify({ success: false, error: msg || 'Could not extract job data. Try using the "Paste Description" tab.', fallback: true }), {
+        const message = msg || 'Could not extract job data. Try using the "Paste Description" tab.';
+        return new Response(JSON.stringify({ success: false, error: message, message, fallback: true }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
@@ -1015,7 +1017,7 @@ Deno.serve(async (req) => {
   } catch (err) {
     console.error('Error:', err);
     const msg = err instanceof Error ? err.message : 'Failed to scrape';
-    return new Response(JSON.stringify({ error: msg }), {
+    return new Response(JSON.stringify({ error: msg, message: msg }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

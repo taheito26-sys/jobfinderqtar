@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
-import { scrapeJobUrl, ScrapedJob } from '@/lib/api/firecrawl';
+import { ScrapedJob, scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 import { buildHardlineJobInsert } from '@/lib/hardline-import';
 import { hydrateImportedJobs, scoreImportedJobs } from '@/lib/job-hydration';
 import { parseJobDate } from '@/lib/job-date';
@@ -86,19 +86,21 @@ async function scrapeOrParse(url: string, manualDescription?: string): Promise<{
   failed_count?: number;
   error?: string;
   linkedinLoginRequired?: boolean;
-}> {
-  const { data, error } = await supabase.functions.invoke('scrape-job-url', {
-    body: manualDescription ? { url, manualDescription } : { url },
-  });
+  }> {
+  const { data, error } = manualDescription
+    ? await supabase.functions.invoke('scrape-job-url', {
+        body: { url, manualDescription },
+      })
+    : { data: await scrapeJobUrlWithReaderFallback(url), error: null };
 
   if (error) {
     return { success: false, error: error.message };
   }
   if (data?.error === 'LINKEDIN_LOGIN_REQUIRED') {
-    return { success: false, error: data.message, linkedinLoginRequired: true };
+    return { success: false, error: data.message || data.error, linkedinLoginRequired: true };
   }
   if (data?.error) {
-    return { success: false, error: data.error };
+    return { success: false, error: data.message || data.error };
   }
   // Multiple jobs or listing page
   if (data?.multiple && Array.isArray(data?.jobs)) {

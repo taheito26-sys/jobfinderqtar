@@ -22,6 +22,7 @@ import ATSScoreChecker from '@/components/ATSScoreChecker';
 import QuickApplyButton from '@/components/QuickApplyButton';
 import ListingJobsBrowser from '@/components/ListingJobsBrowser';
 import { formatJobDate, getBestJobDescriptionCandidate } from '@/lib/job-date';
+import { scrapeJobUrlWithReaderFallback } from '@/lib/api/firecrawl';
 
 function isLinkedInSource(job: any): boolean {
   if (!job) return false;
@@ -155,12 +156,10 @@ const JobDetail = () => {
     const hydrate = async () => {
       setHydratingJobMeta(true);
       try {
-        const { data, error } = await supabase.functions.invoke('scrape-job-url', {
-          body: { url: sourceCandidate },
-        });
+        const data = await scrapeJobUrlWithReaderFallback(sourceCandidate);
 
-        if (error || data?.error) {
-          console.warn('Job metadata hydration failed:', error || data?.error);
+        if (!data?.success || data?.error) {
+          console.warn('Job metadata hydration failed:', data?.message || data?.error || 'unknown error');
           return;
         }
 
