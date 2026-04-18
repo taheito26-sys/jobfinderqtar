@@ -39,7 +39,8 @@ import {
   enrichLinkedInJob, 
   normaliseJobFields,
   extractAllLinkedInJobIds,
-  isLinkedInSearchUrl
+  isLinkedInSearchUrl,
+  buildLinkedInGuestSearchUrl
 } from '../_shared/linkedin-job.ts';
 import { parseLinkedInJobCards } from '../_shared/linkedin-search.ts';
 import { fetchLinkedInSearch } from '../_shared/linkedin-search.ts';
@@ -72,6 +73,49 @@ function dedupeLinkedInJobs(jobs: any[]): any[] {
   }
 
   return out;
+}
+
+async function fetchLinkedInCollectionCards(formattedUrl: string): Promise<{ cards: any[]; debug: any[] }> {
+  const collected = new Map<string, any>();
+  const debug: any[] = [];
+  const startOffsets = [0, 25, 50, 75, 100, 125];
+  const headers: Record<string, string> = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+
+  const cookieHeader = getLinkedInCookieHeader();
+  if (cookieHeader) headers['Cookie'] = cookieHeader;
+
+  for (const start of startOffsets) {
+    const guestUrl = buildLinkedInGuestSearchUrl(formattedUrl, start);
+    if (!guestUrl) break;
+
+    const res = await fetch(guestUrl, { headers });
+    if (!res.ok) {
+      console.warn(`LinkedIn guest search page fetch failed at start=${start}: HTTP ${res.status}`);
+      debug.push({ start, status: res.status, cards: 0, url: guestUrl });
+      continue;
+    }
+
+    const html = await res.text();
+    const cards = parseLinkedInJobCards(html);
+    debug.push({ start, status: res.status, html_length: html.length, cards: cards.length, url: guestUrl });
+    let added = 0;
+    for (const card of cards) {
+      if (!collected.has(card.linkedin_job_id)) {
+        collected.set(card.linkedin_job_id, card);
+        added++;
+      }
+    }
+
+    console.log(`[LinkedInSearch] guest page start=${start} → ${cards.length} cards (${added} new, total ${collected.size})`);
+
+    if (cards.length === 0 || added === 0) break;
+  }
+
+  return { cards: [...collected.values()], debug };
 }
 
 function deriveLinkedInSearchSeed(job: any): { keywords: string; location?: string } | null {
@@ -643,8 +687,8 @@ Deno.serve(async (req) => {
     // === LinkedIn Search/Collection URL: extract MULTIPLE jobs ===
     if (isLinkedin && isLinkedInSearchUrl(formattedUrl)) {
       try {
-        const html = await fetchLinkedInPageHtml(formattedUrl);
-        const cards = parseLinkedInJobCards(html);
+        const { cards, debug } = await fetchLinkedInCollectionCards(formattedUrl);
+        const evidenceLength = debug.reduce((max, entry) => Math.max(max, Number(entry?.html_length || 0)), 0) || 1000;
         const jobs = cards.map((card) => markNormalizationStatus({
           title: card.title,
           company: card.company,
@@ -659,7 +703,7 @@ Deno.serve(async (req) => {
           requirements: [],
           linkedin_job_id: card.linkedin_job_id,
           raw_data: card.raw_card_payload,
-        }, html.length));
+        }, evidenceLength));
 
         let normalizedJobs = dedupeLinkedInJobs(jobs.map((job) => markNormalizationStatus(job, 1000)));
 
@@ -690,8 +734,8 @@ Deno.serve(async (req) => {
             failed_count: 0,
             ...(debugMode ? {
               debug: {
-                source: 'collection_search_branch',
-                initial_cards: jobs.length,
+                source: 'collection_guest_api',
+                pages: debug,
                 final_jobs: normalizedJobs.length,
               },
             } : {}),
@@ -699,9 +743,34 @@ Deno.serve(async (req) => {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
+
+        if (debugMode) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'LINKEDIN_SEARCH_EMPTY',
+            message: 'LinkedIn guest search returned no cards.',
+            debug: {
+              source: 'collection_guest_api',
+              pages: debug,
+            },
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.warn('LinkedIn collection page fetch failed, falling back to URL job IDs:', msg);
+        if (debugMode) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'LINKEDIN_COLLECTION_FETCH_FAILED',
+            message: msg,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       }
 
       const allJobIds = extractAllLinkedInJobIds(formattedUrl);

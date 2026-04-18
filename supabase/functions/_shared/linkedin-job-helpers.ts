@@ -66,3 +66,18 @@ export function normalizeLinkedInUrl(url: string): string {
     return url;
   }
 }
+
+/** Convert a LinkedIn search/collection URL to the public guest search endpoint. */
+export function buildLinkedInGuestSearchUrl(url: string, start = 0): string | null {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.hostname.includes('linkedin.com')) return null;
+    if (!isLinkedInSearchUrl(url)) return null;
+
+    parsed.pathname = '/jobs-guest/jobs/api/seeMoreJobPostings/search';
+    parsed.searchParams.set('start', String(start));
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}

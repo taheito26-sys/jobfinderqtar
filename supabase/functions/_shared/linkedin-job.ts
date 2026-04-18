@@ -8,6 +8,7 @@ import {
   isLinkedInSearchUrl,
   extractLinkedInJobId,
   normalizeLinkedInUrl,
+  buildLinkedInGuestSearchUrl,
 } from './linkedin-job-helpers.ts';
 
 export function getLinkedInCookieHeader(): string | null {
@@ -16,7 +17,7 @@ export function getLinkedInCookieHeader(): string | null {
 }
 
 /** Extract ALL job IDs from a LinkedIn search/collection URL */
-export { extractAllLinkedInJobIds, isLinkedInSearchUrl, extractLinkedInJobId, normalizeLinkedInUrl };
+export { extractAllLinkedInJobIds, isLinkedInSearchUrl, extractLinkedInJobId, normalizeLinkedInUrl, buildLinkedInGuestSearchUrl };
 
 /** Normalise a raw extracted job object into a clean, consistently shaped record */
 export function normaliseJobFields(raw: Record<string, any>, fallbackUrl: string): Record<string, any> {
