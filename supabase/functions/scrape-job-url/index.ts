@@ -501,28 +501,36 @@ Deno.serve(async (req) => {
           raw_data: card.raw_card_payload,
         }, html.length));
 
-        if (jobs.length > 0) {
-          try {
-            await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', jobs, {
-              baseUrl: formattedUrl,
-              configJson: { source: 'linkedin_search_url' },
-          normalizationStatus: 'valid',
-          runMode: 'collect',
-        });
-      } catch (ledgerError) {
-        console.warn('Ledger sync failed for LinkedIn search URL:', ledgerError);
-      }
-          if (jobs.length >= 2) {
-            return new Response(JSON.stringify({
-              success: true,
-              multiple: true,
-              jobs,
-              total_found: jobs.length,
-              failed_count: 0,
-            }), {
-              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            });
+        let normalizedJobs = dedupeLinkedInJobs(jobs.map((job) => markNormalizationStatus(job, 1000)));
+
+        if (normalizedJobs.length < 5) {
+          const expandedJobs = await expandLinkedInCollectionWithSearch(normalizedJobs, userId, supabaseClient);
+          if (expandedJobs.length > normalizedJobs.length) {
+            normalizedJobs = dedupeLinkedInJobs([...normalizedJobs, ...expandedJobs]);
           }
+        }
+
+        if (normalizedJobs.length > 0) {
+          try {
+            await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', normalizedJobs, {
+              baseUrl: formattedUrl,
+              configJson: { source: 'linkedin_search_url', fallback: normalizedJobs.length < 5 ? 'seed_job_search' : 'page_cards' },
+              normalizationStatus: 'valid',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn('Ledger sync failed for LinkedIn search URL:', ledgerError);
+          }
+          console.log(`Successfully extracted ${normalizedJobs.length} LinkedIn jobs from collection/search URL`);
+          return new Response(JSON.stringify({
+            success: true,
+            multiple: true,
+            jobs: normalizedJobs,
+            total_found: normalizedJobs.length,
+            failed_count: 0,
+          }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
