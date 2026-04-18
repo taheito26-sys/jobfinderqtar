@@ -64,13 +64,12 @@ function detectListingPage(job: any): { isListing: boolean; totalCount: number |
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
-  lovable: 'Lovable AI',
-  anthropic: 'Claude (Anthropic)',
   openai: 'ChatGPT (OpenAI)',
   gemini: 'Gemini (Google)',
+  anthropic: 'Claude (Anthropic)',
 };
 
-const PROVIDER_ORDER = ['lovable', 'anthropic', 'openai', 'gemini'];
+const PROVIDER_ORDER = ['openai', 'gemini', 'anthropic'];
 
 const JobDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -96,7 +95,7 @@ const JobDetail = () => {
   const [researchExpanded, setResearchExpanded] = useState(false);
 
   // AI provider state
-  const [currentProvider, setCurrentProvider] = useState('lovable');
+  const [currentProvider, setCurrentProvider] = useState('openai');
   const [pipelineEnabled, setPipelineEnabled] = useState(false);
   const [lastAiChain, setLastAiChain] = useState<string[]>([]);
 
@@ -116,7 +115,7 @@ const JobDetail = () => {
       .in('key', ['ai_provider', 'ai_pipeline_enabled'])
       .then(({ data }) => {
         (data || []).forEach((p: any) => {
-          if (p.key === 'ai_provider') setCurrentProvider(p.value || 'lovable');
+          if (p.key === 'ai_provider') setCurrentProvider(p.value || 'openai');
           if (p.key === 'ai_pipeline_enabled') setPipelineEnabled(p.value === 'true');
         });
       });

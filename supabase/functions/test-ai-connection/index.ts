@@ -29,7 +29,7 @@ serve(async (req) => {
 
     const prefMap: Record<string, string> = {};
     (prefs || []).forEach((p: any) => { prefMap[p.key] = p.value; });
-    const provider = prefMap["ai_provider"] || "lovable";
+    const provider = prefMap["ai_provider"] || "openai";
     const userKey = prefMap["ai_api_key"] || "";
 
     let url: string;
@@ -74,19 +74,8 @@ serve(async (req) => {
         });
         break;
       }
-      default: {
-        const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-        if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured. Contact support.");
-        url = "https://ai.gateway.lovable.dev/v1/chat/completions";
-        model = "google/gemini-3-flash-preview";
-        headers = { Authorization: `Bearer ${lovableKey}`, "Content-Type": "application/json" };
-        body = JSON.stringify({
-          model,
-          max_tokens: 10,
-          messages: [{ role: "user", content: "Reply with exactly: CONNECTION_OK" }],
-        });
-        break;
-      }
+      default:
+        throw new Error(`Unsupported provider "${provider}". Use one of: openai, gemini, anthropic.`);
     }
 
     const startTime = Date.now();

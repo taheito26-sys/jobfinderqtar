@@ -15,27 +15,26 @@ export interface PipelineConfig {
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
-  lovable: "google/gemini-3-flash-preview",
-  gemini: "gemini-2.5-flash",
   openai: "gpt-4o",
+  gemini: "gemini-2.5-flash",
   anthropic: "claude-sonnet-4-20250514",
 };
 
 const PROVIDER_URLS: Record<string, string> = {
-  lovable: "https://ai.gateway.lovable.dev/v1/chat/completions",
-  gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   openai: "https://api.openai.com/v1/chat/completions",
+  gemini: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
   anthropic: "https://api.anthropic.com/v1/messages",
 };
 
 const PROVIDER_NAMES: Record<string, string> = {
-  lovable: "Lovable AI",
-  gemini: "Gemini",
   openai: "OpenAI",
+  gemini: "Gemini",
   anthropic: "Claude",
 };
 
-/** Fetch pipeline config for a user — determines single or multi-provider mode */
+const SUPPORTED_PROVIDERS = new Set(Object.keys(DEFAULT_MODELS));
+
+/** Fetch pipeline config for a user — main + optional fallback */
 export async function getPipelineConfig(userId: string): Promise<PipelineConfig> {
   const supabaseAdmin = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -48,79 +47,53 @@ export async function getPipelineConfig(userId: string): Promise<PipelineConfig>
     .eq("user_id", userId)
     .in("key", [
       "ai_provider", "ai_api_key",
+      "ai_fallback_provider",
       "ai_pipeline_enabled",
-      "ai_key_anthropic", "ai_key_openai", "ai_key_gemini",
-      "ai_model_primary", "ai_model_lovable", "ai_model_openai",
-      "ai_model_gemini", "ai_model_anthropic",
+      "ai_key_openai", "ai_key_gemini", "ai_key_anthropic",
+      "ai_model_primary", "ai_model_openai", "ai_model_gemini", "ai_model_anthropic",
     ]);
 
   const pm: Record<string, string> = {};
   (prefs || []).forEach((p: any) => { pm[p.key] = p.value; });
 
-  const lovableKey = Deno.env.get("LOVABLE_API_KEY") || "";
+  // Build primary provider — default OpenAI
+  const rawPrimary = (pm["ai_provider"] || "openai").toLowerCase();
+  const primaryName = SUPPORTED_PROVIDERS.has(rawPrimary) ? rawPrimary : "openai";
+  const primaryKey = pm["ai_api_key"] || pm[`ai_key_${primaryName}`] || "";
+  const primaryModel = pm["ai_model_primary"] || pm[`ai_model_${primaryName}`] || DEFAULT_MODELS[primaryName];
+  const primary = buildProvider(primaryName, primaryKey, primaryModel);
+
+  // Build fallback provider — must differ from primary and have a key
+  const rawFallback = (pm["ai_fallback_provider"] || "").toLowerCase();
+  const fallbackName = SUPPORTED_PROVIDERS.has(rawFallback) && rawFallback !== primaryName
+    ? rawFallback
+    : (primaryName === "openai" ? "gemini" : "openai");
+
+  const fallbackKey = pm[`ai_key_${fallbackName}`]
+    || (fallbackName === primaryName ? "" : "") // never reuse primary key
+    || "";
+  const fallbackModel = pm[`ai_model_${fallbackName}`] || DEFAULT_MODELS[fallbackName];
+  const fallback = fallbackKey
+    ? buildProvider(fallbackName, fallbackKey, fallbackModel)
+    : null;
+
   const pipelineEnabled = pm["ai_pipeline_enabled"] === "true";
+  const providers = fallback ? [primary, fallback] : [primary];
 
-  // Build primary provider
-  const primaryName = pm["ai_provider"] || "lovable";
-  const primaryKey = primaryName === "lovable" ? lovableKey : (pm["ai_api_key"] || "");
-  // Use primary model pref, fall back to provider-specific model pref, fall back to default
-  const primaryModel = pm["ai_model_primary"] || pm[`ai_model_${primaryName}`] || DEFAULT_MODELS[primaryName] || DEFAULT_MODELS.lovable;
-  const primary = buildProvider(primaryName, primaryKey, lovableKey, primaryModel);
-
-  if (!pipelineEnabled) {
-    return { enabled: false, providers: [primary], primary };
-  }
-
-  // Build ordered chain: Lovable → Gemini → OpenAI → Claude
-  const chain: ProviderConfig[] = [];
-
-  // Always start with Lovable
-  if (lovableKey) {
-    const model = pm["ai_model_lovable"] || DEFAULT_MODELS.lovable;
-    chain.push(buildProvider("lovable", lovableKey, lovableKey, model));
-  }
-
-  // Gemini
-  const geminiKey = pm["ai_key_gemini"] || "";
-  if (geminiKey) {
-    const model = pm["ai_model_gemini"] || DEFAULT_MODELS.gemini;
-    if (!chain.find(c => c.provider === "gemini")) {
-      chain.push(buildProvider("gemini", geminiKey, lovableKey, model));
-    }
-  }
-
-  // OpenAI
-  const openaiKey = pm["ai_key_openai"] || (primaryName === "openai" ? pm["ai_api_key"] : "");
-  if (openaiKey) {
-    const model = pm["ai_model_openai"] || DEFAULT_MODELS.openai;
-    if (!chain.find(c => c.provider === "openai")) {
-      chain.push(buildProvider("openai", openaiKey, lovableKey, model));
-    }
-  }
-
-  // Claude is ALWAYS last (finalizer)
-  const anthropicKey = pm["ai_key_anthropic"] || (primaryName === "anthropic" ? pm["ai_api_key"] : "");
-  if (anthropicKey) {
-    const model = pm["ai_model_anthropic"] || DEFAULT_MODELS.anthropic;
-    if (!chain.find(c => c.provider === "anthropic")) {
-      chain.push(buildProvider("anthropic", anthropicKey, lovableKey, model));
-    }
-  }
-
-  if (chain.length <= 1) {
-    return { enabled: false, providers: [primary], primary };
-  }
-
-  return { enabled: true, providers: chain, primary: chain[chain.length - 1] };
+  return {
+    enabled: pipelineEnabled && providers.length >= 2,
+    providers,
+    primary,
+  };
 }
 
-function buildProvider(name: string, key: string, lovableKey: string, model?: string): ProviderConfig {
+function buildProvider(name: string, key: string, model?: string): ProviderConfig {
   return {
     name: PROVIDER_NAMES[name] || name,
     provider: name,
-    apiKey: name === "lovable" ? lovableKey : key,
-    url: PROVIDER_URLS[name] || PROVIDER_URLS.lovable,
-    model: model || DEFAULT_MODELS[name] || DEFAULT_MODELS.lovable,
+    apiKey: key,
+    url: PROVIDER_URLS[name] || PROVIDER_URLS.openai,
+    model: model || DEFAULT_MODELS[name] || DEFAULT_MODELS.openai,
   };
 }
 
@@ -166,6 +139,8 @@ async function callAnthropic(
   toolChoice?: any,
   maxTokens = 8192
 ): Promise<{ tool_arguments: string }> {
+  if (!config.apiKey) throw Object.assign(new Error(`${config.name} API key is not configured`), { status: 400 });
+
   const systemMsg = messages.find((m: any) => m.role === "system")?.content || "";
   const userMsgs = messages.filter((m: any) => m.role !== "system");
 
@@ -205,6 +180,8 @@ async function callOpenAICompat(
   tools?: any[],
   toolChoice?: any
 ): Promise<{ tool_arguments: string }> {
+  if (!config.apiKey) throw Object.assign(new Error(`${config.name} API key is not configured`), { status: 400 });
+
   const body: any = { model: config.model, messages };
   if (tools) body.tools = tools;
   if (toolChoice) body.tool_choice = toolChoice;
@@ -231,6 +208,8 @@ async function callOpenAICompat(
 
 /** Call AI with text-only response (no tool calling) */
 export async function callProviderText(config: ProviderConfig, messages: any[]): Promise<string> {
+  if (!config.apiKey) throw Object.assign(new Error(`${config.name} API key is not configured`), { status: 400 });
+
   if (config.provider === "anthropic") {
     const systemMsg = messages.find((m: any) => m.role === "system")?.content || "";
     const userMsgs = messages.filter((m: any) => m.role !== "system");
@@ -255,8 +234,9 @@ export async function callProviderText(config: ProviderConfig, messages: any[]):
 }
 
 /**
- * Run the sequential AI pipeline.
- * Provider 1 drafts → Provider 2 reviews → Claude finalizes.
+ * Run the AI pipeline.
+ * Single mode: primary only, with automatic fallback to the configured fallback provider.
+ * Pipeline mode: main drafts → fallback reviews/finalizes.
  */
 export async function runPipeline(opts: {
   config: PipelineConfig;
@@ -269,6 +249,8 @@ export async function runPipeline(opts: {
 }): Promise<{ result: { tool_arguments: string }; providerChain: string[] }> {
   const { config, systemPrompt, userPrompt, tools, toolChoice, reviewInstruction, maxTokens = 8192 } = opts;
 
+  const fallback = config.providers.find((p) => p.provider !== config.primary.provider) || null;
+
   if (!config.enabled || config.providers.length <= 1) {
     const provider = config.primary;
     console.log(`[Pipeline] Single mode: ${provider.name} (${provider.model})`);
@@ -279,16 +261,13 @@ export async function runPipeline(opts: {
       ], tools, toolChoice, maxTokens);
       return { result, providerChain: [`${provider.name} (${provider.model})`] };
     } catch (err: any) {
-      // If primary provider fails and it's not Lovable, fall back to Lovable AI
-      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-      if (provider.provider !== "lovable" && lovableKey) {
-        console.warn(`[Pipeline] ${provider.name} failed (${err.message}), falling back to Lovable AI`);
-        const fallback = buildProvider("lovable", lovableKey, lovableKey);
+      if (fallback && fallback.apiKey) {
+        console.warn(`[Pipeline] ${provider.name} failed (${err.message}), falling back to ${fallback.name}`);
         const result = await callProvider(fallback, [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ], tools, toolChoice, maxTokens);
-        return { result, providerChain: [`${provider.name} (failed)`, `Lovable AI (${fallback.model})`] };
+        return { result, providerChain: [`${provider.name} (failed)`, `${fallback.name} (${fallback.model})`] };
       }
       throw err;
     }
@@ -367,46 +346,56 @@ export async function runPipelineText(opts: {
 }): Promise<{ result: string; providerChain: string[] }> {
   const { config, systemPrompt, userPrompt, reviewInstruction } = opts;
 
+  const fallback = config.providers.find((p) => p.provider !== config.primary.provider) || null;
+
   if (!config.enabled || config.providers.length <= 1) {
     const provider = config.primary;
-    const result = await callProviderText(provider, [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ]);
-    return { result, providerChain: [`${provider.name} (${provider.model})`] };
+    try {
+      const result = await callProviderText(provider, [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ]);
+      return { result, providerChain: [`${provider.name} (${provider.model})`] };
+    } catch (err: any) {
+      if (fallback && fallback.apiKey) {
+        console.warn(`[Pipeline-text] ${provider.name} failed (${err.message}), falling back to ${fallback.name}`);
+        const result = await callProviderText(fallback, [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ]);
+        return { result, providerChain: [`${provider.name} (failed)`, `${fallback.name} (${fallback.model})`] };
+      }
+      throw err;
+    }
   }
 
   const chain: string[] = [];
-  let currentOutput = "";
+  let current = "";
 
   for (let i = 0; i < config.providers.length; i++) {
     const provider = config.providers[i];
     const isFirst = i === 0;
     const isLast = i === config.providers.length - 1;
 
-    let messages: any[];
-    if (isFirst) {
-      messages = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ];
-    } else {
-      const role = isLast ? "FINAL REVIEWER" : "REVIEWER";
-      messages = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: `You are the ${role}. ${reviewInstruction}\n\nPrevious output:\n${currentOutput}\n\nOriginal request:\n${userPrompt}\n\nReturn the corrected output in the same format.` },
-      ];
-    }
+    const messages = isFirst
+      ? [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }]
+      : [
+          { role: "system", content: systemPrompt },
+          {
+            role: "user",
+            content: `You are the ${isLast ? "FINAL REVIEWER" : "REVIEWER"}. ${reviewInstruction}\n\nPREVIOUS:\n${current}\n\nORIGINAL REQUEST:\n${userPrompt}`,
+          },
+        ];
 
     try {
-      currentOutput = await callProviderText(provider, messages);
+      current = await callProviderText(provider, messages);
       chain.push(`${provider.name} (${provider.model})`);
     } catch (err: any) {
-      console.warn(`[Pipeline] ${provider.name} (${provider.model}) failed: ${err.message}. Skipping.`);
-      if (isFirst) throw err;
+      console.warn(`[Pipeline-text] ${provider.name} failed: ${err.message}`);
+      if (isFirst && !current) throw err;
       chain.push(`${provider.name} (skipped)`);
     }
   }
 
-  return { result: currentOutput, providerChain: chain };
+  return { result: current, providerChain: chain };
 }

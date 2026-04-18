@@ -7,15 +7,15 @@ const corsHeaders = {
 };
 
 async function getEmbedding(text: string, apiKey: string): Promise<number[]> {
-  // Use Lovable AI Gateway for embeddings (OpenAI-compatible)
-  const response = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+  // Use OpenAI embeddings directly
+  const response = await fetch("https://api.openai.com/v1/embeddings", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "openai/text-embedding-3-small",
+      model: "text-embedding-3-small",
       input: text.slice(0, 8000), // limit input length
     }),
   });
@@ -53,8 +53,23 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) throw new Error("Unauthorized");
 
-    const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
+    // Look up the user's OpenAI key (preferred) or fall back to an env-level key.
+    const { data: keyRow } = await supabaseAdmin
+      .from("user_preferences")
+      .select("value")
+      .eq("user_id", user.id)
+      .in("key", ["ai_key_openai", "ai_api_key"])
+      .limit(2);
+    const userKey = (keyRow || [])
+      .map((r: any) => String(r.value || "").trim())
+      .find((v: string) => v.length > 0) || "";
+    const openaiKey = userKey || Deno.env.get("OPENAI_API_KEY") || "";
+    if (!openaiKey) {
+      throw Object.assign(
+        new Error("OpenAI API key not configured. Add your OpenAI key in Settings → AI Provider."),
+        { status: 400 }
+      );
+    }
 
     const { target, job_id } = await req.json();
     // target: "profile" | "job" | "both"
@@ -80,7 +95,7 @@ serve(async (req) => {
         ),
       ].join("\n").trim();
 
-      const embedding = await getEmbedding(profileText, lovableKey);
+      const embedding = await getEmbedding(profileText, openaiKey);
 
       // Upsert profile embedding using service role (bypasses RLS for vector type)
       const { error: upsertError } = await supabaseAdmin.from("profile_embeddings").upsert({
@@ -121,7 +136,7 @@ serve(async (req) => {
         `Nice to have: ${JSON.stringify(job.nice_to_haves || [])}`,
       ].join("\n").trim();
 
-      const embedding = await getEmbedding(jobText, lovableKey);
+      const embedding = await getEmbedding(jobText, openaiKey);
 
       // Upsert job embedding using service role
       await supabaseAdmin.from("job_embeddings")

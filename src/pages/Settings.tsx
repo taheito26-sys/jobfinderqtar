@@ -16,16 +16,6 @@ import { Plug, Shield, Bell, Loader2, CheckCircle2, XCircle, Zap, GitBranch, Shi
 type ConnectionStatus = 'idle' | 'testing' | 'success' | 'error';
 
 const MODEL_OPTIONS: Record<string, { label: string; value: string }[]> = {
-  lovable: [
-    { label: 'Gemini 3 Flash (Default)', value: 'google/gemini-3-flash-preview' },
-    { label: 'Gemini 3.1 Pro', value: 'google/gemini-3.1-pro-preview' },
-    { label: 'Gemini 2.5 Pro', value: 'google/gemini-2.5-pro' },
-    { label: 'Gemini 2.5 Flash', value: 'google/gemini-2.5-flash' },
-    { label: 'Gemini 2.5 Flash Lite', value: 'google/gemini-2.5-flash-lite' },
-    { label: 'GPT-5', value: 'openai/gpt-5' },
-    { label: 'GPT-5 Mini', value: 'openai/gpt-5-mini' },
-    { label: 'GPT-5.2', value: 'openai/gpt-5.2' },
-  ],
   openai: [
     { label: 'GPT-4o (Default)', value: 'gpt-4o' },
     { label: 'GPT-4o Mini', value: 'gpt-4o-mini' },
@@ -109,18 +99,23 @@ const SettingsPage = () => {
       case 'anthropic': return 'Claude (Anthropic)';
       case 'openai': return 'ChatGPT (OpenAI)';
       case 'gemini': return 'Gemini (Google)';
-      default: return 'Lovable AI';
+      default: return 'ChatGPT (OpenAI)';
     }
   };
 
-  const currentProvider = prefs['ai_provider'] || 'lovable';
-  const hasKey = currentProvider === 'lovable' || !!prefs['ai_api_key'];
+  const currentProvider = prefs['ai_provider'] || 'openai';
+  const hasKey = !!prefs['ai_api_key'];
   const pipelineEnabled = prefs['ai_pipeline_enabled'] === 'true';
 
-  const pipelineProviders: string[] = ['Lovable AI'];
-  if (prefs['ai_key_openai']) pipelineProviders.push('OpenAI');
-  if (prefs['ai_key_gemini']) pipelineProviders.push('Gemini');
-  if (prefs['ai_key_anthropic']) pipelineProviders.push('Claude');
+  // Fallback defaults to the "other" of OpenAI/Gemini if none set.
+  const fallbackProvider = prefs['ai_fallback_provider']
+    || (currentProvider === 'openai' ? 'gemini' : 'openai');
+
+  const pipelineProviders: string[] = [];
+  pipelineProviders.push(providerLabel(currentProvider) + ' (Main)');
+  if (prefs[`ai_key_${fallbackProvider}`]) {
+    pipelineProviders.push(providerLabel(fallbackProvider) + ' (Fallback)');
+  }
 
   const ModelSelector = ({ providerKey, prefKey, label }: { providerKey: string; prefKey: string; label?: string }) => {
     const models = MODEL_OPTIONS[providerKey] || [];
@@ -186,31 +181,52 @@ const SettingsPage = () => {
                 value={currentProvider}
                 onChange={e => setPref('ai_provider', e.target.value)}
               >
-                <option value="lovable">Lovable AI (Gemini via Gateway) — Free tier included</option>
-                <option value="anthropic">Claude (Anthropic) — Best for document tailoring</option>
                 <option value="openai">ChatGPT (OpenAI)</option>
-                <option value="gemini">Gemini (Google Direct)</option>
+                <option value="gemini">Gemini (Google)</option>
+                <option value="anthropic">Claude (Anthropic)</option>
               </select>
             </div>
 
             <ModelSelector providerKey={currentProvider} prefKey="ai_model_primary" label="Model" />
 
-            {currentProvider !== 'lovable' && (
-              <div className="space-y-2">
-                <Label>API Key</Label>
-                <Input
-                  type="password"
-                  placeholder={`Enter your ${providerLabel(currentProvider)} API key`}
-                  value={prefs['ai_api_key'] || ''}
-                  onChange={e => setPref('ai_api_key', e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {currentProvider === 'anthropic' && 'Get your key at console.anthropic.com → API Keys'}
-                  {currentProvider === 'openai' && 'Get your key at platform.openai.com → API Keys'}
-                  {currentProvider === 'gemini' && 'Get your key at aistudio.google.com → API Keys'}
-                </p>
-              </div>
-            )}
+            <div className="space-y-2">
+              <Label>API Key</Label>
+              <Input
+                type="password"
+                placeholder={`Enter your ${providerLabel(currentProvider)} API key`}
+                value={prefs['ai_api_key'] || ''}
+                onChange={e => setPref('ai_api_key', e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                {currentProvider === 'anthropic' && 'Get your key at console.anthropic.com → API Keys'}
+                {currentProvider === 'openai' && 'Get your key at platform.openai.com → API Keys'}
+                {currentProvider === 'gemini' && 'Get your key at aistudio.google.com → API Keys'}
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-2 border-t border-border">
+              <Label>Fallback provider</Label>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={fallbackProvider}
+                onChange={e => setPref('ai_fallback_provider', e.target.value)}
+              >
+                {['openai', 'gemini', 'anthropic']
+                  .filter(p => p !== currentProvider)
+                  .map(p => (
+                    <option key={p} value={p}>{providerLabel(p)}</option>
+                  ))}
+              </select>
+              <Input
+                type="password"
+                placeholder={`Enter your ${providerLabel(fallbackProvider)} API key`}
+                value={prefs[`ai_key_${fallbackProvider}`] || ''}
+                onChange={e => setPref(`ai_key_${fallbackProvider}`, e.target.value)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Used automatically if the main provider fails or returns 402/429.
+              </p>
+            </div>
 
             {/* Connection Status */}
             <div className="p-3 rounded-lg border border-border bg-muted/30 space-y-3">
@@ -264,17 +280,17 @@ const SettingsPage = () => {
         {/* Multi-AI Pipeline */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2"><GitBranch className="w-4 h-4" />Multi-AI Pipeline</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2"><GitBranch className="w-4 h-4" />Review Pipeline</CardTitle>
             <CardDescription>
-              Chain multiple AI providers for higher quality. Each provider reviews and corrects the previous one's output.
-              Claude always finalizes.
+              When enabled, the fallback provider reviews and refines the main provider's output before it's returned.
+              When disabled, the fallback is used only if the main provider fails.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-foreground">Enable pipeline mode</p>
-                <p className="text-xs text-muted-foreground">Uses more API calls but produces better results</p>
+                <p className="text-sm font-medium text-foreground">Enable review pipeline</p>
+                <p className="text-xs text-muted-foreground">Uses 2 API calls per request — higher quality, higher cost.</p>
               </div>
               <Switch
                 checked={pipelineEnabled}
@@ -282,80 +298,22 @@ const SettingsPage = () => {
               />
             </div>
 
-            {pipelineEnabled && (
-              <>
-                <div className="p-3 rounded-lg border border-border bg-muted/30">
-                  <p className="text-xs font-medium text-foreground mb-2">Pipeline chain:</p>
-                  <div className="flex items-center gap-1 flex-wrap">
-                    {pipelineProviders.map((name, i) => (
-                      <span key={name} className="flex items-center gap-1">
-                        <Badge variant="secondary" className="text-xs">{name}</Badge>
-                        {i < pipelineProviders.length - 1 && <span className="text-muted-foreground text-xs">→</span>}
-                      </span>
-                    ))}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    {pipelineProviders.length <= 1
-                      ? 'Add API keys below to enable the chain. At least 2 providers needed.'
-                      : `${pipelineProviders.length} providers configured. Add more keys for a longer chain.`
-                    }
-                  </p>
-                </div>
-
-                <div className="space-y-3">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Provider API Keys & Models</p>
-
-                  {/* Lovable AI Model */}
-                  <div className="space-y-2 p-3 rounded-lg border border-border">
-                    <Label className="text-sm flex items-center gap-2">
-                      Lovable AI <Badge variant="outline" className="text-xs">Always included</Badge>
-                    </Label>
-                    <ModelSelector providerKey="lovable" prefKey="ai_model_lovable" label="Model" />
-                  </div>
-
-                  {/* OpenAI */}
-                  <div className="space-y-2 p-3 rounded-lg border border-border">
-                    <Label className="text-sm">OpenAI</Label>
-                    <Input
-                      type="password"
-                      placeholder="sk-proj-..."
-                      value={prefs['ai_key_openai'] || ''}
-                      onChange={e => setPref('ai_key_openai', e.target.value)}
-                    />
-                    <ModelSelector providerKey="openai" prefKey="ai_model_openai" label="Model" />
-                    <p className="text-xs text-muted-foreground">Reviewer — platform.openai.com → API Keys</p>
-                  </div>
-
-                  {/* Gemini */}
-                  <div className="space-y-2 p-3 rounded-lg border border-border">
-                    <Label className="text-sm">Google Gemini</Label>
-                    <Input
-                      type="password"
-                      placeholder="AIza..."
-                      value={prefs['ai_key_gemini'] || ''}
-                      onChange={e => setPref('ai_key_gemini', e.target.value)}
-                    />
-                    <ModelSelector providerKey="gemini" prefKey="ai_model_gemini" label="Model" />
-                    <p className="text-xs text-muted-foreground">Reviewer — aistudio.google.com → API Keys</p>
-                  </div>
-
-                  {/* Anthropic */}
-                  <div className="space-y-2 p-3 rounded-lg border border-border">
-                    <Label className="text-sm flex items-center gap-2">
-                      Anthropic (Claude) <Badge variant="outline" className="text-xs">Finalizer</Badge>
-                    </Label>
-                    <Input
-                      type="password"
-                      placeholder="sk-ant-..."
-                      value={prefs['ai_key_anthropic'] || ''}
-                      onChange={e => setPref('ai_key_anthropic', e.target.value)}
-                    />
-                    <ModelSelector providerKey="anthropic" prefKey="ai_model_anthropic" label="Model" />
-                    <p className="text-xs text-muted-foreground">Final reviewer & executor — console.anthropic.com → API Keys</p>
-                  </div>
-                </div>
-              </>
-            )}
+            <div className="p-3 rounded-lg border border-border bg-muted/30">
+              <p className="text-xs font-medium text-foreground mb-2">Chain:</p>
+              <div className="flex items-center gap-1 flex-wrap">
+                {pipelineProviders.map((name, i) => (
+                  <span key={name} className="flex items-center gap-1">
+                    <Badge variant="secondary" className="text-xs">{name}</Badge>
+                    {i < pipelineProviders.length - 1 && <span className="text-muted-foreground text-xs">→</span>}
+                  </span>
+                ))}
+              </div>
+              {pipelineProviders.length < 2 && (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Add a fallback API key above to enable automatic failover and review pipeline.
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 

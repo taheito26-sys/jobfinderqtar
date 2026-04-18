@@ -172,18 +172,16 @@ Be realistic. If info is missing, score that dimension at 50 (neutral). Never fa
     console.log(`[score-job] Pipeline chain: ${providerChain.join(" → ")}`);
     const scores = JSON.parse(result.tool_arguments);
 
-    // Semantic similarity (unchanged)
+    // Semantic similarity — computed from stored embeddings only (embeddings are generated
+    // separately by the generate-embeddings function, which uses OpenAI directly).
     let semanticSimilarity = 0;
     try {
-      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-      if (lovableKey) {
-        const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-        const { data: profileEmb } = await supabaseAdmin.from("profile_embeddings").select("embedding").eq("user_id", userId).eq("section", "full").maybeSingle();
-        const { data: jobEmb } = await supabaseAdmin.from("job_embeddings").select("embedding").eq("job_id", job_id).maybeSingle();
-        if (profileEmb?.embedding && jobEmb?.embedding) {
-          const { data: simResult } = await supabaseAdmin.rpc("compute_similarity", { _user_id: userId, _job_id: job_id });
-          if (simResult !== null && simResult !== undefined) semanticSimilarity = Math.round(simResult * 100) / 100;
-        }
+      const supabaseAdmin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+      const { data: profileEmb } = await supabaseAdmin.from("profile_embeddings").select("embedding").eq("user_id", userId).eq("section", "full").maybeSingle();
+      const { data: jobEmb } = await supabaseAdmin.from("job_embeddings").select("embedding").eq("job_id", job_id).maybeSingle();
+      if (profileEmb?.embedding && jobEmb?.embedding) {
+        const { data: simResult } = await supabaseAdmin.rpc("compute_similarity", { _user_id: userId, _job_id: job_id });
+        if (simResult !== null && simResult !== undefined) semanticSimilarity = Math.round(simResult * 100) / 100;
       }
     } catch (embErr: any) {
       console.warn("Semantic similarity skipped:", embErr.message);

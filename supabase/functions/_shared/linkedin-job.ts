@@ -220,55 +220,52 @@ Return ONLY valid JSON:
 CONTENT:
 ${html}`;
 
-    const lovableKey = Deno.env.get('LOVABLE_API_KEY');
     let extracted: any = null;
 
-    // Try primary AI from config
-    try {
-      const config = await getPipelineConfig(userId);
-      if (config.primary && config.primary.apiKey && config.primary.provider !== 'lovable') {
-        const p = config.primary;
-        const res = await fetch(p.url, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            ...(p.provider === 'anthropic' ? { 'x-api-key': p.apiKey, 'anthropic-version': '2023-06-01' } : { 'Authorization': `Bearer ${p.apiKey}` })
-          },
-          body: JSON.stringify({
-            model: p.model,
-            messages: [{ role: 'user', content: prompt }],
-            ...(p.provider !== 'anthropic' ? { temperature: 0.1 } : { max_tokens: 4000 })
-          })
-        });
-        
-        if (res.ok) {
-          const data = await res.json();
-          const content = p.provider === 'anthropic' ? data.content[0].text : data.choices[0].message.content;
-          const jsonMatch = content.match(/\{[\s\S]*\}/);
-          if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
-        }
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn('Primary AI enrichment failed, falling back to Lovable:', msg);
-    }
-
-    // Fallback to Lovable
-    if (!extracted && lovableKey) {
-      const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    const config = await getPipelineConfig(userId);
+    const tryProvider = async (p: any): Promise<any> => {
+      if (!p?.apiKey) return null;
+      const res = await fetch(p.url, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${lovableKey}`, 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(p.provider === 'anthropic'
+            ? { 'x-api-key': p.apiKey, 'anthropic-version': '2023-06-01' }
+            : { 'Authorization': `Bearer ${p.apiKey}` })
+        },
         body: JSON.stringify({
-          model: 'google/gemini-3-flash-preview',
+          model: p.model,
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.1
+          ...(p.provider !== 'anthropic' ? { temperature: 0.1 } : { max_tokens: 4000 })
         })
       });
-      if (res.ok) {
-        const data = await res.json();
-        const content = data.choices?.[0]?.message?.content || '';
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) extracted = JSON.parse(jsonMatch[0]);
+      if (!res.ok) throw new Error(`${p.name} error ${res.status}`);
+      const data = await res.json();
+      const content = p.provider === 'anthropic'
+        ? data.content?.[0]?.text || ''
+        : data.choices?.[0]?.message?.content || '';
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      return jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+    };
+
+    // Primary
+    try {
+      extracted = await tryProvider(config.primary);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`Primary AI enrichment (${config.primary?.name}) failed, trying fallback:`, msg);
+    }
+
+    // Fallback (configured secondary provider)
+    if (!extracted) {
+      const fallback = config.providers.find((p) => p.provider !== config.primary.provider);
+      if (fallback) {
+        try {
+          extracted = await tryProvider(fallback);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn(`Fallback AI enrichment (${fallback.name}) failed:`, msg);
+        }
       }
     }
 

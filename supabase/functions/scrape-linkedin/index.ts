@@ -23,7 +23,7 @@ async function getAIConfig(userId: string): Promise<AIConfig> {
 
   const prefMap: Record<string, string> = {};
   (prefs || []).forEach((p: any) => { prefMap[p.key] = p.value; });
-  const provider = prefMap["ai_provider"] || "lovable";
+  const provider = prefMap["ai_provider"] || "openai";
   const userKey = prefMap["ai_api_key"] || "";
 
   switch (provider) {
@@ -36,11 +36,8 @@ async function getAIConfig(userId: string): Promise<AIConfig> {
     case "gemini":
       if (!userKey) throw new Error("Google API key not configured.");
       return { provider, apiKey: userKey, url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", model: "gemini-2.5-flash" };
-    default: {
-      const lovableKey = Deno.env.get("LOVABLE_API_KEY");
-      if (!lovableKey) throw new Error("LOVABLE_API_KEY not configured");
-      return { provider: "lovable", apiKey: lovableKey, url: "https://ai.gateway.lovable.dev/v1/chat/completions", model: "google/gemini-3-flash-preview" };
-    }
+    default:
+      throw new Error(`Unsupported provider "${provider}". Configure OpenAI, Gemini, or Anthropic in Settings.`);
   }
 }
 
