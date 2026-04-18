@@ -41,7 +41,8 @@ Deno.serve(async (req) => {
       preferenceMap.set(p.user_id, existing);
     });
 
-    let totalNewJobs = 0;
+    let totalDiscoveredJobs = 0;
+    let totalInsertedJobs = 0;
 
     // --- Part 1: Process LinkedIn Specific Sources (from previous Turn) ---
     const { data: linkedinSources } = await supabaseAdmin
@@ -71,7 +72,7 @@ Deno.serve(async (req) => {
           });
           if (pipelineRes.ok) {
             const data = await pipelineRes.json();
-            totalNewJobs += (data.new_stage_count || 0);
+            totalInsertedJobs += (data.new_stage_count || 0);
           }
         } catch (err) {
           console.error(`LinkedIn pipeline failed for source ${source.id}:`, err.message);
@@ -206,7 +207,7 @@ Deno.serve(async (req) => {
             }
 
             inserted++;
-            totalNewJobs++;
+            totalInsertedJobs++;
           }
 
           await supabaseAdmin
@@ -238,7 +239,9 @@ Deno.serve(async (req) => {
       if (userPrefs.auto_search_enabled !== 'true') continue;
 
       const titles = (profile.desired_titles as string[]) || [];
-      const profileLocation = profile.location || profile.country || 'Qatar';
+      // Use the broader country first so auto-search does not get trapped
+      // by overly specific city-level locations like "Doha, Qatar".
+      const profileLocation = profile.country || profile.location || 'Qatar';
       const maxTitles = Math.max(1, Math.min(parseInt(userPrefs.auto_search_max_titles || '2', 10) || 2, titles.length));
 
       for (const title of titles.slice(0, maxTitles)) {
@@ -256,6 +259,8 @@ Deno.serve(async (req) => {
             console.warn(`[auto-search] No jobs found for "${title}" from any source.`);
             continue;
           }
+
+          totalDiscoveredJobs += searchResult.jobs.length;
 
           console.log(`[auto-search] "${title}" → ${searchResult.total} jobs from [${searchResult.sources_with_results.join(', ')}]`);
 
@@ -334,7 +339,7 @@ Deno.serve(async (req) => {
                 });
               }
 
-              totalNewJobs++;
+              totalInsertedJobs++;
             } catch (jobErr: any) {
               console.error(`[auto-search] Error saving job "${job.title}":`, jobErr.message);
             }
@@ -345,7 +350,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ success: true, jobs_found: totalNewJobs }), {
+    return new Response(JSON.stringify({
+      success: true,
+      jobs_found: totalDiscoveredJobs,
+      jobs_inserted: totalInsertedJobs,
+    }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error: any) {

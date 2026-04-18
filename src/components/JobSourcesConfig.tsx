@@ -240,7 +240,14 @@ const JobSourcesConfig = () => {
     try {
       const { data, error } = await supabase.functions.invoke('auto-search-jobs');
       if (error) throw error;
-      toast({ title: 'Auto-search complete', description: `Found ${data?.jobs_found ?? 0} new jobs.` });
+      const discovered = data?.jobs_found ?? 0;
+      const inserted = data?.jobs_inserted ?? 0;
+      toast({
+        title: 'Auto-search complete',
+        description: inserted > 0
+          ? `Discovered ${discovered} jobs and inserted ${inserted} new ones.`
+          : `Discovered ${discovered} jobs. No new inserts were needed.`,
+      });
     } catch (err: any) {
       toast({ title: 'Auto-search failed', description: err.message, variant: 'destructive' });
     }
