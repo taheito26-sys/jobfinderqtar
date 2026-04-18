@@ -170,7 +170,7 @@ const JobDetail = () => {
     const hydrate = async () => {
       setHydratingJobMeta(true);
       try {
-        const data = await scrapeJobUrlWithReaderFallback(sourceCandidate);
+        const data = await scrapeJobUrlWithReaderFallback(sourceCandidate, { jobId: job.id });
 
         if (!data?.success || data?.error) {
           console.warn('Job metadata hydration failed:', data?.message || data?.error || 'unknown error');

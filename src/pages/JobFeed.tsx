@@ -102,29 +102,30 @@ const JobFeed = () => {
   const [dateFilter, setDateFilter] = useState('all');
   const [employmentTypeFilter, setEmploymentTypeFilter] = useState('all');
 
-  useEffect(() => {
+  const loadFeed = useCallback(async () => {
     if (!user) return;
-    const load = async () => {
-      const [jobsRes, matchesRes, submissionsRes, prefsRes] = await Promise.all([
-        supabase.from('jobs').select('*').eq('user_id', user.id)
-          .order('created_at', { ascending: false }).limit(200),
-        supabase.from('job_matches').select('*').eq('user_id', user.id),
-        supabase.from('application_submissions').select('job_id, submission_status, follow_up_date, response_received_at, submitted_at, updated_at').eq('user_id', user.id),
-        supabase.from('user_preferences').select('value').eq('user_id', user.id).eq('key', 'saved_search_presets').maybeSingle(),
-      ]);
-      const jobsData = jobsRes.data;
-      const matchesData = matchesRes.data;
-      const submissionsData = submissionsRes.data;
-      setJobs(jobsData ?? []);
-      const matchMap: Record<string, any> = {};
-      (matchesData ?? []).forEach(m => { matchMap[m.job_id] = m; });
-      setMatches(matchMap);
-      setApplicationSubmissions(submissionsData ?? []);
-      setSavedPresets(parseSavedSearches(prefsRes.data?.value));
-      setLoading(false);
-    };
-    load();
+    const [jobsRes, matchesRes, submissionsRes, prefsRes] = await Promise.all([
+      supabase.from('jobs').select('*').eq('user_id', user.id)
+        .order('created_at', { ascending: false }),
+      supabase.from('job_matches').select('*').eq('user_id', user.id),
+      supabase.from('application_submissions').select('job_id, submission_status, follow_up_date, response_received_at, submitted_at, updated_at').eq('user_id', user.id),
+      supabase.from('user_preferences').select('value').eq('user_id', user.id).eq('key', 'saved_search_presets').maybeSingle(),
+    ]);
+    const jobsData = jobsRes.data;
+    const matchesData = matchesRes.data;
+    const submissionsData = submissionsRes.data;
+    setJobs(jobsData ?? []);
+    const matchMap: Record<string, any> = {};
+    (matchesData ?? []).forEach(m => { matchMap[m.job_id] = m; });
+    setMatches(matchMap);
+    setApplicationSubmissions(submissionsData ?? []);
+    setSavedPresets(parseSavedSearches(prefsRes.data?.value));
+    setLoading(false);
   }, [user]);
+
+  useEffect(() => {
+    void loadFeed();
+  }, [loadFeed]);
 
   // Extract unique values for filter dropdowns
   const GCC_LOCATION_PRESETS = [
@@ -598,6 +599,14 @@ const JobFeed = () => {
     applied: filtered.filter((job) => appliedJobIds.has(job.id)).length,
     followUp: filtered.filter((job) => followUpJobIds.has(job.id)).length,
   }), [filtered, appliedJobIds, followUpJobIds]);
+
+  useEffect(() => {
+    const handler = () => {
+      void loadFeed();
+    };
+    window.addEventListener('jobs-backfilled', handler);
+    return () => window.removeEventListener('jobs-backfilled', handler);
+  }, [loadFeed]);
 
   // Sub-tab: extract countries from job locations
   const countryTabs = useMemo(() => {

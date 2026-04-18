@@ -65,10 +65,14 @@ export const scrapeJobUrl = async (url: string): Promise<{ success: boolean; job
 
 export const scrapeJobUrlWithReaderFallback = async (
   url: string,
+  options?: { jobId?: string | null },
 ): Promise<{ success: boolean; job?: ScrapedJob; jobs?: ScrapedJob[]; multiple?: boolean; listing?: boolean; total_count?: number; total_found?: number; failed_count?: number; error?: string; message?: string; fallback?: boolean }> => {
   const wantsMultiJobRetry = isLinkedInSearchUrl(url);
+  const jobId = options?.jobId?.trim();
+  const invokeBody: Record<string, unknown> = { url };
+  if (jobId) invokeBody.job_id = jobId;
   const first = await supabase.functions.invoke('scrape-job-url', {
-    body: { url },
+    body: invokeBody,
   });
 
   const firstJobs = Array.isArray(first.data?.jobs) ? first.data.jobs : [];
@@ -103,7 +107,10 @@ export const scrapeJobUrlWithReaderFallback = async (
   }
 
   const retry = await supabase.functions.invoke('scrape-job-url', {
-    body: { url, manualDescription: readerText },
+    body: {
+      ...invokeBody,
+      manualDescription: readerText,
+    },
   });
 
   if (retry.error) {

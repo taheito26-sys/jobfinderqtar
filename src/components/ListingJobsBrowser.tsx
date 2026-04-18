@@ -338,6 +338,7 @@ const ListingJobsBrowser = ({ keywords, location, totalCount, sourceUrl }: Listi
           id: data.id,
           apply_url: data.apply_url,
           source_url: data.source_url,
+          description: data.description,
         }]),
         scoreImportedJobs([data.id]),
       ]);

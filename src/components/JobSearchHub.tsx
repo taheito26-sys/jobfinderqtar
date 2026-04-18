@@ -244,6 +244,7 @@ const JobSearchHub = ({ onJobsAdded, onOpenBulkSearch, onOpenImport }: JobSearch
           id: job.id,
           apply_url: job.apply_url,
           source_url: job.source_url,
+          description: job.description,
         }))),
         scoreImportedJobs(data.map((job: any) => job.id)),
       ]);
