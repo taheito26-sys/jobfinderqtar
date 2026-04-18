@@ -6,6 +6,31 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+type SourceRunState = {
+  search_status: 'idle' | 'queued' | 'searching' | 'success' | 'error';
+  search_progress: number;
+  search_message: string | null;
+  search_error: string | null;
+  search_updated_at: string;
+};
+
+async function setSourceRunState(
+  supabaseAdmin: any,
+  sourceId: string,
+  config: Record<string, any>,
+  patch: Partial<SourceRunState>
+) {
+  const nextConfig = {
+    ...config,
+    ...patch,
+  };
+  await supabaseAdmin
+    .from('job_sources')
+    .update({ config: nextConfig })
+    .eq('id', sourceId);
+  return nextConfig;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -66,6 +91,16 @@ Deno.serve(async (req) => {
       const sources = sourcesByUser.get(userId) || [];
       for (const source of sources) {
         try {
+          const baseConfig = (source.config as Record<string, any>) || {};
+          const queuedAt = new Date().toISOString();
+          await setSourceRunState(supabaseAdmin, source.id, baseConfig, {
+            search_status: 'searching',
+            search_progress: 10,
+            search_message: `Queued for ${source.source_name}`,
+            search_error: null,
+            search_updated_at: queuedAt,
+          });
+
           const pipelineRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/linkedin-sync-pipeline`, {
             method: 'POST',
             headers: {
@@ -77,9 +112,33 @@ Deno.serve(async (req) => {
           if (pipelineRes.ok) {
             const data = await pipelineRes.json();
             totalInsertedJobs += (data.new_stage_count || 0);
+            await setSourceRunState(supabaseAdmin, source.id, baseConfig, {
+              search_status: 'success',
+              search_progress: 100,
+              search_message: `Found ${data.new_stage_count || 0} new jobs`,
+              search_error: null,
+              search_updated_at: new Date().toISOString(),
+            });
+          } else {
+            const message = `LinkedIn pipeline returned HTTP ${pipelineRes.status}`;
+            await setSourceRunState(supabaseAdmin, source.id, baseConfig, {
+              search_status: 'error',
+              search_progress: 100,
+              search_message: message,
+              search_error: message,
+              search_updated_at: new Date().toISOString(),
+            });
           }
         } catch (err) {
-          console.error(`LinkedIn pipeline failed for source ${source.id}:`, err.message);
+          const message = err?.message || String(err);
+          await setSourceRunState(supabaseAdmin, source.id, (source.config as Record<string, any>) || {}, {
+            search_status: 'error',
+            search_progress: 100,
+            search_message: message,
+            search_error: message,
+            search_updated_at: new Date().toISOString(),
+          });
+          console.error(`LinkedIn pipeline failed for source ${source.id}:`, message);
         }
       }
     }
@@ -104,17 +163,40 @@ Deno.serve(async (req) => {
       for (const source of sources) {
         const config = (source.config as any) || {};
         const baseUrl = config.base_url || '';
+        const startedAt = new Date().toISOString();
+        await setSourceRunState(supabaseAdmin, source.id, config, {
+          search_status: 'searching',
+          search_progress: 10,
+          search_message: `Fetching ${source.source_name}`,
+          search_error: null,
+          search_updated_at: startedAt,
+        });
         if (!baseUrl) {
           await supabaseAdmin
             .from('job_sources')
             .update({
-              config: { ...config, last_error: 'No base URL configured for this source.' },
+              config: {
+                ...config,
+                last_error: 'No base URL configured for this source.',
+                search_status: 'error',
+                search_progress: 100,
+                search_message: 'No base URL configured for this source.',
+                search_error: 'No base URL configured for this source.',
+                search_updated_at: new Date().toISOString(),
+              },
             })
             .eq('id', source.id);
           continue;
         }
 
         try {
+          await setSourceRunState(supabaseAdmin, source.id, config, {
+            search_status: 'searching',
+            search_progress: 25,
+            search_message: `Scraping ${source.source_name}`,
+            search_error: null,
+            search_updated_at: new Date().toISOString(),
+          });
           const scrapeRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/scrape-job-url`, {
             method: 'POST',
             headers: {
@@ -129,7 +211,7 @@ Deno.serve(async (req) => {
             const message = scrapeData?.message || scrapeData?.error || `Scrape failed with HTTP ${scrapeRes.status}`;
             await supabaseAdmin
               .from('job_sources')
-              .update({ config: { ...config, last_error: message } })
+              .update({ config: { ...config, last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } })
               .eq('id', source.id);
             console.warn(`Generic scrape failed for source ${source.source_name}:`, message);
             continue;
@@ -145,7 +227,7 @@ Deno.serve(async (req) => {
             const message = 'No jobs extracted from the configured base URL. Use a search/listing page URL if the homepage is empty.';
             await supabaseAdmin
               .from('job_sources')
-              .update({ config: { ...config, last_error: message } })
+              .update({ config: { ...config, last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } })
               .eq('id', source.id);
             console.warn(`Generic scrape returned no jobs for source ${source.source_name}`);
             continue;
@@ -180,6 +262,13 @@ Deno.serve(async (req) => {
           );
 
           let inserted = 0;
+          await setSourceRunState(supabaseAdmin, source.id, config, {
+            search_status: 'searching',
+            search_progress: 75,
+            search_message: `Saving ${normalizedJobs.length} jobs from ${source.source_name}`,
+            search_error: null,
+            search_updated_at: new Date().toISOString(),
+          });
           for (const job of normalizedJobs) {
             const applyUrl = job.apply_url || baseUrl;
             const key = `${String(applyUrl).toLowerCase()}|${String(job.title || '').toLowerCase()}|${String(job.company || '').toLowerCase()}`;
@@ -216,7 +305,7 @@ Deno.serve(async (req) => {
 
           await supabaseAdmin
             .from('job_sources')
-            .update({ config: { ...config, last_error: null } })
+            .update({ config: { ...config, last_error: null, search_status: 'success', search_progress: 100, search_message: `Completed with ${inserted} new jobs`, search_error: null, search_updated_at: new Date().toISOString() } })
             .eq('id', source.id);
 
           if (inserted > 0) {
@@ -226,7 +315,7 @@ Deno.serve(async (req) => {
           const message = err?.message || String(err);
           await supabaseAdmin
             .from('job_sources')
-            .update({ config: { ...config, last_error: message } })
+            .update({ config: { ...config, last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } })
             .eq('id', source.id);
           console.error(`Error scraping generic source ${source.source_name}:`, message);
         }

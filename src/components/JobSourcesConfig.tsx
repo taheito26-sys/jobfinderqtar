@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import {
   Plus, Trash2, Plug, Database, Pencil, Search, Globe, Rss, Bot, RefreshCw,
@@ -41,6 +42,11 @@ type SourceConfig = {
   max_results_per_run?: number;
   auto_score?: boolean;
   last_error?: string;
+  search_status?: 'idle' | 'queued' | 'searching' | 'success' | 'error';
+  search_progress?: number;
+  search_message?: string | null;
+  search_error?: string | null;
+  search_updated_at?: string;
   // LinkedIn Pipeline extras
   platform?: string;
   remote_preference?: string;
@@ -93,6 +99,25 @@ const JobSourcesConfig = () => {
     if (!user) return;
     loadData();
   }, [user]);
+
+  useEffect(() => {
+    if (syncing !== 'auto' || !user) return;
+
+    const interval = window.setInterval(() => {
+      void loadData();
+    }, 2500);
+
+    const timeout = window.setTimeout(() => {
+      setSyncing(null);
+    }, 120000);
+
+    void loadData();
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [syncing, user]);
 
   const loadData = async () => {
     if (!user) return;
@@ -286,8 +311,6 @@ const JobSourcesConfig = () => {
       });
     } catch (err: any) {
       toast({ title: 'Auto-search failed', description: err.message, variant: 'destructive' });
-    } finally {
-      setSyncing(null);
     }
   };
 
@@ -462,6 +485,26 @@ const JobSourcesConfig = () => {
             {sources.map(source => {
               const config = (source.config || {}) as SourceConfig;
               const isExpanded = expandedId === source.id;
+              const runStatus = config.search_status || (source.last_synced_at ? 'success' : 'idle');
+              const runProgress = typeof config.search_progress === 'number'
+                ? config.search_progress
+                : (runStatus === 'success' ? 100 : 0);
+              const runMessage = config.search_message ||
+                (runStatus === 'success'
+                  ? `Last sync ${source.last_synced_at ? new Date(source.last_synced_at).toLocaleString() : 'completed'}`
+                  : runStatus === 'searching'
+                    ? 'Searching...'
+                    : runStatus === 'error'
+                      ? (config.search_error || config.last_error || 'Search failed')
+                      : null);
+              const runBadgeClass =
+                runStatus === 'searching'
+                  ? 'bg-blue-100 text-blue-700'
+                  : runStatus === 'success'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : runStatus === 'error'
+                      ? 'bg-red-100 text-red-700'
+                      : 'bg-muted text-muted-foreground';
 
               return (
                 <Collapsible key={source.id} open={isExpanded} onOpenChange={() => setExpandedId(isExpanded ? null : source.id)}>
@@ -475,6 +518,9 @@ const JobSourcesConfig = () => {
                           <div className="flex items-center gap-2">
                             <p className="text-sm font-medium text-foreground">{source.source_name}</p>
                             {getStatusIcon(source)}
+                            <Badge variant="secondary" className={`text-[10px] px-2 py-0.5 ${runBadgeClass}`}>
+                              {runStatus === 'searching' ? 'Searching' : runStatus === 'success' ? 'Done' : runStatus === 'error' ? 'Error' : 'Idle'}
+                            </Badge>
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
                             <Badge variant="outline" className="text-xs">{source.source_type}</Badge>
@@ -496,12 +542,26 @@ const JobSourcesConfig = () => {
                         </div>
                         {isExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                       </div>
-                    </CollapsibleTrigger>
+                      </CollapsibleTrigger>
+  
+                      <CollapsibleContent>
+                        <div className="border-t border-border p-3 space-y-3 bg-muted/20">
+                          {runStatus === 'searching' && (
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                                <span>{runMessage}</span>
+                                <span>{Math.max(0, Math.min(100, runProgress))}%</span>
+                              </div>
+                              <Progress value={Math.max(0, Math.min(100, runProgress))} className="h-2" />
+                            </div>
+                          )}
 
-                    <CollapsibleContent>
-                      <div className="border-t border-border p-3 space-y-3 bg-muted/20">
-                        {/* Config details */}
-                        <div className="grid grid-cols-2 gap-3">
+                          {runStatus !== 'searching' && runMessage && (
+                            <p className="text-xs text-muted-foreground">{runMessage}</p>
+                          )}
+
+                          {/* Config details */}
+                          <div className="grid grid-cols-2 gap-3">
                           {config.base_url && (
                             <div className="space-y-1">
                               <Label className="text-xs text-muted-foreground">Base URL</Label>
@@ -545,9 +605,9 @@ const JobSourcesConfig = () => {
                           </div>
                         )}
 
-                        {config.last_error && (
+                        {(config.last_error || config.search_error) && (
                           <div className="rounded bg-destructive/10 p-2">
-                            <p className="text-xs text-destructive">{config.last_error}</p>
+                            <p className="text-xs text-destructive">{config.search_error || config.last_error}</p>
                           </div>
                         )}
 
