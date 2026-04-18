@@ -23,6 +23,11 @@ export interface LinkedInJobSnippet {
   raw_card_payload: any;
 }
 
+function getLinkedInCookieHeader(): string | null {
+  const cookie = Deno.env.get('LINKEDIN_LI_AT_COOKIE') || Deno.env.get('LI_AT_COOKIE');
+  return cookie ? `li_at=${cookie}` : null;
+}
+
 function mapPostedWithinToLinkedIn(postedWithin?: string): string {
   switch (postedWithin) {
     case "24h": return "r86400";
@@ -367,6 +372,7 @@ export async function fetchLinkedInSearch(
 ): Promise<LinkedInJobSnippet[]> {
   const searchUrl = buildLinkedInSearchUrl(input);
   console.log(`[LinkedInSearch] Request URL: ${searchUrl}`);
+  const cookieHeader = getLinkedInCookieHeader();
 
   // Headers modelled on speedyapply/JobSpy constant.py + Scrapy Playbook settings.py
   // These mimic a standard Chrome browser request, which reduces bot-detection rejections.
@@ -384,6 +390,7 @@ export async function fetchLinkedInSearch(
       "sec-fetch-mode": "navigate",
       "sec-fetch-site": "none",
       "sec-fetch-user": "?1",
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     },
   });
 

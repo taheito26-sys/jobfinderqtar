@@ -4,6 +4,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.4';
 import { getPipelineConfig } from './ai-pipeline.ts';
 
+export function getLinkedInCookieHeader(): string | null {
+  const cookie = Deno.env.get('LINKEDIN_LI_AT_COOKIE') || Deno.env.get('LI_AT_COOKIE');
+  return cookie ? `li_at=${cookie}` : null;
+}
+
 /** Extract ALL job IDs from a LinkedIn search/collection URL */
 export function extractAllLinkedInJobIds(url: string): string[] {
   const ids = new Set<string>();
@@ -88,12 +93,14 @@ export function normaliseJobFields(raw: Record<string, any>, fallbackUrl: string
 export async function fetchLinkedInJobHtml(jobId: string): Promise<string> {
   const guestUrl = `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`;
   console.log('Fetching LinkedIn guest HTML:', guestUrl);
+  const cookieHeader = getLinkedInCookieHeader();
   
   const res = await fetch(guestUrl, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       'Accept': 'text/html,application/xhtml+xml',
       'Accept-Language': 'en-US,en;q=0.9',
+      ...(cookieHeader ? { 'Cookie': cookieHeader } : {}),
     },
   });
   
