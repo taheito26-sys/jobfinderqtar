@@ -7,7 +7,21 @@ export function getBestJobDateCandidate(job: any): string | null {
     raw?.source_created_at ||
     raw?.posted_at ||
     raw?.postedAt ||
+    raw?.source_created_at_text ||
+    raw?.listed_at_text ||
+    raw?.posted_at_text ||
+    raw?.date_posted ||
+    raw?.date_posted_text ||
     raw?.date ||
+    raw?.details?.source_created_at ||
+    raw?.details?.posted_at ||
+    raw?.details?.listed_at_text ||
+    raw?.details?.posted_at_text ||
+    raw?.details?.date_posted ||
+    raw?.details?.date ||
+    raw?.snippet?.source_created_at_text ||
+    raw?.snippet?.listed_at_text ||
+    raw?.snippet?.posted_at_text ||
     null;
 
   if (!candidate) return null;
@@ -45,4 +59,22 @@ export function formatJobDate(job: any, options?: Intl.DateTimeFormatOptions): s
   const parsed = parseJobDate(job);
   if (!parsed) return null;
   return parsed.toLocaleDateString(undefined, options ?? { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+export function getBestJobDescriptionCandidate(job: any): string | null {
+  const raw = job?.raw_data as any;
+  const candidate =
+    job?.description ||
+    raw?.description ||
+    raw?.details?.description ||
+    raw?.raw_source_detail?.description ||
+    raw?.snippet?.description ||
+    raw?.summary ||
+    raw?.details?.summary ||
+    raw?.snippet?.summary ||
+    null;
+
+  if (!candidate) return null;
+  const text = String(candidate).trim();
+  return text.length ? text : null;
 }
