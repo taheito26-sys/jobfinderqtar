@@ -334,14 +334,14 @@ Deno.serve(async (req) => {
     // Handle manual paste mode
     if (manualDescription) {
       console.log('Using manually pasted job description');
-      const extracted = await extractJobWithAI(manualDescription, url || '', user.id);
+      const extracted = await extractJobWithAI(manualDescription, url || '', userId);
       if (extracted.type === 'multiple') {
         const jobs = extracted.jobs.map((job) => markNormalizationStatus({
           ...job,
           description: job.description || manualDescription.substring(0, 5000),
         }, manualDescription.length));
         try {
-          await recordLedgerSync(supabaseClient as any, user.id, 'manual-job-description', 'manual', jobs, {
+          await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', jobs, {
             baseUrl: url || '',
             configJson: { source: 'manual_description' },
             normalizationStatus: manualDescription.length >= 250 ? 'valid' : 'incomplete',
@@ -363,7 +363,7 @@ Deno.serve(async (req) => {
         description: extracted.job.description || manualDescription.substring(0, 5000),
       }, manualDescription.length);
       try {
-        await recordLedgerSync(supabaseClient as any, user.id, 'manual-job-description', 'manual', [job], {
+        await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', [job], {
           baseUrl: url || '',
           configJson: { source: 'manual_description' },
           normalizationStatus: manualDescription.length >= 250 ? 'valid' : 'incomplete',
@@ -416,7 +416,7 @@ Deno.serve(async (req) => {
 
         if (jobs.length > 0) {
           try {
-            await recordLedgerSync(supabaseClient as any, user.id, 'linkedin-search-scrape', 'linkedin', jobs, {
+            await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', jobs, {
               baseUrl: formattedUrl,
               configJson: { source: 'linkedin_search_url' },
               normalizationStatus: 'valid',
@@ -447,7 +447,7 @@ Deno.serve(async (req) => {
         const failedIds: string[] = [];
 
         for (const jobId of allJobIds) {
-          const result = await scrapeSingleLinkedInJob(jobId, user.id);
+          const result = await scrapeSingleLinkedInJob(jobId, userId);
           if (result) {
             jobs.push(result);
             console.log(`✓ Job ${jobId}: ${result.title} at ${result.company}`);
@@ -459,7 +459,7 @@ Deno.serve(async (req) => {
         if (jobs.length > 0) {
           const normalizedJobs = jobs.map((job) => markNormalizationStatus(job, 1000));
           try {
-            await recordLedgerSync(supabaseClient as any, user.id, 'linkedin-search-scrape', 'linkedin', normalizedJobs, {
+            await recordLedgerSync(supabaseClient as any, userId, 'linkedin-search-scrape', 'linkedin', normalizedJobs, {
               baseUrl: formattedUrl,
               configJson: { source: 'linkedin_search_url' },
               normalizationStatus: 'valid',
@@ -498,7 +498,7 @@ Deno.serve(async (req) => {
         try {
           const pageText = await fetchLinkedInJob(jobId);
           if (pageText.length > 200) {
-            const aiResult = await extractJobWithAI(pageText, formattedUrl, user.id);
+            const aiResult = await extractJobWithAI(pageText, formattedUrl, userId);
             // LinkedIn guest API is always a single job page — take first if multi was returned
             job = markNormalizationStatus(aiResult.type === 'multiple' ? aiResult.jobs[0] : aiResult.job, pageText.length);
             extracted = true;
@@ -563,7 +563,7 @@ Deno.serve(async (req) => {
             // The Firecrawl JSON schema result (ext) is only used as a seed title/company fallback.
             const ext = scrapeData.data?.json || scrapeData.json || {};
             const aiText = md.length >= 200 ? md.substring(0, 12000) : JSON.stringify(ext);
-            const aiResult = await extractJobWithAI(aiText, formattedUrl, user.id);
+        const aiResult = await extractJobWithAI(aiText, formattedUrl, userId);
 
             if (aiResult.type === 'listing') {
               // Listing page with individual job URLs
@@ -572,7 +572,7 @@ Deno.serve(async (req) => {
                 source_created_at: (j.source_created_at as string | null) || firecrawlDate || null,
               }, md.length));
               try {
-                await recordLedgerSync(supabaseClient as any, user.id, 'firecrawl-listing-scrape', 'search', jobs, {
+          await recordLedgerSync(supabaseClient as any, userId, 'firecrawl-listing-scrape', 'search', jobs, {
                   baseUrl: formattedUrl,
                   configJson: { source: 'firecrawl_listing', url: formattedUrl, total_count: aiResult.total_count },
                   normalizationStatus: 'valid',
@@ -600,7 +600,7 @@ Deno.serve(async (req) => {
                 source_created_at: (j.source_created_at as string | null) || firecrawlDate || null,
               }, md.length));
               try {
-                await recordLedgerSync(supabaseClient as any, user.id, 'firecrawl-search-scrape', 'search', jobs, {
+          await recordLedgerSync(supabaseClient as any, userId, 'firecrawl-search-scrape', 'search', jobs, {
                   baseUrl: formattedUrl,
                   configJson: { source: 'firecrawl_scrape', url: formattedUrl },
                   normalizationStatus: 'valid',
@@ -648,11 +648,11 @@ Deno.serve(async (req) => {
             status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
           });
         }
-        const aiResult = await extractJobWithAI(pageText, formattedUrl, user.id);
+        const aiResult = await extractJobWithAI(pageText, formattedUrl, userId);
         if (aiResult.type === 'listing') {
           const jobs = aiResult.jobs.map((job) => markNormalizationStatus(job, pageText.length));
           try {
-            await recordLedgerSync(supabaseClient as any, user.id, 'direct-fetch-listing-scrape', 'web', jobs, {
+          await recordLedgerSync(supabaseClient as any, userId, 'direct-fetch-listing-scrape', 'web', jobs, {
               baseUrl: formattedUrl,
               configJson: { source: 'direct_fetch_listing', url: formattedUrl, total_count: aiResult.total_count },
               normalizationStatus: pageText.length >= 250 ? 'valid' : 'incomplete',
@@ -675,7 +675,7 @@ Deno.serve(async (req) => {
         if (aiResult.type === 'multiple') {
           const jobs = aiResult.jobs.map((job) => markNormalizationStatus(job, pageText.length));
           try {
-            await recordLedgerSync(supabaseClient as any, user.id, 'direct-fetch-scrape', 'web', jobs, {
+          await recordLedgerSync(supabaseClient as any, userId, 'direct-fetch-scrape', 'web', jobs, {
               baseUrl: formattedUrl,
               configJson: { source: 'direct_fetch', url: formattedUrl },
               normalizationStatus: pageText.length >= 250 ? 'valid' : 'incomplete',
@@ -705,7 +705,7 @@ Deno.serve(async (req) => {
     }
 
     try {
-      await recordLedgerSync(supabaseClient as any, user.id, 'single-job-scrape', isLinkedin ? 'linkedin' : 'web', [job], {
+      await recordLedgerSync(supabaseClient as any, userId, 'single-job-scrape', isLinkedin ? 'linkedin' : 'web', [job], {
         baseUrl: formattedUrl,
         configJson: { source: 'single_job_scrape', url: formattedUrl },
         normalizationStatus: job.normalization_status || 'incomplete',
