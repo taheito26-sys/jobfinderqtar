@@ -726,21 +726,10 @@ ${text}`;
 /** Scrape a single LinkedIn job by ID, return structured job or null */
 async function scrapeSingleLinkedInJob(jobId: string, userId: string): Promise<Record<string, unknown> | null> {
   try {
-    const pageText = await fetchLinkedInJob(jobId);
-    if (pageText.length < 200) {
-      console.warn(`Job ${jobId}: insufficient content (${pageText.length} chars)`);
-      return null;
-    }
-    const jobUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
-    const result = await extractJobWithAI(pageText, jobUrl, userId);
-    // LinkedIn guest API always returns a single job page — take the first if multi detected
-    const job = result.type === 'multiple'
-      ? result.jobs[0]
-      : ('job' in result ? result.job : null);
-    return job ?? null;
+    return await enrichLinkedInJob(jobId, userId);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn(`Failed to scrape LinkedIn job ${jobId}:`, msg);
+    console.warn('Failed to scrape LinkedIn job ' + jobId + ':', msg);
     return null;
   }
 }
@@ -1066,17 +1055,13 @@ Deno.serve(async (req) => {
       const jobId = extractLinkedInJobId(formattedUrl);
       if (jobId) {
         try {
-          const pageText = await fetchLinkedInJob(jobId);
-          if (pageText.length > 200) {
-            const aiResult = await extractJobWithAI(pageText, formattedUrl, userId);
-            // LinkedIn guest API is always a single job page — take first if multi was returned
-            const aiJob = aiResult.type === 'multiple'
-              ? aiResult.jobs[0]
-              : ('job' in aiResult ? aiResult.job : null);
-            if (aiJob) {
-              job = markNormalizationStatus(aiJob, pageText.length);
-              extracted = true;
-              console.log('LinkedIn guest API + AI extracted:', job.title);
+          const enriched = await enrichLinkedInJob(jobId, userId);
+          if (enriched) {
+            const evidenceLength = String(enriched.description || '').trim().length || 1000;
+            job = markNormalizationStatus(enriched, evidenceLength);
+            extracted = true;
+            console.log('LinkedIn guest HTML parsed:', job.title);
+          }
             }
           }
         } catch (e: unknown) {

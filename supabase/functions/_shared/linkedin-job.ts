@@ -16,6 +16,43 @@ export function getLinkedInCookieHeader(): string | null {
   return cookie ? `li_at=${cookie}` : null;
 }
 
+function stripHtmlTags(raw: string): string {
+  return raw
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+export async function fetchLinkedInJobRawHtml(jobId: string): Promise<string> {
+  const guestUrl = `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`;
+  console.log('Fetching LinkedIn guest HTML:', guestUrl);
+  const cookieHeader = getLinkedInCookieHeader();
+
+  const res = await fetch(guestUrl, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml',
+      'Accept-Language': 'en-US,en;q=0.9',
+      ...(cookieHeader ? { 'Cookie': cookieHeader } : {}),
+    },
+  });
+
+  if (!res.ok) throw new Error(`LinkedIn guest API returned ${res.status}`);
+  return await res.text();
+}
+
 /** Extract ALL job IDs from a LinkedIn search/collection URL */
 export { extractAllLinkedInJobIds, isLinkedInSearchUrl, extractLinkedInJobId, normalizeLinkedInUrl, buildLinkedInGuestSearchUrl };
 
@@ -40,23 +77,9 @@ export function normaliseJobFields(raw: Record<string, any>, fallbackUrl: string
 
 /** Try LinkedIn's guest/public job posting endpoint */
 export async function fetchLinkedInJobHtml(jobId: string): Promise<string> {
-  const guestUrl = `https://www.linkedin.com/jobs-guest/jobs/api/jobPosting/${jobId}`;
-  console.log('Fetching LinkedIn guest HTML:', guestUrl);
-  const cookieHeader = getLinkedInCookieHeader();
-  
-  const res = await fetch(guestUrl, {
-    headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml',
-      'Accept-Language': 'en-US,en;q=0.9',
-      ...(cookieHeader ? { 'Cookie': cookieHeader } : {}),
-    },
-  });
-  
-  if (!res.ok) throw new Error(`LinkedIn guest API returned ${res.status}`);
-  const html = await res.text();
-  
-  // Minimal cleanup to reduce tokens
+  const html = await fetchLinkedInJobRawHtml(jobId);
+
+  // Minimal cleanup to reduce tokens for AI fallback.
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<style[\s\S]*?<\/style>/gi, '')
@@ -69,6 +92,50 @@ export async function fetchLinkedInJobHtml(jobId: string): Promise<string> {
     .replace(/\s+/g, ' ')
     .trim()
     .substring(0, 15000);
+}
+
+export function extractLinkedInJobDetailsFromHtml(html: string, jobId: string): Record<string, any> | null {
+  const title = stripHtmlTags(
+    html.match(/<h2[^>]*class="[^"]*top-card-layout__title[^"]*topcard__title[^"]*"[^>]*>([\s\S]*?)<\/h2>/i)?.[1] ||
+    html.match(/<h1[^>]*class="[^"]*top-card-layout__title[^"]*topcard__title[^"]*"[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ||
+    ''
+  );
+  const company = stripHtmlTags(
+    html.match(/<a[^>]*class="[^"]*topcard__org-name-link[^"]*"[^>]*>([\s\S]*?)<\/a>/i)?.[1] ||
+    html.match(/<span[^>]*class="[^"]*topcard__flavor[^"]*"[^>]*>([\s\S]*?)<\/span>/i)?.[1] ||
+    ''
+  );
+  const locationMatches = [...html.matchAll(/<span[^>]*class="[^"]*topcard__flavor[^"]*topcard__flavor--bullet[^"]*"[^>]*>([\s\S]*?)<\/span>/gi)];
+  const location = stripHtmlTags(locationMatches[0]?.[1] || '');
+  const postedText = stripHtmlTags(
+    html.match(/<span[^>]*class="[^"]*posted-time-ago__text[^"]*"[^>]*>([\s\S]*?)<\/span>/i)?.[1] || ''
+  );
+  const descriptionHtml = html.match(/<div[^>]*class="[^"]*description__text[^"]*"[^>]*>([\s\S]*?)<\/div>/i)?.[1] || '';
+  const description = stripHtmlTags(descriptionHtml);
+  const criteriaMatches = [...html.matchAll(/<li[^>]*class="[^"]*description__job-criteria-item[^"]*"[^>]*>[\s\S]*?<h3[^>]*class="[^"]*description__job-criteria-subheader[^"]*"[^>]*>([\s\S]*?)<\/h3>[\s\S]*?<span[^>]*class="[^"]*description__job-criteria-text[^"]*"[^>]*>([\s\S]*?)<\/span>[\s\S]*?<\/li>/gi)];
+  const criteria = Object.fromEntries(criteriaMatches.map((match) => [
+    stripHtmlTags(match[1]).toLowerCase(),
+    stripHtmlTags(match[2]),
+  ]));
+
+  if (!title && !company && !description) return null;
+
+  return normaliseJobFields({
+    title: title || 'Untitled Job',
+    company: company || 'Unknown Company',
+    location: location || '',
+    remote_type: /remote/i.test(`${location} ${description}`) ? 'remote' : 'unknown',
+    description,
+    employment_type: criteria['employment type']?.toLowerCase() || 'full-time',
+    seniority_level: criteria['seniority level'] || '',
+    requirements: description
+      .split(/\n+/)
+      .map((line) => line.trim().replace(/^[·•\-\u2022]\s*/, ''))
+      .filter((line) => line.length >= 20)
+      .slice(0, 8),
+    apply_url: `https://www.linkedin.com/jobs/view/${jobId}/`,
+    source_created_at: postedText || null,
+  }, `https://www.linkedin.com/jobs/view/${jobId}/`);
 }
 
 /** Parse relative time like "3 days ago" into ISO string approximately */
@@ -99,8 +166,31 @@ export function parseLinkedInRelativeDate(text?: string): string | null {
 /** Main extraction logic using AI */
 export async function enrichLinkedInJob(jobId: string, userId: string): Promise<Record<string, any> | null> {
   try {
-    const html = await fetchLinkedInJobHtml(jobId);
-    if (html.length < 200) return null;
+    const rawHtml = await fetchLinkedInJobRawHtml(jobId);
+    if (rawHtml.length < 200) return null;
+
+    const direct = extractLinkedInJobDetailsFromHtml(rawHtml, jobId);
+    if (direct) {
+      return {
+        ...direct,
+        linkedin_job_id: jobId,
+        source_platform: 'linkedin',
+        raw_source_detail: { strategy: 'guest-html-direct' }
+      };
+    }
+
+    const html = rawHtml
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&#\d+;/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 15000);
 
     const today = new Date().toISOString().split('T')[0];
     const jobUrl = `https://www.linkedin.com/jobs/view/${jobId}/`;
