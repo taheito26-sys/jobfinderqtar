@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
-import { FileSearch, Loader2, CheckCircle2, AlertCircle, XCircle, Sparkles, Wrench, Plus } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { FileSearch, Loader2, CheckCircle2, AlertCircle, XCircle, Sparkles, Wrench } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { useNavigate } from 'react-router-dom';
 
 interface ATSScoreCheckerProps {
   jobId: string;
@@ -32,17 +34,19 @@ interface ATSFix {
   description: string;
   type: 'add_skill' | 'add_summary' | 'add_experience';
   data?: any;
-  applied?: boolean;
 }
 
 const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreCheckerProps) => {
+  const navigate = useNavigate();
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<ATSResult | null>(null);
-  const [applying, setApplying] = useState<string | null>(null);
+  const [selectedFixIds, setSelectedFixIds] = useState<string[]>([]);
+  const [tailoring, setTailoring] = useState(false);
 
   const runCheck = async () => {
     setChecking(true);
     setResult(null);
+    setSelectedFixIds([]);
 
     try {
       const { data: docs } = await supabase.from('master_documents')
@@ -174,57 +178,41 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
     setChecking(false);
   };
 
-  const applyFix = async (fix: ATSFix) => {
-    setApplying(fix.id);
-    try {
-      if (fix.type === 'add_skill' && fix.data?.skill_name) {
-        const { error } = await supabase.from('profile_skills').insert({
-          user_id: userId,
-          skill_name: fix.data.skill_name,
-          proficiency: 'intermediate',
-          is_primary: false,
-        });
-        if (error) throw error;
-        toast.success(`Added "${fix.data.skill_name}" to your skills`);
-      }
+  const selectedFixes = useMemo(
+    () => result?.fixes.filter(f => selectedFixIds.includes(f.id)) ?? [],
+    [result, selectedFixIds],
+  );
 
-      // Mark fix as applied
-      setResult(prev => prev ? {
-        ...prev,
-        fixes: prev.fixes.map(f => f.id === fix.id ? { ...f, applied: true } : f),
-      } : prev);
-    } catch (err: any) {
-      toast.error('Fix failed: ' + (err.message || 'Unknown error'));
-    }
-    setApplying(null);
+  const toggleFixSelection = (fixId: string, checked: boolean) => {
+    setSelectedFixIds(prev => checked ? [...prev, fixId] : prev.filter(id => id !== fixId));
   };
 
-  const applyAllSkillFixes = async () => {
+  const tailorWithSelectedFixes = async () => {
     if (!result) return;
-    const skillFixes = result.fixes.filter(f => f.type === 'add_skill' && !f.applied);
-    if (skillFixes.length === 0) return;
-
-    setApplying('all');
+    setTailoring(true);
     try {
-      const inserts = skillFixes.map(f => ({
-        user_id: userId,
-        skill_name: f.data.skill_name,
-        proficiency: 'intermediate' as const,
-        is_primary: false,
-      }));
-
-      const { error } = await supabase.from('profile_skills').insert(inserts);
+      const { data, error } = await supabase.functions.invoke('tailor-cv', {
+        body: {
+          job_id: jobId,
+          document_type: 'cv',
+          ats_fixes: selectedFixes,
+        },
+      });
       if (error) throw error;
+      if (data?.error) throw new Error(data.error);
 
-      toast.success(`Added ${skillFixes.length} missing keywords to your skills`);
-      setResult(prev => prev ? {
-        ...prev,
-        fixes: prev.fixes.map(f => f.type === 'add_skill' ? { ...f, applied: true } : f),
-      } : prev);
+      const fixCount = selectedFixes.length;
+      toast.success(
+        fixCount > 0
+          ? `Tailored CV created with ${fixCount} ATS-approved fix${fixCount === 1 ? '' : 'es'}.`
+          : 'Tailored CV created without ATS fixes.',
+      );
+      navigate('/tailoring');
     } catch (err: any) {
-      toast.error('Bulk fix failed: ' + (err.message || 'Unknown error'));
+      toast.error('Tailoring failed: ' + (err.message || 'Unknown error'));
+    } finally {
+      setTailoring(false);
     }
-    setApplying(null);
   };
 
   const getScoreColor = (score: number) => {
@@ -314,54 +302,50 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
             <Separator />
 
             {/* Actionable Fixes */}
-            {result.fixes.filter(f => !f.applied).length > 0 && (
+            {result.fixes.length > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <Wrench className="w-3 h-3" /> Quick Fixes
+                    <Wrench className="w-3 h-3" /> ATS Fixes for Tailoring
                   </p>
-                  {result.fixes.filter(f => f.type === 'add_skill' && !f.applied).length > 1 && (
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="h-6 text-[10px] gap-1 px-2"
-                      disabled={applying !== null}
-                      onClick={applyAllSkillFixes}
-                    >
-                      {applying === 'all' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                      Add all missing skills
-                    </Button>
-                  )}
                 </div>
-                <div className="space-y-1.5 max-h-40 overflow-y-auto">
-                  {result.fixes.filter(f => !f.applied).slice(0, 10).map(fix => (
-                    <div key={fix.id} className="flex items-center justify-between gap-2 p-1.5 rounded-md bg-muted/50 border border-border">
-                      <div className="min-w-0 flex-1">
-                        <p className="text-xs font-medium text-foreground truncate">{fix.label}</p>
-                        <p className="text-[10px] text-muted-foreground line-clamp-1">{fix.description}</p>
-                      </div>
-                      {fix.type === 'add_skill' && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-6 w-6 p-0 flex-shrink-0"
-                          disabled={applying !== null}
-                          onClick={() => applyFix(fix)}
-                        >
-                          {applying === fix.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                        </Button>
-                      )}
-                    </div>
-                  ))}
+                <p className="text-[11px] text-muted-foreground mb-2">
+                  Check the fixes you want reflected in the tailored CV. They will not change your saved profile unless you save them separately.
+                </p>
+                <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                  {result.fixes.slice(0, 10).map(fix => {
+                    const checked = selectedFixIds.includes(fix.id);
+                    return (
+                      <label key={fix.id} className="flex items-start gap-2 p-2 rounded-md bg-muted/50 border border-border cursor-pointer">
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(value) => toggleFixSelection(fix.id, value === true)}
+                          className="mt-0.5"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-foreground truncate">{fix.label}</p>
+                          <p className="text-[10px] text-muted-foreground line-clamp-2">{fix.description}</p>
+                          {fix.type === 'add_experience' && (
+                            <p className="text-[10px] text-amber-600 mt-0.5">
+                              This will only be reflected if your profile already supports it.
+                            </p>
+                          )}
+                        </div>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* Applied fixes */}
-            {result.fixes.filter(f => f.applied).length > 0 && (
+            <div className="rounded-md border border-blue-200 bg-blue-50/70 p-3 text-[11px] text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-100">
+              Selected fixes will be applied only to the tailored CV. Leave them unchecked to tailor the CV exactly from your current profile.
+            </div>
+
+            {selectedFixes.length > 0 && (
               <div className="flex items-center gap-1.5 text-xs text-score-excellent">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>{result.fixes.filter(f => f.applied).length} fix(es) applied — click Re-check to update score</span>
+                <span>{selectedFixes.length} selected fix(es) will be shown in the tailored CV changes summary.</span>
               </div>
             )}
 
@@ -382,9 +366,21 @@ const ATSScoreChecker = ({ jobId, jobTitle, jobRequirements, userId }: ATSScoreC
               </div>
             )}
 
-            <Button onClick={runCheck} variant="outline" size="sm" className="w-full gap-1.5 mt-2">
-              <Sparkles className="w-3.5 h-3.5" />Re-check
-            </Button>
+            <div className="space-y-2">
+              <Button
+                onClick={tailorWithSelectedFixes}
+                variant="default"
+                size="sm"
+                className="w-full gap-1.5 mt-2"
+                disabled={tailoring}
+              >
+                {tailoring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                Tailor CV with selected fixes
+              </Button>
+              <Button onClick={runCheck} variant="outline" size="sm" className="w-full gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />Re-check
+              </Button>
+            </div>
           </>
         )}
       </CardContent>

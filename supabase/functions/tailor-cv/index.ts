@@ -26,7 +26,7 @@ serve(async (req) => {
     const pipelineConfig = await getPipelineConfig(user.id);
     console.log(`[tailor-cv] Pipeline: ${pipelineConfig.enabled ? "ON" : "OFF"}, providers: ${pipelineConfig.providers.map(p => p.name).join(" → ")}`);
 
-    const { job_id, document_type = "cv" } = await req.json();
+    const { job_id, document_type = "cv", ats_fixes = [] } = await req.json();
     if (!job_id) throw new Error("job_id is required");
 
     const [jobRes, profileRes, skillsRes, empRes, proofRes, matchRes] = await Promise.all([
@@ -47,6 +47,13 @@ serve(async (req) => {
     const employment = empRes.data || [];
     const proofPoints = proofRes.data || [];
     const match = matchRes.data;
+    const selectedAtsFixes = Array.isArray(ats_fixes) ? ats_fixes : [];
+    const atsFixSummary = selectedAtsFixes.length > 0
+      ? selectedAtsFixes.map((fix: any, index: number) => `- ${index + 1}. ${fix.label}: ${fix.description}`).join("\n")
+      : "";
+    const atsFixInstructions = selectedAtsFixes.length > 0
+      ? `\n\nATS-APPROVED FIXES TO REFLECT IN THE TAILORED CV:\n${atsFixSummary}\n\nRules for these fixes:\n- Apply them only in the tailored CV output, not in the source profile tables.\n- Do not invent facts. If a selected fix cannot be supported by the profile data, list it in unsupported_claims and explain why.\n- Make the final CV explicitly reflect the approved ATS adjustments in changes_summary.`
+      : "";
 
     const systemPrompt = document_type === "cv"
       ? `You are a professional CV tailoring assistant. Given a candidate's profile and a target job, produce a tailored CV content.
@@ -102,7 +109,7 @@ Nice to have: ${JSON.stringify(job.nice_to_haves || [])}
 
 ${match ? `Match Score: ${match.overall_score}/100
 Match Reasons: ${JSON.stringify(match.match_reasons)}
-Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
+Missing: ${JSON.stringify(match.missing_requirements)}` : ""}${atsFixInstructions}`;
 
     const contentSchema = document_type === "cv"
       ? {
@@ -154,7 +161,7 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
     }];
 
     const reviewInstruction = document_type === "cv"
-      ? "Verify every experience entry, skill, and achievement matches the candidate's actual profile data. Remove any hallucinated content. Improve formatting and relevance to the target job. Ensure the summary is compelling and job-aligned."
+      ? `Verify every experience entry, skill, and achievement matches the candidate's actual profile data. Remove any hallucinated content. Improve formatting and relevance to the target job. Ensure the summary is compelling and job-aligned.${selectedAtsFixes.length > 0 ? " Also verify that any ATS-approved fixes are only applied when the profile supports them, and call out those changes clearly in the tailored output." : ""}`
       : "Verify all claims in the cover letter against the candidate's actual profile. Remove fabrications. Improve tone, flow, and relevance. Ensure it addresses key job requirements with real examples.";
 
     const { result, providerChain } = await runPipeline({
@@ -171,6 +178,10 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
     const parsed = JSON.parse(result.tool_arguments);
     const hasUnsupportedClaims = (parsed.unsupported_claims || []).length > 0;
     const approvalStatus = hasUnsupportedClaims ? "needs_revision" : "pending";
+    const changesSummary = [
+      ...(Array.isArray(parsed.changes_summary) ? parsed.changes_summary : []),
+      ...selectedAtsFixes.map((fix: any) => `ATS-approved fix applied in tailoring: ${fix.label}`),
+    ];
 
     const { data: tailoredDoc, error: docError } = await supabase.from("tailored_documents").insert({
       user_id: user.id,
@@ -178,8 +189,13 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
       match_id: match?.id || null,
       document_type,
       content: parsed.content,
-      original_content: { summary: profile.summary, experience: employment, skills: skills.map((s: any) => s.skill_name) },
-      changes_summary: parsed.changes_summary,
+      original_content: {
+        summary: profile.summary,
+        experience: employment,
+        skills: skills.map((s: any) => s.skill_name),
+        ats_selected_fixes: selectedAtsFixes,
+      },
+      changes_summary: changesSummary,
       unsupported_claims: parsed.unsupported_claims,
       approval_status: approvalStatus,
     }).select().single();
@@ -191,14 +207,15 @@ Missing: ${JSON.stringify(match.missing_requirements)}` : ""}`;
       action: "tailored_document",
       entity_type: "tailored_document",
       entity_id: tailoredDoc.id,
-      details: {
-        job_title: job.title,
-        document_type,
-        approval_status: approvalStatus,
-        ai_pipeline: pipelineConfig.enabled,
-        ai_chain: providerChain,
-      },
-    });
+        details: {
+          job_title: job.title,
+          document_type,
+          approval_status: approvalStatus,
+          ai_pipeline: pipelineConfig.enabled,
+          ai_chain: providerChain,
+          ats_selected_fix_count: selectedAtsFixes.length,
+        },
+      });
 
     return new Response(JSON.stringify({ ...tailoredDoc, ai_chain: providerChain }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
