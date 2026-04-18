@@ -457,9 +457,9 @@ async function searchIndeedFromUrl(
   const collected = new Map<string, any>();
   const debug: any[] = [];
 
-  for (const seed of [...seedCandidates].slice(0, 8)) {
+  for (const seed of [...seedCandidates].slice(0, 12)) {
     try {
-      const jobs = await searchIndeedQatar(seed, location, 10);
+      const jobs = await searchIndeedQatar(seed, location, 25);
       const ranked = profileContext
         ? jobs.map((job) => ({ ...job, relevance_score: scoreLinkedInJobAgainstProfile(job, profileContext) }))
         : jobs;
@@ -474,7 +474,7 @@ async function searchIndeedFromUrl(
         collected.set(key, job);
       }
 
-      if (collected.size >= 20) break;
+      if (collected.size >= 40) break;
     } catch (err) {
       debug.push({ seed, error: err instanceof Error ? err.message : String(err) });
     }
