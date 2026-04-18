@@ -47,6 +47,15 @@ type SourceConfig = {
   search_progress?: number;
   search_message?: string | null;
   search_error?: string | null;
+  search_summary?: string | null;
+  search_breakdown?: {
+    source?: string;
+    discovered?: number;
+    inserted?: number;
+    enriched?: number;
+    titles?: string[];
+    [key: string]: unknown;
+  } | null;
   search_updated_at?: string;
   // LinkedIn Pipeline extras
   platform?: string;
@@ -583,6 +592,10 @@ const JobSourcesConfig = () => {
               const runProgress = typeof config.search_progress === 'number'
                 ? config.search_progress
                 : (runStatus === 'success' ? 100 : 0);
+              const runSummary = config.search_summary || null;
+              const runTitles = Array.isArray(config.search_breakdown?.titles)
+                ? config.search_breakdown!.titles.filter((title): title is string => Boolean(title)).slice(0, 4)
+                : [];
               const runMessage = config.search_message ||
                 (runStatus === 'success'
                   ? `Last sync ${source.last_synced_at ? new Date(source.last_synced_at).toLocaleString() : 'completed'}`
@@ -655,6 +668,24 @@ const JobSourcesConfig = () => {
 
                           {runStatus !== 'searching' && runMessage && (
                             <p className="text-xs text-muted-foreground">{runMessage}</p>
+                          )}
+
+                          {runStatus !== 'searching' && runSummary && (
+                            <div className="rounded-md border border-dashed border-border bg-background/60 p-2">
+                              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                Last sweep breakdown
+                              </p>
+                              <p className="text-xs text-foreground mt-1">{runSummary}</p>
+                              {runTitles.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {runTitles.map((title) => (
+                                    <Badge key={title} variant="secondary" className="text-[10px] px-2 py-0.5">
+                                      {title}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
                           )}
 
                           {/* Config details */}

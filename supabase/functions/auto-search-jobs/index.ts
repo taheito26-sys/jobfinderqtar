@@ -11,6 +11,9 @@ type SourceRunState = {
   search_progress: number;
   search_message: string | null;
   search_error: string | null;
+  search_summary: string | null;
+  search_breakdown: Record<string, unknown> | null;
+  last_error?: string | null;
   search_updated_at: string;
 };
 
@@ -29,6 +32,35 @@ async function setSourceRunState(
     .update({ config: nextConfig })
     .eq('id', sourceId);
   return nextConfig;
+}
+
+function buildLinkedInSearchState(data: Record<string, any>) {
+  const discoveryCount = Number(data?.discovery_count || 0);
+  const stagedCount = Number(data?.new_stage_count || 0);
+  const enrichmentCount = Number(data?.enrichment_count || 0);
+
+  return {
+    search_summary: `LinkedIn: ${discoveryCount} discovered · ${stagedCount} staged · ${enrichmentCount} enriched`,
+    search_breakdown: {
+      source: 'LinkedIn',
+      discovered: discoveryCount,
+      inserted: stagedCount,
+      enriched: enrichmentCount,
+      titles: [],
+    },
+  };
+}
+
+function buildGenericSearchState(sourceName: string, discovered: number, inserted: number, titles: string[]) {
+  return {
+    search_summary: `${sourceName}: ${discovered} discovered · ${inserted} inserted`,
+    search_breakdown: {
+      source: sourceName,
+      discovered,
+      inserted,
+      titles,
+    },
+  };
 }
 
 Deno.serve(async (req) => {
@@ -111,6 +143,9 @@ Deno.serve(async (req) => {
             search_progress: 10,
             search_message: `Queued for ${source.source_name}`,
             search_error: null,
+            search_summary: null,
+            search_breakdown: null,
+            last_error: null,
             search_updated_at: queuedAt,
           });
 
@@ -130,6 +165,8 @@ Deno.serve(async (req) => {
               search_progress: 100,
               search_message: `Found ${data.new_stage_count || 0} new jobs`,
               search_error: null,
+              ...buildLinkedInSearchState(data),
+              last_error: null,
               search_updated_at: new Date().toISOString(),
             });
           } else {
@@ -139,6 +176,9 @@ Deno.serve(async (req) => {
               search_progress: 100,
               search_message: message,
               search_error: message,
+              search_summary: null,
+              search_breakdown: null,
+              last_error: message,
               search_updated_at: new Date().toISOString(),
             });
           }
@@ -149,6 +189,9 @@ Deno.serve(async (req) => {
             search_progress: 100,
             search_message: message,
             search_error: message,
+            search_summary: null,
+            search_breakdown: null,
+            last_error: message,
             search_updated_at: new Date().toISOString(),
           });
           console.error(`LinkedIn pipeline failed for source ${source.id}:`, message);
@@ -182,23 +225,22 @@ Deno.serve(async (req) => {
           search_progress: 10,
           search_message: `Fetching ${source.source_name}`,
           search_error: null,
+          search_summary: null,
+          search_breakdown: null,
+          last_error: null,
           search_updated_at: startedAt,
         });
         if (!baseUrl) {
-          await supabaseAdmin
-            .from('job_sources')
-            .update({
-              config: {
-                ...config,
-                last_error: 'No base URL configured for this source.',
-                search_status: 'error',
-                search_progress: 100,
-                search_message: 'No base URL configured for this source.',
-                search_error: 'No base URL configured for this source.',
-                search_updated_at: new Date().toISOString(),
-              },
-            })
-            .eq('id', source.id);
+          await setSourceRunState(supabaseAdmin, source.id, config, {
+            search_status: 'error',
+            search_progress: 100,
+            search_message: 'No base URL configured for this source.',
+            search_error: 'No base URL configured for this source.',
+            search_summary: null,
+            search_breakdown: null,
+            last_error: 'No base URL configured for this source.',
+            search_updated_at: new Date().toISOString(),
+          });
           continue;
         }
 
@@ -208,6 +250,9 @@ Deno.serve(async (req) => {
             search_progress: 25,
             search_message: `Scraping ${source.source_name}`,
             search_error: null,
+            search_summary: null,
+            search_breakdown: null,
+            last_error: null,
             search_updated_at: new Date().toISOString(),
           });
           const scrapeRes = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/scrape-job-url`, {
@@ -222,10 +267,16 @@ Deno.serve(async (req) => {
           const scrapeData = await scrapeRes.json().catch(() => ({}));
           if (!scrapeRes.ok || scrapeData?.error) {
             const message = scrapeData?.message || scrapeData?.error || `Scrape failed with HTTP ${scrapeRes.status}`;
-            await supabaseAdmin
-              .from('job_sources')
-              .update({ config: { ...config, last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } })
-              .eq('id', source.id);
+            await setSourceRunState(supabaseAdmin, source.id, config, {
+              search_status: 'error',
+              search_progress: 100,
+              search_message: message,
+              search_error: message,
+              search_summary: null,
+              search_breakdown: null,
+              last_error: message,
+              search_updated_at: new Date().toISOString(),
+            });
             console.warn(`Generic scrape failed for source ${source.source_name}:`, message);
             continue;
           }
@@ -238,10 +289,16 @@ Deno.serve(async (req) => {
 
           if (rawJobs.length === 0) {
             const message = 'No jobs extracted from the configured base URL. Use a search/listing page URL if the homepage is empty.';
-            await supabaseAdmin
-              .from('job_sources')
-              .update({ config: { ...config, last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } })
-              .eq('id', source.id);
+            await setSourceRunState(supabaseAdmin, source.id, config, {
+              search_status: 'error',
+              search_progress: 100,
+              search_message: message,
+              search_error: message,
+              search_summary: null,
+              search_breakdown: null,
+              last_error: message,
+              search_updated_at: new Date().toISOString(),
+            });
             console.warn(`Generic scrape returned no jobs for source ${source.source_name}`);
             continue;
           }
@@ -280,6 +337,9 @@ Deno.serve(async (req) => {
             search_progress: 75,
             search_message: `Saving ${normalizedJobs.length} jobs from ${source.source_name}`,
             search_error: null,
+            search_summary: null,
+            search_breakdown: null,
+            last_error: null,
             search_updated_at: new Date().toISOString(),
           });
           for (const job of normalizedJobs) {
@@ -318,7 +378,18 @@ Deno.serve(async (req) => {
 
           await supabaseAdmin
             .from('job_sources')
-            .update({ config: { ...config, last_error: null, search_status: 'success', search_progress: 100, search_message: `Completed with ${inserted} new jobs`, search_error: null, search_updated_at: new Date().toISOString() } })
+            .update({
+              config: {
+                ...config,
+                last_error: null,
+                search_status: 'success',
+                search_progress: 100,
+                search_message: `Completed with ${inserted} new jobs`,
+                search_error: null,
+                ...buildGenericSearchState(source.source_name, normalizedJobs.length, inserted, normalizedJobs.slice(0, 5).map((job: any) => String(job.title || '').trim()).filter(Boolean)),
+                search_updated_at: new Date().toISOString(),
+              },
+            })
             .eq('id', source.id);
 
           if (inserted > 0) {
@@ -326,10 +397,16 @@ Deno.serve(async (req) => {
           }
         } catch (err: any) {
           const message = err instanceof Error ? err.message : String(err);
-          await supabaseAdmin
-            .from('job_sources')
-            .update({ config: { ...config, last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } })
-            .eq('id', source.id);
+          await setSourceRunState(supabaseAdmin, source.id, config, {
+            search_status: 'error',
+            search_progress: 100,
+            search_message: message,
+            search_error: message,
+            search_summary: null,
+            search_breakdown: null,
+            last_error: message,
+            search_updated_at: new Date().toISOString(),
+          });
           console.error(`Error scraping generic source ${source.source_name}:`, message);
         }
       }
