@@ -796,16 +796,49 @@ Deno.serve(async (req) => {
     
     // Handle manual paste mode
     if (manualDescription) {
-      console.log('Using manually pasted job description');
-      const safeManualDescription = manualDescription.slice(0, 12000);
-      const extracted = await extractJobWithAI(safeManualDescription, url || '', userId);
-      if (extracted.type === 'multiple') {
-        const jobs = extracted.jobs.map((job) => markNormalizationStatus({
-          ...job,
-          description: job.description || safeManualDescription.substring(0, 5000),
-        }, safeManualDescription.length));
+      try {
+        console.log('Using manually pasted job description');
+        const safeManualDescription = manualDescription.slice(0, 12000);
+        const extracted = await extractJobWithAI(safeManualDescription, url || '', userId);
+        if (extracted.type === 'multiple') {
+          const jobs = extracted.jobs.map((job) => markNormalizationStatus({
+            ...job,
+            description: job.description || safeManualDescription.substring(0, 5000),
+          }, safeManualDescription.length));
+          try {
+            await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', jobs, {
+              baseUrl: url || '',
+              configJson: { source: 'manual_description' },
+              normalizationStatus: safeManualDescription.length >= 250 ? 'valid' : 'incomplete',
+              runMode: 'collect',
+            });
+          } catch (ledgerError) {
+            console.warn('Ledger sync failed for manual description:', ledgerError);
+          }
+          return new Response(JSON.stringify({
+            success: true,
+            multiple: true,
+            jobs,
+            total_found: jobs.length,
+            failed_count: 0,
+          }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        const extractedJob = 'job' in extracted ? extracted.job : null;
+        if (!extractedJob) {
+          return new Response(JSON.stringify({
+            success: false,
+            error: 'EXTRACTION_FAILED',
+            message: 'Could not extract structured data from the pasted description.',
+          }), {
+            status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        const job = markNormalizationStatus({
+          ...extractedJob,
+          description: extractedJob.description || safeManualDescription.substring(0, 5000),
+        }, safeManualDescription.length);
         try {
-          await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', jobs, {
+          await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', [job], {
             baseUrl: url || '',
             configJson: { source: 'manual_description' },
             normalizationStatus: safeManualDescription.length >= 250 ? 'valid' : 'incomplete',
@@ -814,41 +847,21 @@ Deno.serve(async (req) => {
         } catch (ledgerError) {
           console.warn('Ledger sync failed for manual description:', ledgerError);
         }
-        return new Response(JSON.stringify({
-          success: true,
-          multiple: true,
-          jobs,
-          total_found: jobs.length,
-          failed_count: 0,
-        }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-      }
-      const extractedJob = 'job' in extracted ? extracted.job : null;
-      if (!extractedJob) {
+        return new Response(JSON.stringify({ success: true, job }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (manualError) {
+        const msg = manualError instanceof Error ? manualError.message : String(manualError);
+        console.warn('Manual description extraction failed:', msg);
         return new Response(JSON.stringify({
           success: false,
           error: 'EXTRACTION_FAILED',
-          message: 'Could not extract structured data from the pasted description.',
+          message: 'Could not extract structured data from the pasted description. Use the full import dialog to paste the job details instead.',
+          fallback: true,
         }), {
           status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
-      const job = markNormalizationStatus({
-        ...extractedJob,
-        description: extractedJob.description || safeManualDescription.substring(0, 5000),
-      }, safeManualDescription.length);
-      try {
-        await recordLedgerSync(supabaseClient as any, userId, 'manual-job-description', 'manual', [job], {
-          baseUrl: url || '',
-          configJson: { source: 'manual_description' },
-          normalizationStatus: safeManualDescription.length >= 250 ? 'valid' : 'incomplete',
-          runMode: 'collect',
-        });
-      } catch (ledgerError) {
-        console.warn('Ledger sync failed for manual description:', ledgerError);
-      }
-      return new Response(JSON.stringify({ success: true, job }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
     }
 
     if (!url) {

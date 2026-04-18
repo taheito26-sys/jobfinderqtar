@@ -33,6 +33,15 @@ function isLinkedInSearchUrl(url: string): boolean {
   }
 }
 
+function isLinkedInJobViewUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.includes('linkedin.com') && parsed.pathname.includes('/jobs/view/');
+  } catch {
+    return false;
+  }
+}
+
 async function fetchReaderText(url: string): Promise<string | null> {
   try {
     const normalized = url.replace(/^https?:\/\//i, '');
@@ -91,6 +100,15 @@ export const scrapeJobUrlWithReaderFallback = async (
     return first.data;
   }
 
+  if (first.error && isLinkedInJobViewUrl(url) && !wantsMultiJobRetry) {
+    return {
+      success: false,
+      error: 'LINKEDIN_LOGIN_REQUIRED',
+      message: 'This LinkedIn job requires login to view. Use the "Paste Description" tab to manually paste the job details.',
+      fallback: true,
+    };
+  }
+
   const readerText = await fetchReaderText(url);
   if (!readerText) {
     if (wantsMultiJobRetry) {
@@ -114,6 +132,14 @@ export const scrapeJobUrlWithReaderFallback = async (
   });
 
   if (retry.error) {
+    if (isLinkedInJobViewUrl(url) && !wantsMultiJobRetry) {
+      return {
+        success: false,
+        error: 'LINKEDIN_LOGIN_REQUIRED',
+        message: 'This LinkedIn job requires login to view. Use the "Paste Description" tab to manually paste the job details.',
+        fallback: true,
+      };
+    }
     return {
       success: false,
       error: retry.error.message,
@@ -123,6 +149,14 @@ export const scrapeJobUrlWithReaderFallback = async (
   }
 
   if (retry.data?.error) {
+    if (isLinkedInJobViewUrl(url) && !wantsMultiJobRetry) {
+      return {
+        success: false,
+        error: 'LINKEDIN_LOGIN_REQUIRED',
+        message: 'This LinkedIn job requires login to view. Use the "Paste Description" tab to manually paste the job details.',
+        fallback: true,
+      };
+    }
     return {
       success: false,
       error: retry.data.message || retry.data.error,
