@@ -287,22 +287,40 @@ const JobSourcesConfig = () => {
       if (error) throw error;
 
       const now = new Date().toISOString();
-      const nextConfig = { ...(source.config || {}), last_error: null };
+      const count = data?.results?.length ?? data?.jobs_found ?? data?.jobs?.length ?? (data?.job ? 1 : 0) ?? 0;
+      const nextConfig = {
+        ...(source.config || {}),
+        last_error: null,
+        search_status: 'success',
+        search_progress: 100,
+        search_message: `Found ${count} results from ${source.source_name}.`,
+        search_error: null,
+        search_updated_at: now,
+      };
       await supabase
         .from('job_sources')
         .update({ last_synced_at: now, config: nextConfig as any })
         .eq('id', source.id);
       setSources(sources.map(s => s.id === source.id ? { ...s, last_synced_at: now, config: nextConfig } : s));
 
-      const count = data?.results?.length ?? data?.jobs_found ?? data?.jobs?.length ?? (data?.job ? 1 : 0) ?? 0;
       toast({ title: 'Test successful', description: `Found ${count} results from ${source.source_name}.` });
     } catch (err: any) {
       const message = err?.message || 'Could not reach source';
       await supabase
         .from('job_sources')
-        .update({ config: { ...(source.config || {}), last_error: message } as any })
+        .update({
+          config: {
+            ...(source.config || {}),
+            last_error: message,
+            search_status: 'error',
+            search_progress: 100,
+            search_message: message,
+            search_error: message,
+            search_updated_at: new Date().toISOString(),
+          } as any,
+        })
         .eq('id', source.id);
-      setSources(sources.map(s => s.id === source.id ? { ...s, config: { ...(s.config || {}), last_error: message } } : s));
+      setSources(sources.map(s => s.id === source.id ? { ...s, config: { ...(s.config || {}), last_error: message, search_status: 'error', search_progress: 100, search_message: message, search_error: message, search_updated_at: new Date().toISOString() } } : s));
       toast({ title: 'Test failed', description: err.message || 'Could not reach source', variant: 'destructive' });
     }
     setSyncing(null);
