@@ -17,6 +17,22 @@ export type ScrapedJob = {
   source_created_at: string | null;
 };
 
+function isLinkedInSearchUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.includes('linkedin.com') && (
+      parsed.pathname.includes('/jobs/search') ||
+      parsed.pathname.includes('/jobs/collections') ||
+      parsed.searchParams.has('currentJobId') ||
+      parsed.searchParams.has('jobId') ||
+      parsed.searchParams.has('referenceJobId') ||
+      parsed.searchParams.has('originToLandingJobPostings')
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function fetchReaderText(url: string): Promise<string | null> {
   try {
     const normalized = url.replace(/^https?:\/\//i, '');
@@ -50,16 +66,37 @@ export const scrapeJobUrl = async (url: string): Promise<{ success: boolean; job
 export const scrapeJobUrlWithReaderFallback = async (
   url: string,
 ): Promise<{ success: boolean; job?: ScrapedJob; jobs?: ScrapedJob[]; multiple?: boolean; listing?: boolean; total_count?: number; total_found?: number; failed_count?: number; error?: string; message?: string; fallback?: boolean }> => {
+  const wantsMultiJobRetry = isLinkedInSearchUrl(url);
   const first = await supabase.functions.invoke('scrape-job-url', {
     body: { url },
   });
 
-  if (!first.error && !first.data?.fallback) {
+  const firstJobs = Array.isArray(first.data?.jobs) ? first.data.jobs : [];
+  const firstWasMulti = Boolean(first.data?.multiple && firstJobs.length > 1);
+  const firstWasSingle = Boolean(first.data?.job) && !firstWasMulti;
+
+  if (firstWasMulti) {
+    return first.data;
+  }
+
+  if (!wantsMultiJobRetry && !first.error && !first.data?.fallback) {
     return first.data ?? { success: false, error: 'Could not extract job data from this URL.' };
+  }
+
+  if (!wantsMultiJobRetry && firstWasSingle && !first.data?.fallback && !first.error) {
+    return first.data;
   }
 
   const readerText = await fetchReaderText(url);
   if (!readerText) {
+    if (wantsMultiJobRetry) {
+      return {
+        success: false,
+        error: 'Could not extract multiple jobs from this LinkedIn search page.',
+        message: 'Could not extract multiple jobs from this LinkedIn search page.',
+        fallback: true,
+      };
+    }
     return first.error
       ? { success: false, error: first.error.message, message: first.error.message, fallback: true }
       : first.data;
@@ -83,6 +120,16 @@ export const scrapeJobUrlWithReaderFallback = async (
       success: false,
       error: retry.data.message || retry.data.error,
       message: retry.data.message || retry.data.error,
+      fallback: true,
+    };
+  }
+
+  const retryJobs = Array.isArray(retry.data?.jobs) ? retry.data.jobs : [];
+  if (wantsMultiJobRetry && (!retry.data?.multiple || retryJobs.length <= 1)) {
+    return {
+      success: false,
+      error: 'Could not extract multiple jobs from this LinkedIn search page.',
+      message: 'Could not extract multiple jobs from this LinkedIn search page.',
       fallback: true,
     };
   }
