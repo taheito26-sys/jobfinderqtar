@@ -89,6 +89,7 @@ const JobDetail = () => {
   const [draftNotes, setDraftNotes] = useState('');
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [markedApplied, setMarkedApplied] = useState(false);
+  const [applicationSubmission, setApplicationSubmission] = useState<any>(null);
   const [hydratingJobMeta, setHydratingJobMeta] = useState(false);
   const hydratedJobRef = useRef<string | null>(null);
 
@@ -127,22 +128,31 @@ const JobDetail = () => {
   useEffect(() => {
     if (!user || !id) return;
     const load = async () => {
-      const [jobRes, matchRes, researchRes] = await Promise.all([
+      const [jobRes, matchRes, researchRes, submissionRes] = await Promise.all([
         supabase.from('jobs').select('*').eq('id', id).eq('user_id', user.id).single(),
         supabase.from('job_matches').select('*').eq('job_id', id).eq('user_id', user.id).maybeSingle(),
         supabase.from('company_research').select('*').eq('job_id', id).eq('user_id', user.id).maybeSingle(),
+        supabase
+          .from('application_submissions')
+          .select('*')
+          .eq('job_id', id)
+          .eq('user_id', user.id)
+          .order('updated_at', { ascending: false })
+          .order('submitted_at', { ascending: false })
+          .limit(1),
       ]);
       setJob(jobRes.data);
       setMatch(matchRes.data);
       setResearch(researchRes.data);
+      setApplicationSubmission(submissionRes.data?.[0] ?? null);
       setLoading(false);
     };
     load();
   }, [id, user]);
 
   useEffect(() => {
-    setMarkedApplied(job?.status === 'applied');
-  }, [job?.status]);
+    setMarkedApplied(job?.status === 'applied' || Boolean(applicationSubmission));
+  }, [job?.status, applicationSubmission]);
 
   useEffect(() => {
     if (!user || !id || !job) return;
@@ -386,14 +396,18 @@ const JobDetail = () => {
       const followUpDate = new Date();
       followUpDate.setDate(followUpDate.getDate() + 7);
 
-      const { data: existingSubmission } = await supabase
+      const { data: existingSubmissionRows, error: existingSubmissionError } = await supabase
         .from('application_submissions')
         .select('id, draft_id, submission_status')
         .eq('user_id', user.id)
         .eq('job_id', id)
-        .maybeSingle();
+        .order('updated_at', { ascending: false })
+        .order('submitted_at', { ascending: false })
+        .limit(1);
+      if (existingSubmissionError) throw existingSubmissionError;
+      const existingSubmissionRow = existingSubmissionRows?.[0] ?? null;
 
-      let draftId = existingSubmission?.draft_id ?? null;
+      let draftId = existingSubmissionRow?.draft_id ?? null;
 
       if (!draftId) {
         const { data: existingDraft } = await supabase
@@ -423,7 +437,7 @@ const JobDetail = () => {
         }
       }
 
-      if (!existingSubmission) {
+      if (!existingSubmissionRow) {
         const { error: submissionError } = await supabase.from('application_submissions').insert({
           user_id: user.id,
           draft_id: draftId,
@@ -434,20 +448,21 @@ const JobDetail = () => {
           outcome_notes: 'Created automatically from Job Detail Mark Applied.',
         });
         if (submissionError) throw submissionError;
-      } else if (existingSubmission.submission_status !== 'submitted') {
+      } else if (existingSubmissionRow.submission_status !== 'submitted') {
         const { error: updateSubmissionError } = await supabase
           .from('application_submissions')
           .update({
             submission_status: 'submitted',
             follow_up_date: followUpDate.toISOString().slice(0, 10),
           })
-          .eq('id', existingSubmission.id);
+          .eq('id', existingSubmissionRow.id);
         if (updateSubmissionError) throw updateSubmissionError;
       }
 
       const { error } = await supabase.from('jobs').update({ status: 'applied' }).eq('id', id).eq('user_id', user.id);
       if (error) throw error;
       setJob((prev: any) => prev ? { ...prev, status: 'applied' } : prev);
+      setApplicationSubmission((prev: any) => prev || { job_id: id, submission_status: 'submitted' });
     } catch (err) {
       console.warn('Failed to persist applied status:', err);
     }
@@ -543,6 +558,12 @@ const JobDetail = () => {
                     >
                       {job.status}
                     </Badge>
+                    {markedApplied && (
+                      <Badge className="capitalize border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                        Applied
+                      </Badge>
+                    )}
                   </div>
                   {(job.salary_min || job.salary_max) && (
                     <p className="text-sm text-muted-foreground mt-2">
@@ -774,7 +795,8 @@ const JobDetail = () => {
                 onClick={markApplied}
                 disabled={markedApplied}
               >
-                <CheckSquare className="w-4 h-4 mr-2" />{markedApplied ? 'Applied ✓' : '5. Mark Applied'}
+                {markedApplied ? <CheckCircle2 className="w-4 h-4 mr-2" /> : <CheckSquare className="w-4 h-4 mr-2" />}
+                {markedApplied ? 'Applied' : '5. Mark Applied'}
               </Button>
               <Button variant="outline" className="w-full" onClick={() => setDraftModal(true)}>
                 <Send className="w-4 h-4 mr-2" />Create Draft

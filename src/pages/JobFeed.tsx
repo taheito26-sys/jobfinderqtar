@@ -22,7 +22,7 @@ import {
   Rss, Plus, MapPin, Building2, Search, Loader2, Zap, Trash2, Globe, Linkedin,
   Filter, X, ChevronDown, Clock, DollarSign, Briefcase, Star, LayoutGrid, List,
   ArrowUpDown, BookmarkPlus, Eye, TrendingUp, Calendar, Hash, BarChart3,
-  Archive, RotateCcw
+  Archive, RotateCcw, CheckCircle2
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import ImportJobDialog from '@/components/ImportJobDialog';
@@ -1360,11 +1360,13 @@ const JobCardList = ({ job, match, applicationState, selected, onSelect, onDelet
             )}
             {applicationState?.status === 'applied' && (
               <Badge className="text-[10px] h-5 border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300">
+                <CheckCircle2 className="w-3 h-3 mr-1" />
                 Applied
               </Badge>
             )}
             {applicationState?.status === 'follow-up' && (
               <Badge className="text-[10px] h-5 border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300">
+                <CheckCircle2 className="w-3 h-3 mr-1" />
                 Follow-up
               </Badge>
             )}
@@ -1456,6 +1458,7 @@ const JobCardGrid = ({ job, match, applicationState, selected, onSelect, onDelet
                   : 'border-emerald-200 bg-emerald-100 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300'
               }`}
             >
+              <CheckCircle2 className="w-3 h-3 mr-1" />
               {applicationState.status === 'follow-up' ? 'Follow-up' : 'Applied'}
             </Badge>
           )}
