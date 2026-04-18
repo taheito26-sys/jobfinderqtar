@@ -63,6 +63,7 @@ type JobSource = {
   source_name: string;
   source_type: string;
   config: SourceConfig;
+  jobs_brought_total?: number;
   enabled: boolean;
   supports_auto_submit: boolean;
   last_synced_at: string | null;
@@ -121,11 +122,21 @@ const JobSourcesConfig = () => {
 
   const loadData = async () => {
     if (!user) return;
-    const [srcRes, prefRes] = await Promise.all([
+    const [srcRes, prefRes, jobsRes] = await Promise.all([
       supabase.from('job_sources').select('*').eq('user_id', user.id).order('created_at'),
       supabase.from('user_preferences').select('*').eq('user_id', user.id),
+      supabase.from('jobs').select('source_id').eq('user_id', user.id),
     ]);
-    setSources((srcRes.data as JobSource[]) ?? []);
+    const jobsBySource = new Map<string, number>();
+    (jobsRes.data ?? []).forEach((job: any) => {
+      if (!job.source_id) return;
+      jobsBySource.set(job.source_id, (jobsBySource.get(job.source_id) ?? 0) + 1);
+    });
+
+    setSources(((srcRes.data as JobSource[]) ?? []).map((source) => ({
+      ...source,
+      jobs_brought_total: jobsBySource.get(source.id) ?? 0,
+    })));
     const prefMap: Record<string, string> = {};
     (prefRes.data ?? []).forEach((p: any) => { prefMap[p.key] = p.value; });
     setPrefs(prefMap);
@@ -520,6 +531,9 @@ const JobSourcesConfig = () => {
                             {getStatusIcon(source)}
                             <Badge variant="secondary" className={`text-[10px] px-2 py-0.5 ${runBadgeClass}`}>
                               {runStatus === 'searching' ? 'Searching' : runStatus === 'success' ? 'Done' : runStatus === 'error' ? 'Error' : 'Idle'}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] px-2 py-0.5">
+                              Total jobs: {source.jobs_brought_total ?? 0}
                             </Badge>
                           </div>
                           <div className="flex items-center gap-2 mt-0.5">
