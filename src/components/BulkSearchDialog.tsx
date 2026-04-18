@@ -184,7 +184,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     const allJobs: SearchResult[] = [];
     const effectiveCountry = getEffectiveCountry();
 
-    for (const title of profileTitles.slice(0, 3)) {
+    for (const title of profileTitles) {
       const searchQ = profileSeniority ? `${profileSeniority} ${title}` : title;
       try {
         const { data } = await supabase.functions.invoke('search-jobs', {
@@ -206,7 +206,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     if (deduped.length > 0) {
       setResults(deduped);
       setSelected(new Set(deduped.map((_, i) => i)));
-      toast({ title: `Found ${deduped.length} jobs across ${Math.min(profileTitles.length, 3)} titles` });
+      toast({ title: `Found ${deduped.length} jobs across ${profileTitles.length} titles` });
     } else {
       toast({ title: 'No results', description: 'Try adjusting your profile preferences.' });
     }
