@@ -27,8 +27,19 @@ import {
 import { searchIndeedQatar } from "./indeed-search.ts";
 import { searchBaytQatar } from "./bayt-search.ts";
 import { searchGulfTalent } from "./gulftalent-search.ts";
+import { searchNaukrigulf } from "./naukrigulf-search.ts";
 
-export type JobSource = "linkedin" | "indeed" | "bayt" | "gulftalent";
+export type JobSource = "linkedin" | "indeed" | "bayt" | "gulftalent" | "naukrigulf";
+
+/**
+ * Sources that block datacenter traffic outright and therefore return nothing
+ * from an edge function: Indeed answers HTTP 403 on both its RSS and HTML
+ * endpoints, and Bayt.com serves a Cloudflare challenge. They stay wired up so
+ * they can be re-enabled if a proxy/rendering service is put in front of them,
+ * but they are OFF by default — querying them only burns the 12s timeout and
+ * yields zero jobs. Naukrigulf replaces them as the primary non-LinkedIn source.
+ */
+export const BLOCKED_SOURCES: JobSource[] = ["indeed", "bayt"];
 
 export interface MultiSourceJob {
   title: string;
@@ -177,46 +188,25 @@ async function fetchLinkedIn(
   }));
 }
 
-async function fetchIndeed(
-  keywords: string,
-  location: string,
-  limit: number,
-  profile?: LinkedInProfileContext | null
-): Promise<MultiSourceJob[]> {
-  const variants = buildExternalVariants(keywords, profile);
-  const perVariant = Math.max(5, Math.ceil(limit / variants.length));
-  const all: MultiSourceJob[] = [];
-
-  for (const variant of variants) {
-    try {
-      const jobs = await searchIndeedQatar(variant, location, perVariant);
-      for (const j of jobs) {
-        all.push({
-          title: j.title,
-          company: j.company,
-          location: j.location,
-          apply_url: j.apply_url,
-          description: j.description,
-          source_created_at: j.source_created_at,
-          source_platform: "indeed" as JobSource,
-          linkedin_job_id: null,
-          external_id: j.external_id,
-          remote_type: "unknown",
-          employment_type: "full-time",
-          seniority_level: "",
-          normalization_status: "incomplete" as const,
-          raw_data: { source: "indeed", search_variant: variant },
-        });
-      }
-    } catch (err: any) {
-      console.warn(`[Indeed] variant "${variant}" failed: ${err?.message || err}`);
-    }
-  }
-
-  return rankExternalAgainstProfile(all, profile).slice(0, limit);
+/** The shape every external (non-LinkedIn) source returns. */
+interface ExternalSourceJob {
+  title: string;
+  company: string;
+  location: string;
+  apply_url: string;
+  description: string;
+  source_created_at: string | null;
+  external_id: string | null;
 }
 
-async function fetchBayt(
+/**
+ * Run one external source across the profile's keyword variants, normalize the
+ * results into MultiSourceJob, then score/rank them against the profile.
+ * Every external source shares this shape, so they all route through here.
+ */
+async function fetchExternalSource(
+  source: JobSource,
+  search: (variant: string, perVariant: number) => Promise<ExternalSourceJob[]>,
   keywords: string,
   limit: number,
   profile?: LinkedInProfileContext | null
@@ -227,7 +217,7 @@ async function fetchBayt(
 
   for (const variant of variants) {
     try {
-      const jobs = await searchBaytQatar(variant, perVariant);
+      const jobs = await search(variant, perVariant);
       for (const j of jobs) {
         all.push({
           title: j.title,
@@ -236,56 +226,18 @@ async function fetchBayt(
           apply_url: j.apply_url,
           description: j.description,
           source_created_at: j.source_created_at,
-          source_platform: "bayt" as JobSource,
+          source_platform: source,
           linkedin_job_id: null,
           external_id: j.external_id,
           remote_type: "unknown",
           employment_type: "full-time",
           seniority_level: "",
           normalization_status: "incomplete" as const,
-          raw_data: { source: "bayt", search_variant: variant },
+          raw_data: { source, search_variant: variant },
         });
       }
     } catch (err: any) {
-      console.warn(`[Bayt] variant "${variant}" failed: ${err?.message || err}`);
-    }
-  }
-
-  return rankExternalAgainstProfile(all, profile).slice(0, limit);
-}
-
-async function fetchGulfTalent(
-  keywords: string,
-  limit: number,
-  profile?: LinkedInProfileContext | null
-): Promise<MultiSourceJob[]> {
-  const variants = buildExternalVariants(keywords, profile);
-  const perVariant = Math.max(5, Math.ceil(limit / variants.length));
-  const all: MultiSourceJob[] = [];
-
-  for (const variant of variants) {
-    try {
-      const jobs = await searchGulfTalent(variant, perVariant);
-      for (const j of jobs) {
-        all.push({
-          title: j.title,
-          company: j.company,
-          location: j.location,
-          apply_url: j.apply_url,
-          description: j.description,
-          source_created_at: j.source_created_at,
-          source_platform: "gulftalent" as JobSource,
-          linkedin_job_id: null,
-          external_id: j.external_id,
-          remote_type: "unknown",
-          employment_type: "full-time",
-          seniority_level: "",
-          normalization_status: "incomplete" as const,
-          raw_data: { source: "gulftalent", search_variant: variant },
-        });
-      }
-    } catch (err: any) {
-      console.warn(`[GulfTalent] variant "${variant}" failed: ${err?.message || err}`);
+      console.warn(`[${source}] variant "${variant}" failed: ${err?.message || err}`);
     }
   }
 
@@ -302,6 +254,7 @@ export interface MultiSourceSearchOptions {
     indeed?: boolean;
     bayt?: boolean;
     gulftalent?: boolean;
+    naukrigulf?: boolean;
   };
   profile?: LinkedInProfileContext | null;
 }
@@ -312,6 +265,10 @@ export interface MultiSourceSearchResult {
   total: number;
   sources_queried: string[];
   sources_with_results: string[];
+  /** Queried sources that returned nothing, so callers can surface it in the UI. */
+  sources_without_results: string[];
+  /** Sources skipped because they block datacenter traffic. */
+  sources_unavailable: string[];
   profile_applied: boolean;
 }
 
@@ -323,9 +280,17 @@ export async function searchAllSources(
     location = "Qatar",
     limit = 50,
     perSourceLimit = 25,
-    sources = { linkedin: true, indeed: true, bayt: true, gulftalent: true },
+    sources = {},
     profile = null,
   } = opts;
+
+  // Blocked sources stay off unless a caller explicitly opts in; everything
+  // else defaults on.
+  const isEnabled = (source: JobSource): boolean => {
+    const explicit = sources[source as keyof typeof sources];
+    if (typeof explicit === "boolean") return explicit;
+    return !BLOCKED_SOURCES.includes(source);
+  };
 
   const profileApplied = !!profile;
   console.log(
@@ -338,34 +303,34 @@ export async function searchAllSources(
 
   const fetches: Promise<{ source: string; jobs: MultiSourceJob[] }>[] = [];
 
-  if (sources.linkedin !== false) {
+  const queueExternal = (
+    source: JobSource,
+    search: (variant: string, perVariant: number) => Promise<ExternalSourceJob[]>
+  ) => {
+    if (!isEnabled(source)) return;
+    fetches.push(
+      withTimeout(
+        fetchExternalSource(source, search, keywords, perSourceLimit, profile),
+        source
+      ).then((jobs) => ({ source, jobs }))
+    );
+  };
+
+  if (isEnabled("linkedin")) {
     fetches.push(
       withTimeout(fetchLinkedIn(keywords, location, perSourceLimit, profile), "LinkedIn").then(
         (jobs) => ({ source: "linkedin", jobs })
       )
     );
   }
-  if (sources.indeed !== false) {
-    fetches.push(
-      withTimeout(fetchIndeed(keywords, location, perSourceLimit, profile), "Indeed").then(
-        (jobs) => ({ source: "indeed", jobs })
-      )
-    );
-  }
-  if (sources.bayt !== false) {
-    fetches.push(
-      withTimeout(fetchBayt(keywords, perSourceLimit, profile), "Bayt").then(
-        (jobs) => ({ source: "bayt", jobs })
-      )
-    );
-  }
-  if (sources.gulftalent !== false) {
-    fetches.push(
-      withTimeout(fetchGulfTalent(keywords, perSourceLimit, profile), "GulfTalent").then(
-        (jobs) => ({ source: "gulftalent", jobs })
-      )
-    );
-  }
+  queueExternal("naukrigulf", (variant, perVariant) =>
+    searchNaukrigulf(variant, location, perVariant)
+  );
+  queueExternal("gulftalent", (variant, perVariant) => searchGulfTalent(variant, perVariant));
+  queueExternal("indeed", (variant, perVariant) =>
+    searchIndeedQatar(variant, location, perVariant)
+  );
+  queueExternal("bayt", (variant, perVariant) => searchBaytQatar(variant, perVariant));
 
   const settled = await Promise.all(fetches);
 
@@ -374,12 +339,17 @@ export async function searchAllSources(
   const sourcesQueried: string[] = [];
   const sourcesWithResults: string[] = [];
 
+  const sourcesWithoutResults: string[] = [];
+
   for (const { source, jobs } of settled) {
     sourcesQueried.push(source);
     counts[source] = jobs.length;
     if (jobs.length > 0) sourcesWithResults.push(source);
+    else sourcesWithoutResults.push(source);
     allJobs.push(...jobs);
   }
+
+  const sourcesUnavailable = BLOCKED_SOURCES.filter((source) => !isEnabled(source));
 
   console.log(
     `[MultiSource] Raw counts: ${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ")}`
@@ -403,6 +373,8 @@ export async function searchAllSources(
     total: finalJobs.length,
     sources_queried: sourcesQueried,
     sources_with_results: sourcesWithResults,
+    sources_without_results: sourcesWithoutResults,
+    sources_unavailable: sourcesUnavailable,
     profile_applied: profileApplied,
   };
 }

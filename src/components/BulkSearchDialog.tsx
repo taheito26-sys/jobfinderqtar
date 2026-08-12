@@ -131,10 +131,11 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
     }
   };
 
+  // Indeed and Bayt are intentionally omitted: both block datacenter traffic
+  // (403 / Cloudflare) so querying them only adds latency for zero results.
   const explicitSources = {
     linkedin: true,
-    indeed: true,
-    bayt: true,
+    naukrigulf: true,
     gulftalent: true,
   };
 

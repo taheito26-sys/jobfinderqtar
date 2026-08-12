@@ -72,6 +72,38 @@ describe('LinkedIn profile search helpers', () => {
     expect(specialist).toBeGreaterThanOrEqual(30);
   });
 
+  // Regression: 'specialist' must exist in ROLE_FAMILY_PATTERNS, otherwise the
+  // specialist branch of the scorer can never fire. This case strips every other
+  // signal — no title-token overlap, no skill hits, no location match — so the
+  // score comes from the specialist/architect adjacency rule alone.
+  it('credits a specialist role purely on role-family adjacency', () => {
+    const isolated = scoreLinkedInJobAgainstProfile(
+      {
+        title: 'Cloud Specialist',
+        company: 'Unrelated GmbH',
+        location: 'Berlin, Germany',
+        description: 'General duties.',
+      },
+      profile,
+    );
+
+    expect(isolated).toBeGreaterThanOrEqual(35);
+  });
+
+  it('still scores a genuinely unrelated role below the relevance threshold', () => {
+    const unrelated = scoreLinkedInJobAgainstProfile(
+      {
+        title: 'Pastry Chef',
+        company: 'Unrelated GmbH',
+        location: 'Berlin, Germany',
+        description: 'Prepare desserts.',
+      },
+      profile,
+    );
+
+    expect(unrelated).toBeLessThan(20);
+  });
+
   it('retains a nearby bucket of external roles just below the main threshold', () => {
     const jobs: MultiSourceJob[] = [
       {

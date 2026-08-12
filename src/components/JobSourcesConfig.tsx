@@ -23,10 +23,10 @@ import {
 
 // ─── Preset job boards ───
 const PRESET_SOURCES = [
-  { name: 'Indeed Qatar', type: 'scraper', url: 'https://qa.indeed.com/jobs?l=Qatar', icon: '🔵', region: 'Qatar', description: 'Largest job board — Qatar edition' },
-  { name: 'Bayt.com', type: 'scraper', url: 'https://www.bayt.com/en/qatar/jobs/search-jobs/', icon: '🟢', region: 'Gulf', description: 'Leading Middle East job platform' },
-  { name: 'GulfTalent', type: 'scraper', url: 'https://www.gulftalent.com/qatar/jobs', icon: '🟠', region: 'Gulf', description: 'Premium Gulf recruitment site' },
-  { name: 'Naukrigulf', type: 'scraper', url: 'https://www.naukrigulf.com/search-jobs-in-qatar', icon: '🔴', region: 'Gulf', description: 'Gulf job listings from Naukri' },
+  { name: 'Indeed Qatar', type: 'scraper', url: 'https://qa.indeed.com/jobs?l=Qatar', icon: '🔵', region: 'Qatar', description: 'Blocks automated access — searches fall back to Naukrigulf' },
+  { name: 'Bayt.com', type: 'scraper', url: 'https://www.bayt.com/en/qatar/jobs/search-jobs/', icon: '🟢', region: 'Gulf', description: 'Blocks automated access — searches fall back to Naukrigulf' },
+  { name: 'GulfTalent', type: 'scraper', url: 'https://www.gulftalent.com/qatar/jobs', icon: '🟠', region: 'Gulf', description: 'Premium Gulf recruitment site — recent Qatar listings' },
+  { name: 'Naukrigulf', type: 'scraper', url: 'https://www.naukrigulf.com/search-jobs-in-qatar', icon: '🔴', region: 'Gulf', description: 'Gulf job listings from Naukri — keyword search' },
   { name: 'LinkedIn Jobs', type: 'scraper', url: 'https://www.linkedin.com/jobs/search/', icon: '🔷', region: 'Global', description: 'Professional network job listings' },
   { name: 'Tanqeeb', type: 'scraper', url: 'https://qatar.tanqeeb.com/en', icon: '🟣', region: 'Gulf', description: 'Gulf job aggregator' },
   { name: 'Qatar Living Jobs', type: 'scraper', url: 'https://www.qatarliving.com/jobs', icon: '🏠', region: 'Qatar', description: 'Qatar community job board' },
@@ -290,7 +290,7 @@ const JobSourcesConfig = () => {
         });
       };
 
-      const runBoardSearch = async (board: 'linkedin' | 'indeed' | 'bayt' | 'gulftalent') => {
+      const runBoardSearch = async (board: 'linkedin' | 'naukrigulf' | 'gulftalent') => {
         const seeds = profileSeedTitles.length > 0 ? profileSeedTitles : [fallbackSeed || 'Qatar'];
         const allJobs: any[] = [];
         for (const seed of seeds) {
@@ -301,8 +301,7 @@ const JobSourcesConfig = () => {
               limit: 5,
               sources: {
                 linkedin: board === 'linkedin',
-                indeed: board === 'indeed',
-                bayt: board === 'bayt',
+                naukrigulf: board === 'naukrigulf',
                 gulftalent: board === 'gulftalent',
               },
             },
@@ -321,10 +320,10 @@ const JobSourcesConfig = () => {
 
       if (isLinkedIn) {
         await runBoardSearch('linkedin');
-      } else if (/indeed/i.test(source.source_name) || /indeed/i.test(source.config.base_url || '')) {
-        await runBoardSearch('indeed');
-      } else if (/bayt/i.test(source.source_name) || /bayt/i.test(source.config.base_url || '')) {
-        await runBoardSearch('bayt');
+      } else if (/indeed|bayt|naukri/i.test(source.source_name) || /indeed|bayt|naukri/i.test(source.config.base_url || '')) {
+        // Indeed and Bayt block datacenter traffic, so sources configured against
+        // them are served by Naukrigulf, which covers the same Qatar listings.
+        await runBoardSearch('naukrigulf');
       } else if (/gulftalent/i.test(source.source_name) || /gulftalent/i.test(source.config.base_url || '')) {
         await runBoardSearch('gulftalent');
       } else {

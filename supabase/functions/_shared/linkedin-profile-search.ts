@@ -34,6 +34,10 @@ const ROLE_FAMILY_PATTERNS: Array<{ family: string; patterns: RegExp[] }> = [
   { family: 'solutions', patterns: [/\bsolution[s]?\b/i] },
   { family: 'infrastructure', patterns: [/\binfrastructure\b/i, /\bsystems?\b/i, /\bplatform\b/i] },
   { family: 'network', patterns: [/\bnetwork\b/i, /\btelecom\b/i, /\btelco\b/i] },
+  // Required by the "nearby specialist roles" rule in scoreLinkedInJobAgainstProfile:
+  // without this entry extractRoleFamilies can never return 'specialist', so that
+  // rule silently never fires.
+  { family: 'specialist', patterns: [/\bspecialist\b/i, /\bconsultant\b/i, /\banalyst\b/i] },
 ];
 
 const TITLE_STOPWORDS = new Set([

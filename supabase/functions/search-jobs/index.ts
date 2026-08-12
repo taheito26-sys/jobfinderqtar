@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
       query,
       limit = 50,
       country,
-      sources,  // optional: { linkedin, indeed, bayt, gulftalent } booleans
+      sources,  // optional: { linkedin, naukrigulf, gulftalent, indeed, bayt } booleans
     } = body;
 
     if (!query) {
@@ -79,12 +79,9 @@ Deno.serve(async (req) => {
       location,
       limit: Math.min(limit, 100),
       perSourceLimit: 25,
-      sources: sources || {
-        linkedin: true,
-        indeed: true,
-        bayt: true,
-        gulftalent: true,
-      },
+      // Omitting `sources` lets searchAllSources apply its own defaults, which
+      // keep the datacenter-blocked boards (Indeed, Bayt) switched off.
+      sources: sources || undefined,
       profile: profileContext,
     });
 
@@ -120,6 +117,8 @@ Deno.serve(async (req) => {
         counts,
         provider: "multi-source",
         sources_with_results,
+        sources_without_results: result.sources_without_results,
+        sources_unavailable: result.sources_unavailable,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
