@@ -3,6 +3,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/integrations/supabase/client';
 import PageHeader from '@/components/PageHeader';
 import JobSourcesConfig from '@/components/JobSourcesConfig';
+import GmailConnectionCard from '@/components/GmailConnectionCard';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -143,6 +144,8 @@ const SettingsPage = () => {
 
       <div className="space-y-6 max-w-2xl">
         <JobSourcesConfig />
+
+        <GmailConnectionCard />
 
         {/* Notifications */}
         <Card>
