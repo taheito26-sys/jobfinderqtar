@@ -28,19 +28,19 @@ const SourceLedger = lazy(() => import("@/pages/SourceLedger"));
 const queryClient = new QueryClient();
 
 const RouteLoading = () => (
-  <div className="flex items-center justify-center h-screen text-muted-foreground">Loading...</div>
+  <div className="flex items-center justify-center h-[100dvh] text-muted-foreground">Loading...</div>
 );
 
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { session, loading } = useAuth();
-  if (loading) return <div className="flex items-center justify-center h-screen text-muted-foreground">Loading...</div>;
+  if (loading) return <div className="flex items-center justify-center h-[100dvh] text-muted-foreground">Loading...</div>;
   if (!session) return <Navigate to="/auth" replace />;
   return <AppLayout>{children}</AppLayout>;
 };
 
 const AuthRoute = ({ children }: { children: React.ReactNode }) => {
   const { session, loading } = useAuth();
-  if (loading) return <div className="flex items-center justify-center h-screen text-muted-foreground">Loading...</div>;
+  if (loading) return <div className="flex items-center justify-center h-[100dvh] text-muted-foreground">Loading...</div>;
   if (session) return <Navigate to="/" replace />;
   return <>{children}</>;
 };

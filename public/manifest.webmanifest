@@ -1,0 +1,12 @@
+{
+  "name": "FindMeAJob",
+  "short_name": "FindMeAJob",
+  "description": "AI-powered job search assistant",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "icons": [
+    { "src": "/favicon.png", "sizes": "any", "type": "image/png", "purpose": "any" }
+  ]
+}
