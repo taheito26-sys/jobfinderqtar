@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import NotificationBell from '@/components/NotificationBell';
+import InstallPrompt from '@/components/InstallPrompt';
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
@@ -121,6 +122,8 @@ const AppLayout = ({ children }: { children: ReactNode }) => {
           </div>
         </header>
         <main className="flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-4 pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:p-6 lg:pb-6">{children}</main>
+
+        <InstallPrompt />
 
         {/* Mobile bottom tab bar */}
         <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 flex border-t border-border bg-card/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
