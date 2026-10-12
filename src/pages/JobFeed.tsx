@@ -1330,9 +1330,9 @@ const JobCardList = ({ job, match, applicationState, selected, onSelect, onDelet
   return (
     <Link to={`/jobs/${job.id}`}>
       <Card className={`hover:border-primary/30 transition-colors cursor-pointer group ${applicationClass} ${selected ? 'border-primary ring-1 ring-primary/20' : ''}`}>
-        <CardContent className="py-3.5 px-4 flex items-center gap-3">
+        <CardContent className="py-3.5 px-3 sm:px-4 flex flex-wrap sm:flex-nowrap items-start sm:items-center gap-x-3 gap-y-2">
           {/* Select checkbox */}
-          <div className="flex-shrink-0" onClick={e => onSelect(e, job.id)}>
+          <div className="flex-shrink-0 mt-3 sm:mt-0" onClick={e => onSelect(e, job.id)}>
             <Checkbox checked={selected} className="pointer-events-none" />
           </div>
 
@@ -1342,9 +1342,9 @@ const JobCardList = ({ job, match, applicationState, selected, onSelect, onDelet
           </div>
 
           {/* Main info */}
-          <div className="flex-1 min-w-0">
+          <div className="flex-1 min-w-0 basis-0 sm:basis-auto">
             <div className="flex items-center gap-2">
-              <h3 className="font-medium text-foreground truncate text-sm">{job.title}</h3>
+              <h3 className="font-medium text-foreground text-sm leading-snug line-clamp-2 sm:truncate">{job.title}</h3>
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
               <span className="font-medium text-foreground/80">{job.company}</span>
@@ -1355,7 +1355,7 @@ const JobCardList = ({ job, match, applicationState, selected, onSelect, onDelet
           </div>
 
           {/* Tags + Score */}
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+          <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap sm:flex-shrink-0 w-full sm:w-auto pl-[4.25rem] sm:pl-0 ml-0">
             {job.remote_type && job.remote_type !== 'unknown' && (
               <Badge variant="outline" className="text-[10px] capitalize h-5">{job.remote_type}</Badge>
             )}
@@ -1384,18 +1384,18 @@ const JobCardList = ({ job, match, applicationState, selected, onSelect, onDelet
               </Badge>
             )}
             {userId && !isArchiveView && (
-              <QuickApplyButton job={job} userId={userId} size="sm" className="opacity-0 group-hover:opacity-100 h-7 w-7 p-0" />
+              <QuickApplyButton job={job} userId={userId} size="sm" className="sm:opacity-0 sm:group-hover:opacity-100 h-7 w-7 p-0" />
             )}
             {isArchiveView ? (
-              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 h-7 w-7 p-0" onClick={(e) => onUnarchive(e, job.id)} title="Restore">
+              <Button variant="ghost" size="sm" className="sm:opacity-0 sm:group-hover:opacity-100 h-7 w-7 p-0" onClick={(e) => onUnarchive(e, job.id)} title="Restore">
                 <RotateCcw className="w-3 h-3" />
               </Button>
             ) : (
-              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-muted-foreground h-7 w-7 p-0" onClick={(e) => onArchive(e, job.id)} title="Archive">
+              <Button variant="ghost" size="sm" className="sm:opacity-0 sm:group-hover:opacity-100 text-muted-foreground h-7 w-7 p-0" onClick={(e) => onArchive(e, job.id)} title="Archive">
                 <Archive className="w-3 h-3" />
               </Button>
             )}
-            <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive h-7 w-7 p-0" onClick={(e) => onDelete(e, job.id)}>
+            <Button variant="ghost" size="sm" className="sm:opacity-0 sm:group-hover:opacity-100 text-destructive h-7 w-7 p-0" onClick={(e) => onDelete(e, job.id)}>
               <Trash2 className="w-3 h-3" />
             </Button>
           </div>
@@ -1434,15 +1434,15 @@ const JobCardGrid = ({ job, match, applicationState, selected, onSelect, onDelet
             <div className="flex items-center gap-1">
               <div onClick={e => onSelect(e, job.id)}><Checkbox checked={selected} className="pointer-events-none" /></div>
               {isArchiveView ? (
-                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0" onClick={(e) => onUnarchive(e, job.id)} title="Restore">
+                <Button variant="ghost" size="sm" className="sm:opacity-0 sm:group-hover:opacity-100 h-6 w-6 p-0" onClick={(e) => onUnarchive(e, job.id)} title="Restore">
                   <RotateCcw className="w-3 h-3" />
                 </Button>
               ) : (
-                <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-muted-foreground h-6 w-6 p-0" onClick={(e) => onArchive(e, job.id)} title="Archive">
+                <Button variant="ghost" size="sm" className="sm:opacity-0 sm:group-hover:opacity-100 text-muted-foreground h-6 w-6 p-0" onClick={(e) => onArchive(e, job.id)} title="Archive">
                   <Archive className="w-3 h-3" />
                 </Button>
               )}
-              <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 text-destructive h-6 w-6 p-0" onClick={(e) => onDelete(e, job.id)}>
+              <Button variant="ghost" size="sm" className="sm:opacity-0 sm:group-hover:opacity-100 text-destructive h-6 w-6 p-0" onClick={(e) => onDelete(e, job.id)}>
                 <Trash2 className="w-3 h-3" />
               </Button>
             </div>
@@ -1478,7 +1478,7 @@ const JobCardGrid = ({ job, match, applicationState, selected, onSelect, onDelet
           <div className="flex items-center justify-between pt-1 border-t border-border/50">
             <span className="text-[10px] text-muted-foreground">{timeAgo}</span>
             <div className="flex items-center gap-1.5">
-              {userId && <QuickApplyButton job={job} userId={userId} size="sm" className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100" />}
+              {userId && <QuickApplyButton job={job} userId={userId} size="sm" className="h-6 w-6 p-0 sm:opacity-0 sm:group-hover:opacity-100" />}
               {match && <ScoreBadge score={match.overall_score} />}
               {match?.recommendation && (
                 <Badge variant={match.recommendation === 'apply' ? 'default' : match.recommendation === 'skip' ? 'destructive' : 'secondary'} className="text-[10px] capitalize h-5">
