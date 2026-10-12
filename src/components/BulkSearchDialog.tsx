@@ -326,7 +326,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) resetState(); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[calc(100dvh-1rem)] sm:max-h-[85vh] overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Search className="w-5 h-5" />
@@ -379,9 +379,9 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
                   disabled={searching}
                   className="flex-1"
                 />
-                <div className="flex gap-2">
+                <div className="flex gap-2 min-w-0">
                   <Select value={country} onValueChange={setCountry}>
-                    <SelectTrigger className="w-[140px] sm:w-[160px]">
+                    <SelectTrigger className="flex-1 min-w-0 sm:flex-none sm:w-[160px]">
                       <SelectValue placeholder="Any Country" />
                     </SelectTrigger>
                     <SelectContent>
@@ -449,7 +449,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
                         ))}
                       </SelectContent>
                     </Select>
-                    <div className="flex gap-2 flex-1">
+                    <div className="flex flex-col sm:flex-row gap-2 flex-1">
                       <Button
                         onClick={handleSearch}
                         disabled={searching || !selectedProfileTitle}
@@ -500,7 +500,7 @@ const BulkSearchDialog = ({ open, onOpenChange, onJobsAdded }: BulkSearchDialogP
               </div>
               <div className="flex gap-2">
                 <Select value={country} onValueChange={setCountry}>
-                  <SelectTrigger className="w-[140px] sm:w-[160px]">
+                  <SelectTrigger className="flex-1 min-w-0 sm:flex-none sm:w-[160px]">
                     <SelectValue placeholder="Any Country" />
                   </SelectTrigger>
                   <SelectContent>
